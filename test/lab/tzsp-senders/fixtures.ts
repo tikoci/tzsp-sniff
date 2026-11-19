@@ -127,8 +127,18 @@ if (import.meta.main) {
 	try {
 		const index = await build();
 		await rm(OLD, { recursive: true, force: true });
-		await rename(OUT, OLD).catch(() => {});
-		await rename(NEXT, OUT);
+		// Keep the old set in OLD until the new one is in place; if the swap
+		// fails, put it back so OUT is never left missing.
+		const hadOld = await rename(OUT, OLD).then(
+			() => true,
+			() => false,
+		);
+		try {
+			await rename(NEXT, OUT);
+		} catch (e) {
+			if (hadOld) await rename(OLD, OUT);
+			throw e;
+		}
 		await rm(OLD, { recursive: true, force: true });
 		console.log(`${index.length} fixtures in ${OUT}`);
 	} catch (e) {

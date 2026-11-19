@@ -381,6 +381,8 @@ const owned = new Set<string>();
 /** Temporary directories to remove on exit (the askpass helper's). */
 const tempDirs = new Set<string>();
 const removals = new Map<string, Promise<boolean>>();
+/** `create` calls still running, so cleanup waits for a machine mid-`add`. */
+const provisioning = new Set<Promise<unknown>>();
 
 /** Remove one owned machine and confirm `quickchr list` no longer knows it. */
 function teardown(name: string): Promise<boolean> {
@@ -401,6 +403,9 @@ function teardown(name: string): Promise<boolean> {
 
 /** Remove every owned machine and temp dir; return the machines still present. */
 async function cleanupAll(): Promise<string[]> {
+	// A machine whose `add` is still running joins `owned` when it settles;
+	// each `run` has a deadline, so this wait is bounded.
+	await Promise.allSettled([...provisioning]);
 	const names = [...owned];
 	const results = await Promise.all(names.map((n) => teardown(n)));
 	for (const dir of tempDirs) {
@@ -983,13 +988,22 @@ async function accelerator(machine: string): Promise<string> {
 }
 
 /** Create a machine this run owns, or throw having touched nothing. */
-async function create(target: Target): Promise<string> {
+function create(target: Target): Promise<string> {
+	const p = provision(target);
+	provisioning.add(p);
+	p.finally(() => provisioning.delete(p)).catch(() => {});
+	return p;
+}
+
+async function provision(target: Target): Promise<string> {
+	if (interrupted) throw new Error("interrupted; not creating a machine");
 	const name = `tzsp-lab-${target.channel}-${target.arch}-${randomBytes(4).toString("hex")}`;
 	const exists = await run(["quickchr", "list", name, "--json"], {
 		timeoutMs: QUICKCHR_MS,
 	});
 	if (exists.code === 0)
 		throw new Error(`${name} already exists; not touching it`);
+	if (interrupted) throw new Error("interrupted; not creating a machine");
 	// Owned from here: the name was absent and is random, and `add` refuses
 	// an existing name, so what `add` leaves behind is this run's.
 	owned.add(name);
@@ -1116,7 +1130,10 @@ if (import.meta.main) {
 	const results = await Promise.allSettled([
 		(async () => {
 			const out: boolean[] = [];
-			for (const t of x86) out.push(await lab(t));
+			for (const t of x86) {
+				if (interrupted) break;
+				out.push(await lab(t));
+			}
 			return out;
 		})(),
 		Promise.all(arm.map((t) => lab(t))),

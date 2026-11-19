@@ -418,6 +418,11 @@ describe("a file saved by /tool/sniffer", () => {
 			for (let o = 0; o + 12 <= b.length; ) {
 				const type = b.readUInt32LE(o);
 				const len = b.readUInt32LE(o + 4);
+				// A block is at least type, length and trailing length, a
+				// multiple of 4, and inside the file; anything else fails here
+				// rather than looping or reading past the end.
+				expect(len >= 12 && len % 4 === 0 && o + len <= b.length).toBe(true);
+				if (len < 12 || o + len > b.length) break;
 				blocks.push(type);
 				if (type === 0x0a0d0d0a) expect(opts(o + 24, o + len - 4)).toEqual([]);
 				if (type === 1)
