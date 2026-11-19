@@ -16,10 +16,13 @@
  * (5): `dissect_tzsp` reads options and the encapsulated frame only when the
  * type is neither (packet-tzsp.c e0929ac4, the `TZSP_NULL`/`TZSP_PORT` check).
  *
- * RouterOS: `/tool/sniffer` streaming on 7.26beta5 x86 CHR sends `01 00 00 01 01`,
- * version 1, received, Ethernet, the end tag alone (tikoci/quickchr
- * examples/cmr/FINDINGS.md, "Wire"). Whether mangle `sniff-id` adds a tag is not
- * yet grounded (BACKLOG.md).
+ * RouterOS: `/tool/sniffer` streaming and mangle `action=sniff-tzsp` sent
+ * `01 00 00 01 01`, version 1, received, Ethernet, the end tag alone, for
+ * ICMP on 7.25.1 and 7.24.6 x86_64 (KVM), and the sniffer on 7.25.1 arm64
+ * (TCG), 2026-11-19 UTC (test/lab/tzsp-senders/REPORT.md, fixtures in
+ * test/fixtures/routeros/); 7.26beta5 x86 agreed earlier (tikoci/quickchr
+ * examples/cmr/FINDINGS.md, "Wire"). Mangle `sniff-id` added no tag: a
+ * sniff-tzsp rule does not keep it, and `sniff-pc`, which does, does not send TZSP.
  */
 
 /** TZSP packet types (packet-tzsp.c). */

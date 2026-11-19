@@ -28,6 +28,13 @@ tzsp-sniff opens a UDP port and parses whatever datagrams arrive on it, from any
 
 Open alerts are fixed, or dismissed in the Security tab with a written reason.
 
+An alert in lab or test code (`test/`, and scripts run only by hand) that
+flags what the code is for, such as the TZSP lab writing captured traffic to
+its evidence files, is dismissed as "used in tests" with a comment saying
+what the code does and what guards it (for the lab: only the lab's own
+validated datagrams are written). It is a warning, not a waiver: the same
+alert in `src/`, a shipped script or a workflow is fixed.
+
 ## Supported versions
 
 Fixes go into `main` and the next release. Only the latest release (the npm

@@ -1,0 +1,129 @@
+{
+	"target": {
+		"channel": "stable",
+		"arch": "arm64"
+	},
+	"machine": "tzsp-lab-stable-arm64-a65970a3",
+	"date": "2026-11-19T02:49:10.394Z",
+	"accelerator": "tcg,tb-size=256",
+	"quickchr": "quickchr 0.5.2",
+	"experiments": [
+		{
+			"name": "sniffer-stream",
+			"steps": [
+				{
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:40194 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"status": 200,
+					"output": ""
+				},
+				{
+					"command": "/tool/sniffer/start",
+					"status": 200,
+					"output": ""
+				},
+				{
+					"command": "/ping 10.0.2.3 count=3",
+					"status": 200,
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 17ms658us \n    1 10.0.2.3                                   56 255 7ms633us  \n    2 10.0.2.3                                   56 255 901us     \n    sent=3 received=3 packet-loss=0% min-rtt=901us avg-rtt=8ms730us \n   max-rtt=17ms658us "
+				},
+				{
+					"command": "/tool/sniffer/stop",
+					"status": 200,
+					"output": ""
+				}
+			],
+			"datagrams": [
+				{
+					"t": 646,
+					"length": 75,
+					"hex": "010000010152550a00020302f2e578b15808004500003881a30000ff0122100a00020f0a00020308003754ac00000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
+				},
+				{
+					"t": 647,
+					"length": 75,
+					"hex": "010000010102f2e578b15852550a00020208004500003800460000ff01a36d0a0002030a00020f00003f54ac00000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
+				},
+				{
+					"t": 1648,
+					"length": 75,
+					"hex": "010000010152550a00020302f2e578b15808004500003881a90000ff01220a0a00020f0a0002030800d2dfac00010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
+				},
+				{
+					"t": 1666,
+					"length": 75,
+					"hex": "010000010102f2e578b15852550a00020208004500003800470000ff01a36c0a0002030a00020f0000dadfac00010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
+				},
+				{
+					"t": 2657,
+					"length": 75,
+					"hex": "010000010152550a00020302f2e578b15808004500003881c30000ff0121f00a00020f0a00020308007672ac00020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
+				},
+				{
+					"t": 2657,
+					"length": 75,
+					"hex": "010000010102f2e578b15852550a000202080045000038004d0000ff01a3660a0002030a00020f00007e72ac00020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
+				}
+			],
+			"summary": {
+				"datagrams": 6,
+				"tzspHeaderNoTags": 6,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 6
+				},
+				"icmp": {
+					"0": 3,
+					"8": 3
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
+			}
+		}
+	],
+	"listenerPort": 40194,
+	"bootMs": 39982,
+	"router": {
+		"version": "7.25.1",
+		"versionString": "7.25.1",
+		"architecture": "arm64",
+		"board": "CHR QEMU QEMU Virtual Machine"
+	},
+	"snifferDefaults": {
+		"file-limit": "1000",
+		"file-name": "",
+		"filter-cpu": "",
+		"filter-direction": "any",
+		"filter-dst-ip-address": "",
+		"filter-dst-ipv6-address": "",
+		"filter-dst-mac-address": "",
+		"filter-dst-port": "",
+		"filter-interface": "",
+		"filter-ip-address": "",
+		"filter-ip-protocol": "",
+		"filter-ipv6-address": "",
+		"filter-mac-address": "",
+		"filter-mac-protocol": "",
+		"filter-operator-between-entries": "or",
+		"filter-port": "",
+		"filter-size": "",
+		"filter-src-ip-address": "",
+		"filter-src-ipv6-address": "",
+		"filter-src-mac-address": "",
+		"filter-src-port": "",
+		"filter-stream": "false",
+		"filter-vlan": "",
+		"max-packet-size": "2048",
+		"memory-limit": "100",
+		"memory-scroll": "true",
+		"only-headers": "false",
+		"quick-rows": "20",
+		"quick-show-frame": "false",
+		"running": "false",
+		"streaming-enabled": "false",
+		"streaming-server": "0.0.0.0:37008"
+	}
+}

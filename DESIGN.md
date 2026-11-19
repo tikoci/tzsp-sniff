@@ -55,14 +55,32 @@ host     listener (node:dgram, one unconnected socket per port)
 
 What is known about RouterOS's side, and from where:
 
-- **One capture so far**: `/tool/sniffer` streaming on RouterOS 7.26beta5,
-  x86 CHR on Linux/KVM, sends version 1, type 0 (received), encapsulation 1
-  (Ethernet) and the end tag alone: no timestamp, sensor or interface tag
-  (quickchr `examples/cmr/FINDINGS.md`, "Wire"; the bytes are in
-  `test/unit/tzsp.test.ts`).
-- **Unverified**: mangle `sniff-tzsp`, `sniff-id`, `only-headers`, other
-  versions and arm64, and whether any sender ever adds a tag. #5 captures
-  each on a CHR.
+- **Both senders, seen on CHRs** (#5, 2026-11-19 UTC;
+  `test/lab/tzsp-senders/REPORT.md`, fixtures in `test/fixtures/routeros/`):
+  for ICMP echo, `/tool/sniffer` streaming and mangle `sniff-tzsp` on
+  RouterOS 7.25.1 (stable) and 7.24.6 (long-term) x86_64 under KVM, and the
+  sniffer on 7.25.1 arm64 under TCG, sent version 1, type 0 (received),
+  encapsulation 1 (Ethernet) and the end tag alone, in every datagram
+  received: no timestamp, sensor, interface or original-length tag. The
+  first capture, 7.26beta5 x86 (quickchr `examples/cmr/FINDINGS.md`,
+  "Wire"; bytes in `test/unit/tzsp.test.ts`), agrees.
+  - The router's own echo requests, mirrored by mangle in `output` and
+    `postrouting`, came behind an Ethernet header with all-zero MACs;
+    replies mirrored in `prerouting` and `input` kept the link's MACs.
+  - `only-headers=yes` sent a 1000-byte ping as its first 60 bytes of
+    frame, with no tag giving the original length.
+  - `sniff-id` added no tag: a `sniff-tzsp` rule does not keep it. It is
+    kept by `action=sniff-pc`, which sends its own format, not TZSP: the id
+    in 4 bytes, 8 more bytes, then the IPv4 packet at byte 12, then
+    trailing bytes.
+  - `filter-stream` reads `false` by default. With `no` and a filter that
+    matches UDP, the sniffer captured its own stream, one TZSP layer per
+    pass: over 800 datagrams from one ping before a scheduled stop, whole
+    copies up to 30 layers, then IPv4 fragments.
+- **Unverified**: physical routers, wireless encapsulations, VLAN tags,
+  IPv6, traffic other than ICMP echo, mangle `forward`, other channels,
+  mangle or `only-headers` on arm64, and whether any sender adds a tag in
+  a case not tested.
 - **Decided: dispatch on record type and encapsulation.** Only type 0 with
   encapsulation 1 goes to Ethernet dissection. Keepalive (4) and
   port-opener (5) records carry no tag list (Wireshark `packet-tzsp.c`,
@@ -72,10 +90,11 @@ What is known about RouterOS's side, and from where:
 
 Attribution:
 
-- **Decided: time is host arrival time.** No sender seen so far includes a
-  timestamp tag. A tag 82 (`time-stamp`), if one appears, stays in the
-  record's tags as raw hex until #5 shows its format; arrival time is used
-  either way.
+- **Decided: time is host arrival time.** No timestamp tag was seen from
+  the senders tested in #5 (both, on 7.24.6 and 7.25.1 x86_64; the
+  sniffer only on 7.25.1 arm64). A tag 82 (`time-stamp`), if one appears,
+  stays in the record's tags as raw hex until a capture shows its format;
+  arrival time is used either way.
 - **Decided: a sender is observed UDP metadata, not an identity.** Each
   record carries the peer address and port as received and the label of the
   listener that received it. Neither authenticates a router. Under QEMU
@@ -319,10 +338,15 @@ file RouterOS saved, which has no TZSP peer or listener label: those fields
 are absent, not invented), and IP or Ethernet captures of UDP to the TZSP
 port are unwrapped to the datagram. Other link types are refused with a
 code. Input size is bounded before allocation: a hex line and a declared
-block length over the limit are errors, not allocations. MikroTik's
+block length over the limit are errors, not allocations. The file
+`/tool/sniffer` saved with `file-name=tzsp-lab-capture` (no extension) on
+a one-NIC CHR, 7.24.6 and 7.25.1 x86_64, is pcapng: little-endian, two
+Ethernet interfaces named `ether1 rx` and `ether1 tx` (one per
+direction), nanosecond timestamps, and a `cpu:0 fp:0` comment on each
+packet (#5; fixtures in `test/fixtures/routeros/`). MikroTik's
 [Packet Sniffer](https://help.mikrotik.com/docs/spaces/ROS/pages/8323088/Packet%20Sniffer)
-page says RouterOS saves pcapng since 7.20; that is the vendor's statement
-until a saved file is a fixture (#5).
+page dates pcapng from 7.20. Unlike TZSP, such a file does carry an
+interface, a direction and the router's time.
 
 ### Filters
 
@@ -358,9 +382,21 @@ with `--chain`).
   application protocols, negations and OR lists that would need several
   overlapping mangle rules (which could mirror a packet twice) are refused
   with a code that says to filter on the host instead. Which flags translate
-  is decided by CHR tests of both senders (#5), not by matching names.
+  is decided by CHR tests of both senders, not by matching names (#8). #5 did
+  not test translation; it saw that `filter-operator-between-entries`
+  defaults to `or`, and that with `and`, `filter-ip-protocol=icmp,udp`
+  streamed nothing.
+- **Decided: `setup` does not force `filter-stream=yes`** (maintainer,
+  2026-11-19). #5 saw it default to `no`, and with `no` and a UDP filter the
+  sniffer captured its own stream. `--help`, and `setup`'s output when a
+  filter could match the stream, explain `filter-stream` and the filtering
+  options instead of setting it silently.
 - A broad mangle rule must not match its own TZSP output; `setup` adds the
-  exclusion, and #5 checks that it holds.
+  exclusion. In #5 (7.24.6 and 7.25.1 x86_64), an `output` rule matching
+  UDP to the sniff target counted none of the TZSP datagrams another rule
+  sent there; a `postrouting` rule counted them, and the sniffer's stream,
+  and no further copy arrived. Only rules whose target was that same
+  address and port were tested; why no copy arrives is #9.
 
 ## Dissectors
 
@@ -525,4 +561,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
 
 - The exact JSONL record fields and the queue budget, settled with the
   first `listen` slice and pinned by tests.
-- Which `setup` filters translate to each sender, once #5 has CHR results.
+- Which `setup` filters translate to each sender (#8): #5 grounded the
+  senders' framing, not the filters. Each flag needs its own CHR test of
+  both senders before it translates; #5 saw `filter-operator-between-entries`
+  default to `or`, and `and` with `filter-ip-protocol=icmp,udp` stream
+  nothing.
