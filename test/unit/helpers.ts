@@ -149,14 +149,29 @@ export const fixtureInfo = (name: string) => {
 /** Send each datagram to 127.0.0.1:port, in order, from one socket. */
 export async function send(port: number, datagrams: (Uint8Array | string)[]) {
 	const socket = createSocket("udp4");
+	// Every socket error names its role, so a CI failure says which bind failed
+	// (the Windows leg showed a bare "bind EADDRINUSE 0.0.0.0").
+	let failure: Error | undefined;
+	socket.on("error", (error) => {
+		failure = new Error(`sender to port ${port} failed: ${error.message}`, {
+			cause: error,
+		});
+	});
 	try {
 		for (const d of datagrams) {
 			const data = typeof d === "string" ? bytes(d) : d;
 			await new Promise<void>((resolve, reject) =>
 				socket.send(data, port, "127.0.0.1", (error) =>
-					error ? reject(error) : resolve(),
+					error
+						? reject(
+								new Error(`sender to port ${port} failed: ${error.message}`, {
+									cause: error,
+								}),
+							)
+						: resolve(),
 				),
 			);
+			if (failure) throw failure;
 		}
 	} finally {
 		socket.close();
@@ -167,7 +182,13 @@ export async function send(port: number, datagrams: (Uint8Array | string)[]) {
 export function holdPort(port = 0): Promise<{ socket: Socket; port: number }> {
 	const socket = createSocket("udp4");
 	return new Promise((resolve, reject) => {
-		socket.once("error", reject);
+		socket.once("error", (error) =>
+			reject(
+				new Error(`binding port ${port} to hold it failed: ${error.message}`, {
+					cause: error,
+				}),
+			),
+		);
 		socket.bind({ port, address: "0.0.0.0" }, () =>
 			resolve({ socket, port: socket.address().port }),
 		);
