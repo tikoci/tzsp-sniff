@@ -423,6 +423,8 @@ describe("a file saved by /tool/sniffer", () => {
 				// rather than looping or reading past the end.
 				expect(len >= 12 && len % 4 === 0 && o + len <= b.length).toBe(true);
 				if (len < 12 || o + len > b.length) break;
+				// The trailing length repeats the leading one.
+				expect(b.readUInt32LE(o + len - 4)).toBe(len);
 				blocks.push(type);
 				if (type === 0x0a0d0d0a) expect(opts(o + 24, o + len - 4)).toEqual([]);
 				if (type === 1)

@@ -10,8 +10,9 @@
  * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created with
  * `quickchr add`, which refuses an existing name. Only owned machines are
  * configured or removed. They are removed when the run ends, fails, or gets
- * SIGINT or SIGTERM, and removal is verified; a machine that could not be
- * removed is named on stderr and the exit code is non-zero.
+ * SIGINT or SIGTERM (after the work in flight stops), and removal is
+ * verified; a machine that could not be removed is named on stderr and the
+ * exit code is non-zero. A second signal exits at once, naming what is left.
  *
  * Capture. One UDP listener per router on 127.0.0.1, port 0 (the kernel picks
  * a free port). The guest sends to the SLIRP gateway 10.0.2.2:<port>, which
@@ -27,7 +28,7 @@
  * that fails writes its partial evidence to .scratch/tzsp-lab/ instead.
  * `fixtures.ts` turns evidence/ into test/fixtures/routeros/.
  */
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
 import {
@@ -68,6 +69,8 @@ const REST_BASE_MS = 20_000;
 const TEARDOWN_MS = 180_000;
 const SCP_MS = 60_000;
 const QUICKCHR_MS = 30_000;
+/** quickchr 0.5.2 for a name it does not know: `Machine "<name>" not found.`, exit 1. */
+const NOT_FOUND = /Machine "[^"]+" not found/;
 
 type Target = { channel: "stable" | "long-term"; arch: "x86" | "arm64" };
 
@@ -261,10 +264,14 @@ export function readPcapng(b: Buffer): Pcapng {
 		}
 		return found;
 	};
-	for (let o = 0; o + 12 <= b.length; ) {
+	let o = 0;
+	for (; o + 12 <= b.length; ) {
 		const type = b.readUInt32LE(o);
 		const len = b.readUInt32LE(o + 4);
-		if (len < 12 || o + len > b.length) throw new Error("bad block length");
+		if (len < 12 || len % 4 !== 0 || o + len > b.length)
+			throw new Error("bad block length");
+		if (b.readUInt32LE(o + len - 4) !== len)
+			throw new Error("trailing block length differs");
 		if (type === 0x0a0d0d0a) {
 			if (Object.keys(options(o + 24, o + len - 4)).length > 0)
 				throw new Error("section header has options");
@@ -280,6 +287,8 @@ export function readPcapng(b: Buffer): Pcapng {
 			});
 		} else if (type === 6) {
 			const captured = b.readUInt32LE(o + 20);
+			if (28 + Math.ceil(captured / 4) * 4 > len - 4)
+				throw new Error("packet data past its block");
 			const opt = options(o + 28 + Math.ceil(captured / 4) * 4, o + len - 4);
 			if (Object.keys(opt).join(",") !== "1")
 				throw new Error("packet options other than one comment");
@@ -298,14 +307,29 @@ export function readPcapng(b: Buffer): Pcapng {
 		}
 		o += len;
 	}
+	if (o !== b.length) throw new Error("bytes after the last block");
 	return out;
 }
 
-/** The saved file holds only this lab's pings, and names only ether interfaces. */
-function checkPcapng(file: Pcapng): string | undefined {
-	for (const i of file.interfaces)
+/**
+ * The saved file is what the evidence claims: Ethernet interfaces named for
+ * an ether port and direction, nanosecond timestamps, and only this lab's
+ * pings, whole (captured = original) and in time order.
+ */
+export function checkPcapng(file: Pcapng): string | undefined {
+	for (const i of file.interfaces) {
 		if (!/^ether\d+ (rx|tx)$/.test(i.name)) return `interface ${i.name}`;
+		if (i.linkType !== 1) return `link type ${i.linkType}, not Ethernet`;
+		if (i.tsresol !== 9) return `if_tsresol ${i.tsresol}, not nanoseconds`;
+	}
+	let last = 0n;
 	for (const p of file.packets) {
+		const iface = file.interfaces[p.iface];
+		if (!iface) return `a packet on interface ${p.iface}, which is not defined`;
+		if (p.captured !== p.original || p.captured > iface.snapLen)
+			return "a packet that was cut short";
+		if (p.ts === 0n || p.ts < last) return "a timestamp out of order";
+		last = p.ts;
 		if (!/^cpu:\d+ fp:\d+$/.test(p.comment)) return "a packet comment";
 		if (!isLabIcmpFrame(p.data)) return "a packet that is not the lab's ICMP";
 	}
@@ -336,6 +360,9 @@ interface Ran {
 	timedOut: boolean;
 }
 
+/** Children still running, so a signal can stop them. */
+const children = new Set<ChildProcess>();
+
 /** Run a child; past `timeoutMs` it is killed. No deadline when undefined. */
 function run(
 	argv: string[],
@@ -347,6 +374,7 @@ function run(
 			env: opts.env ?? childEnv(),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
+		children.add(child);
 		let stdout = "";
 		let stderr = "";
 		let timedOut = false;
@@ -364,10 +392,12 @@ function run(
 			stderr += b.toString();
 		});
 		child.on("close", (code) => {
+			children.delete(child);
 			clearTimeout(timer);
 			resolve({ code: code ?? -1, stdout, stderr, timedOut });
 		});
 		child.on("error", (e) => {
+			children.delete(child);
 			clearTimeout(timer);
 			resolve({ code: -1, stdout, stderr: String(e), timedOut });
 		});
@@ -393,7 +423,10 @@ function teardown(name: string): Promise<boolean> {
 		const left = await run(["quickchr", "list", name, "--json"], {
 			timeoutMs: QUICKCHR_MS,
 		});
-		const gone = left.code !== 0 && /not found/.test(left.stdout + left.stderr);
+		const gone =
+			left.code !== 0 &&
+			!left.timedOut &&
+			NOT_FOUND.test(left.stdout + left.stderr);
 		if (gone) owned.delete(name);
 		return gone;
 	})();
@@ -415,15 +448,23 @@ async function cleanupAll(): Promise<string[]> {
 	return names.filter((_, i) => !results[i]);
 }
 
-let interrupted = false;
+/**
+ * A signal stops work; the main task then removes machines and exits, so
+ * removal never races a step still using a machine. The handler stops the
+ * running children and REST calls, and `experiment` checks between steps.
+ * A second signal exits at once and names what is left.
+ */
+let interrupted: "SIGINT" | "SIGTERM" | undefined;
+const stopping = new AbortController();
 function onSignal(signal: "SIGINT" | "SIGTERM"): void {
-	if (interrupted) return;
-	interrupted = true;
-	console.error(`${signal}: removing this run's machines`);
-	void cleanupAll().then((left) => {
-		for (const n of left) console.error(`NOT REMOVED: ${n}`);
+	if (interrupted) {
+		for (const n of owned) console.error(`NOT REMOVED: ${n}`);
 		process.exit(signal === "SIGINT" ? 130 : 143);
-	});
+	}
+	interrupted = signal;
+	console.error(`${signal}: stopping, then removing this run's machines`);
+	stopping.abort();
+	for (const child of children) child.kill("SIGTERM");
 }
 
 /* ------------------------------------------------------------- listener */
@@ -552,7 +593,10 @@ class Router {
 					"content-type": "application/json",
 				},
 				...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-				signal: AbortSignal.timeout(init.timeoutMs ?? REST_BASE_MS),
+				signal: AbortSignal.any([
+					AbortSignal.timeout(init.timeoutMs ?? REST_BASE_MS),
+					stopping.signal,
+				]),
 			});
 			const text = await res.text();
 			let body: unknown = text;
@@ -630,6 +674,7 @@ async function experiment(
 	};
 	c.ev.experiments.push(exp);
 	for (const action of actions) {
+		if (interrupted) throw new StepError(`${name}: ${interrupted}`);
 		if (typeof action !== "string") {
 			await action(exp);
 			continue;
@@ -1001,8 +1046,14 @@ async function provision(target: Target): Promise<string> {
 	const exists = await run(["quickchr", "list", name, "--json"], {
 		timeoutMs: QUICKCHR_MS,
 	});
+	// Only quickchr's own "not found" proves the name is free; a timeout or
+	// any other failure stops here, before `add`.
 	if (exists.code === 0)
 		throw new Error(`${name} already exists; not touching it`);
+	if (exists.timedOut || !NOT_FOUND.test(exists.stdout + exists.stderr))
+		throw new Error(
+			`quickchr list ${name} ${exists.timedOut ? "timed out" : `exited ${exists.code}`}; not creating a machine`,
+		);
 	if (interrupted) throw new Error("interrupted; not creating a machine");
 	// Owned from here: the name was absent and is random, and `add` refuses
 	// an existing name, so what `add` leaves behind is this run's.
@@ -1143,5 +1194,6 @@ if (import.meta.main) {
 	const failed = results.some(
 		(r) => r.status === "rejected" || r.value.includes(false),
 	);
+	if (interrupted) process.exit(interrupted === "SIGINT" ? 130 : 143);
 	process.exit(failed || left.length > 0 ? 1 : 0);
 }
