@@ -22,8 +22,10 @@ README.md is the user overview.
 ## Layout
 
 - `src/`: shipped library code. `src/index.ts` is the package entry.
-- `test/unit/`: `bun:test`, no network or VM. `test/smoke/`: the Node check
-  against `dist/`.
+- `test/unit/`: `bun:test`, loopback sockets only: no external network and
+  no VM. `test/smoke/`: the Node check
+  against `dist/`. `test/node/`: `bun:test` cases that run the built CLI
+  under Node (after `bun run build`).
 - `scripts/`: repo tooling run by Bun.
 - `.scratch/`: gitignored temporary work.
 
@@ -94,6 +96,10 @@ with its scope, a "Done when" checklist and what it leaves out.
   (`TZSP_SNIFF_*`).
 
 ## House exceptions
+
+- **No `--json` document mode**: `--format jsonl` is the machine output,
+  and `jq -s .` makes one document from it (tikoci-cli-mcp, "Output";
+  DESIGN.md, "Decided: JSONL, no `--format json`").
 
 - **Biome formatter on** (tabs, double quotes; Markdown excluded), from the
   first commit: in a repo with no prior code it costs no noisy diffs, and

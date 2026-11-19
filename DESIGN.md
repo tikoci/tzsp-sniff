@@ -139,10 +139,11 @@ exports, all usable from Node and Bun:
 
 ```typescript
 parseTzsp(datagram: Uint8Array): TzspDatagram          // exists: kind, datagram, problem
-dissect(frame: Uint8Array, options?): Dissection         // layers, never throws
-listen(options): AsyncIterable<Capture>                  // ports, limits, signal
+dissect(frame: Uint8Array): Dissection                   // exists: layers, never throws
+listen(options): Promise<Listener>                       // exists: ports, queue, signal
+openCapture(options): Promise<CaptureStream>             // exists: limits, counters, records
+summarize(): StatsAccumulator                            // exists: bounded, see Limits
 createFilter(spec): (capture: Capture) => boolean
-summarize(): StatsAccumulator                            // bounded, see Limits
 pcapngWriter(sink): CaptureWriter                        // streaming, with backpressure
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
@@ -161,6 +162,15 @@ dissectors(): DissectorInfo[]                            // what can be decoded
 A TUI, an MCP server or a centrs command is an adapter over these, not a
 second implementation.
 
+**Decided: `listen()` resolves once every port is bound** (first slice,
+2026-11-19), rather than returning an iterable that binds lazily. A bind
+failure then rejects before any record, and a caller that bound port 0
+learns the port before the router is pointed at it. The `Listener` is the
+async iterable, with the bound ports, its counters and a `closed` promise
+that resolves when every socket has closed. `openCapture()` is the shared
+core every surface uses: it adds the limits, dissection, counters and the
+record stream (`src/records.ts` has the record types).
+
 ### Lifecycle
 
 **Requirement.** The listener owns its sockets, timers and listeners, and
@@ -176,24 +186,46 @@ releases all of them on every way a capture can end:
   and close every socket;
 - asynchronous `dgram` errors after bind end the capture with a coded error.
 
+A closed stdout pipe is seen at the next write: a pipe gives no sign that
+its reader left while nothing is written (on Linux, a zero-byte write to a
+pipe returns before it checks for a reader), so a quiet `--follow | head`
+ends at the next datagram, a limit or Ctrl-C. `--count` stops on its own.
+A terminal that stops reading (Ctrl-S, an unread pane) must not hang the
+capture. Node and Bun both write to a TTY with blocking `write()` calls on
+the main thread, so a full terminal stops every timer and the SIGINT
+handler, and the port stays bound (Node 26.12.1, Bun 1.4.4 and 1.4.5,
+Linux x86_64). The CLI writes its terminal streams so the main thread
+never blocks (`terminalStream` in `src/cli/sink.ts`): on Node by turning
+off the handle's blocking mode, on Bun, which has no handle on a TTY
+stream, through `fs.write` on the thread pool. `output/stalled` then
+fires as it does for a pipe. Tests put stdout on a libc pseudo-terminal
+that nobody reads, for Bun (`test/unit/bin.test.ts`) and for the built CLI
+under Node (`test/node/`). Windows is not covered: its consoles are not
+measured, and Node writes a Windows stdout pipe synchronously (BACKLOG.md).
+
 Tests for each: fail the second bind, cancel an idle capture, break the
 iteration, close the pipe, then bind the same port again to prove it was
-released.
+released. On Windows the OS frees a UDP port a few milliseconds after the
+socket's `close` event (about 10 ms on windows-latest under Bun 1.4.4, CI
+run 44521692931), so there the rebind is retried for up to 500 ms; on Linux
+and macOS it must succeed at once.
 
 ### Limits
 
 **Requirement.** UDP cannot slow its sender, so every buffer is bounded:
 
 - **Queue**: a default budget of datagrams and bytes between the socket and
-  the consumer. When it is full, new datagrams are dropped and counted; a
+  the consumer: 10,000 datagrams or 16 MiB, whichever fills first
+  (`DEFAULT_QUEUE`; a few seconds of a busy stream, or 256 datagrams at the
+  UDP maximum). When it is full, new datagrams are dropped and counted; a
   `capture/dropped` warning and the summary give the count. A capture with
   drops never reports itself as complete.
 - **Summary**: conversation and sender tables are capped (a top-N plus an
   "other" bucket and a count of what was folded), so a long `--follow` holds
   constant memory.
-- **`--format json`** holds the whole result until the end, so it requires a
-  `--count` or `--duration` limit and refuses `--follow` with a code that
-  names `--format jsonl`.
+- **No output holds the whole capture**: every format writes each record
+  as it comes, which is why there is no `--format json` (see "Decided:
+  JSONL, no `--format json`").
 - **Writers stream** with backpressure; a sink that stalls past a timeout
   ends the capture with a coded error instead of growing the queue.
 - **Parsers** are bounded too; see "Dissectors".
@@ -220,10 +252,13 @@ the default.
   the flags it conflicts with. A flag given to a command it does not apply to
   is refused with a code that names where it does apply (tikoci-cli-mcp,
   "Refuse, never drop"): `decode --follow`; `--fields` or `--stats` with
-  `--format pcapng`; `--follow` with `--count` or `--duration`.
+  `--format pcapng`; `--follow` with `--count`, `--duration` or
+  `--idle`; `--detail` with `--stats`.
 - `--help` is answered before dispatch; the scan stops at a bare `--`. Tests
   hold registry and help in step, and cover `--`.
-- Every flag has a `TZSP_SNIFF_<KEY>` environment variable; a flag given on
+- Every flag has a `TZSP_SNIFF_<KEY>` environment variable (not built yet:
+  the first slice reads no environment variable, so a `.env` cannot reach
+  it); a flag given on
   the command line replaces the variable entirely (a repeated `--port`
   replaces the variable's list, it does not extend it), and `--no-<flag>`
   overrides a variable that turned it on.
@@ -243,10 +278,36 @@ Three knobs keep answers small, from cheapest to richest:
 - `--fields a,b,c`: only the named fields, in that order. Record `type` and,
   on a summary, `status` cannot be removed.
 
-`--format text|jsonl|json|pcapng`. Text is the default, one line per packet,
+`--format text|jsonl|pcapng`. Text is the default, one line per packet,
 plain when stdout is not a terminal or `NO_COLOR` is set. `jsonl` is one
-record per line and is the streaming form; `json` is one document at the end
-(see Limits); `pcapng` writes the file format below to stdout.
+record per line, the machine-readable form; `pcapng` writes the file format
+below to stdout.
+
+**Decided: JSONL, no `--format json`** (maintainer, first slice,
+2026-11-19). tikoci-cli-mcp's rule stands: a tool offers a `--json` mode
+that keeps everything in one document unless there are reasons not to.
+Here there are:
+
+- A capture is a stream of UDP datagrams, and a JSON document is valid only
+  once it is complete. It must hold every record until the end, so it needed
+  its own limit rule, a refusal of `--follow`, an entry and byte cap with
+  its own stop reason, and a writer that never builds one string, and a
+  capture cut off by a kill or a broken pipe left nothing parseable. A cut
+  JSONL stream keeps every line written, and the missing `summary` says it
+  was cut.
+- Wrapping is one command after the fact: `jq` reads JSONL as it is, and
+  `jq -s .` makes one array.
+- A library caller adapts the record stream to whatever shape it needs, an
+  MCP tool's bounded result included, so no surface needs the CLI to build
+  a document.
+- The JSONL records already carry what the house rule wants kept together:
+  the `header`, `warning` and `tip` records with their codes, and the
+  `summary` with its status and error, all on stdout.
+
+`--format json` is refused as `cli/invalid-value` with a fix that names
+`--format jsonl` and `jq -s .`, so an agent that tries it out of habit
+learns the format in one step. The first slice shipped json behind
+`--count` or `--duration` and was changed before release.
 
 **Decided: the output shape is this tool's own.** It is not centrs's envelope
 (`ok`, `data`, `warnings`, `tips`, `error`), which fits centrs's
@@ -256,8 +317,13 @@ its `tools` commands return; `tools btest` has the same question there.
 ### Counters and `--expect`
 
 **Requirement.** The summary counts, separately: datagrams received,
-control records, unsupported records, malformed datagrams, packets removed
-by filters, packets dropped by the queue, and packets reported. `--count`
+control records, unsupported records, invalid datagrams (truncated or
+malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
+dropped by the queue, datagrams still queued when a limit stopped the
+capture (`unread`), and packets reported; all but the first add up to it.
+The summary also says what stopped the capture (`stoppedBy`: `count`,
+`duration`, `idle`, `interrupt` or `error`): whichever
+ended intake first, and nothing later changes it. `--count`
 and `--expect` count **packets reported** (after filters). `--idle` is time
 since the last datagram received, of any kind, starting when the sockets
 are bound.
@@ -275,7 +341,11 @@ different fix:
 **Decided:** `--expect N` turns fewer than N packets reported into exit 1
 with error `capture/expect-unmet`, also when the capture ended by SIGINT;
 the error carries the same case as the table. Without `--expect`, SIGINT
-ends a capture normally (summary written, exit 0).
+ends a capture normally (summary written, exit 0). SIGINT before the
+sockets are bound exits 130, the shell's code for it: no header or summary
+was written, so it is not reported as an empty capture. A second SIGINT
+also exits 130, at once and without the summary; the stream may already
+hold a header and records, and its missing summary marks it cut off.
 
 ### Stream termination
 
@@ -286,9 +356,9 @@ ends with exactly one `summary` record whose `status` is `complete`,
 code when there is one. Between them: `packet`, `record` (control,
 unsupported or malformed), `warning` and `tip`, as they happen. A stream
 with no `summary` was cut off (the process was killed or the pipe broke)
-and a reader treats it as failed. In `--format json` the same information
-is in one document. In text and pcapng formats, warnings, tips, errors and
-the summary go to stderr. Tests read each stream to EOF and check the last
+and a reader treats it as failed. In text and pcapng formats, warnings, tips, errors and
+the summary go to stderr, except that text with `--stats` writes the summary to
+stdout as the result. Tests read each stream to EOF and check the last
 record, not only the ones before it.
 
 ### `--write`: capture now, look later
@@ -559,8 +629,6 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
 
 ## Open questions
 
-- The exact JSONL record fields and the queue budget, settled with the
-  first `listen` slice and pinned by tests.
 - Which `setup` filters translate to each sender (#8): #5 grounded the
   senders' framing, not the filters. Each flag needs its own CHR test of
   both senders before it translates; #5 saw `filter-operator-between-entries`

@@ -14,6 +14,9 @@
 			"default": "./dist/index.js"
 		}
 	},
+	"bin": {
+		"tzsp-sniff": "dist/cli/bin.js"
+	},
 	"files": [
 		"dist/",
 		"README.md",
@@ -26,7 +29,7 @@
 		"bun": ">=1.4.4"
 	},
 	"scripts": {
-		"check": "bun run lint && bun run test && bun run build && bun run test:node",
+		"check": "bun run lint && bun run test && bun run build && bun run test:node && bun run test:node-terminal",
 		"lint": "bun run lint:types && bun run lint:code && bun run lint:markdown && bun run lint:words && bun run lint:bun-pin && bun run lint:external",
 		"lint:types": "tsc -p tsconfig.json && tsc -p tsconfig.src.json",
 		"lint:code": "biome check --error-on-warnings .",
@@ -37,8 +40,9 @@
 		"lint:fix": "biome check --write .",
 		"test": "bun test test/unit",
 		"test:coverage": "bun test --coverage test/unit",
-		"build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
+		"build": "rm -rf dist && bun build src/index.ts src/cli/bin.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
 		"test:node": "node test/smoke/node-smoke.mjs",
+		"test:node-terminal": "bun test test/node",
 		"audit": "bun scripts/audit.ts"
 	},
 	"devDependencies": {

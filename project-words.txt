@@ -1,6 +1,7 @@
 # Project dictionary for cspell. One word per line, sorted case-insensitively
 # (checked by `bun run lint:words`). A word that is not obvious says what it is
 # after " # ".
+ack # TCP acknowledgment
 actionlint # GitHub Actions workflow linter
 backpressure
 BPF # Berkeley Packet Filter
@@ -11,39 +12,54 @@ CHR # Cloud Hosted Router: RouterOS as a VM
 cmdline # /proc/<pid>/cmdline
 CMR # MikroTik Centralized Management for RouterOS (/cmr)
 crossref # tikoci-crossref, the house map of repos
+cwr # TCP congestion window reduced flag
 datagram
 datagrams
 dgram # node:dgram, the UDP socket module
 dissector
 dissectors
+dont # as in dontFragment, the IPv4 DF flag
+ece # TCP ECN-echo flag
 EtherType
 EtherTypes
 FFI # foreign function interface
 GRE
+hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward
+ICMPV # as in ICMPV6_TYPES
+igmp # Internet Group Management Protocol
+ipip # IP-in-IP
 keepalive
 keepalives
 KVM
+libc
 LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
 MikroTik
+mld # Multicast Listener Discovery (ICMPv6)
+mldv # as in mldv2-report
 MNDP # MikroTik Neighbor Discovery Protocol
 NIC # network interface card
 OSPF
 pcapng
+pim # Protocol Independent Multicast
+plen # ARP protocol address length
 postrouting # RouterOS firewall chain
 prerouting # RouterOS firewall chain
+psh # TCP push flag
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
 restraml # RouterOS command schemas, https://github.com/tikoci/restraml
 REUSEPORT # as in SO_REUSEPORT, the socket option
 RoMON # MikroTik Router Management Overlay Network
 routeros
+rst # TCP reset flag
 SCP # secure copy
 shellcheck
 SLIRP # QEMU user-mode networking
 TCG # QEMU's software CPU emulator (Tiny Code Generator)
+TCI # 802.1Q tag control information
 tcpdump
 tikoci
 TLV # type, length, value
@@ -52,6 +68,8 @@ TSHARK
 tsresol # pcapng if_tsresol, the timestamp resolution option
 TZSP # TaZmen Sniffer Protocol
 UDP
+urg # TCP urgent flag
+VID # 802.1Q VLAN identifier
 VRRP
 Wireshark
 Wireshark's
