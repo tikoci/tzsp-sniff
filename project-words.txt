@@ -2,6 +2,7 @@
 # (checked by `bun run lint:words`). A word that is not obvious says what it is
 # after " # ".
 actionlint # GitHub Actions workflow linter
+backpressure
 BPF # Berkeley Packet Filter
 btest # MikroTik bandwidth test
 bunx # Bun's npx
@@ -18,7 +19,10 @@ EtherType
 EtherTypes
 FFI # foreign function interface
 GRE
+hostfwd # QEMU user-mode host-to-guest port forward
+keepalive
 keepalives
+KVM
 LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
