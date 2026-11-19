@@ -206,13 +206,9 @@ and macOS it must succeed at once.
 - **Summary**: conversation and sender tables are capped (a top-N plus an
   "other" bucket and a count of what was folded), so a long `--follow` holds
   constant memory.
-- **`--format json`** holds the whole result until the end, so it requires a
-  `--count` or `--duration` limit and refuses `--follow` with a code that
-  names `--format jsonl`. Control and invalid records do not advance
-  `--count`, and full-detail entries can be large, so the document also
-  stops at 10,000 entries or 64 MiB of entry JSON (`stoppedBy:
-  record-limit`, status `incomplete`, warning `capture/record-limit`), and
-  is written piece by piece rather than as one string.
+- **No output holds the whole capture**: every format writes each record
+  as it comes, which is why there is no `--format json` (see "Decided:
+  JSONL, no `--format json`").
 - **Writers stream** with backpressure; a sink that stalls past a timeout
   ends the capture with a coded error instead of growing the queue.
 - **Parsers** are bounded too; see "Dissectors".
@@ -265,10 +261,36 @@ Three knobs keep answers small, from cheapest to richest:
 - `--fields a,b,c`: only the named fields, in that order. Record `type` and,
   on a summary, `status` cannot be removed.
 
-`--format text|jsonl|json|pcapng`. Text is the default, one line per packet,
+`--format text|jsonl|pcapng`. Text is the default, one line per packet,
 plain when stdout is not a terminal or `NO_COLOR` is set. `jsonl` is one
-record per line and is the streaming form; `json` is one document at the end
-(see Limits); `pcapng` writes the file format below to stdout.
+record per line, the machine-readable form; `pcapng` writes the file format
+below to stdout.
+
+**Decided: JSONL, no `--format json`** (maintainer, first slice,
+2026-11-19). tikoci-cli-mcp's rule stands: a tool offers a `--json` mode
+that keeps everything in one document unless there are reasons not to.
+Here there are:
+
+- A capture is a stream of UDP datagrams, and a JSON document is valid only
+  once it is complete. It must hold every record until the end, so it needed
+  its own limit rule, a refusal of `--follow`, an entry and byte cap with
+  its own stop reason, and a writer that never builds one string, and a
+  capture cut off by a kill or a broken pipe left nothing parseable. A cut
+  JSONL stream keeps every line written, and the missing `summary` says it
+  was cut.
+- Wrapping is one command after the fact: `jq` reads JSONL as it is, and
+  `jq -s .` makes one array.
+- A library caller adapts the record stream to whatever shape it needs, an
+  MCP tool's bounded result included, so no surface needs the CLI to build
+  a document.
+- The JSONL records already carry what the house rule wants kept together:
+  the `header`, `warning` and `tip` records with their codes, and the
+  `summary` with its status and error, all on stdout.
+
+`--format json` is refused as `cli/invalid-value` with a fix that names
+`--format jsonl` and `jq -s .`, so an agent that tries it out of habit
+learns the format in one step. The first slice shipped json behind
+`--count` or `--duration` and was changed before release.
 
 **Decided: the output shape is this tool's own.** It is not centrs's envelope
 (`ok`, `data`, `warnings`, `tips`, `error`), which fits centrs's
@@ -283,7 +305,7 @@ malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
 dropped by the queue, datagrams still queued when a limit stopped the
 capture (`unread`), and packets reported; all but the first add up to it.
 The summary also says what stopped the capture (`stoppedBy`: `count`,
-`duration`, `idle`, `record-limit`, `interrupt` or `error`): whichever
+`duration`, `idle`, `interrupt` or `error`): whichever
 ended intake first, and nothing later changes it. `--count`
 and `--expect` count **packets reported** (after filters). `--idle` is time
 since the last datagram received, of any kind, starting when the sockets
@@ -313,8 +335,7 @@ ends with exactly one `summary` record whose `status` is `complete`,
 code when there is one. Between them: `packet`, `record` (control,
 unsupported or malformed), `warning` and `tip`, as they happen. A stream
 with no `summary` was cut off (the process was killed or the pipe broke)
-and a reader treats it as failed. In `--format json` the same information
-is in one document. In text and pcapng formats, warnings, tips, errors and
+and a reader treats it as failed. In text and pcapng formats, warnings, tips, errors and
 the summary go to stderr. Tests read each stream to EOF and check the last
 record, not only the ones before it.
 

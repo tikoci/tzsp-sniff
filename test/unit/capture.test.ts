@@ -415,22 +415,6 @@ describe("openCapture", () => {
 		});
 	});
 
-	test("recordLimit stops at that many entries of any kind, as incomplete", async () => {
-		const { records, summary } = await readAll(
-			{ recordLimit: 2, durationMs: 5000 },
-			(s) => send(portOf(s), [KEEPALIVE, KEEPALIVE, KEEPALIVE]),
-		);
-		expect(ofType(records, "record")).toHaveLength(2);
-		expect(ofType(records, "warning").map((w) => w.code)).toContain(
-			"capture/record-limit",
-		);
-		expect(summary).toMatchObject({
-			status: "incomplete",
-			stoppedBy: "record-limit",
-		});
-		expect(sumOf(summary.counters)).toBe(summary.counters.datagrams);
-	});
-
 	test("an abort ends intake for good: a duration that fires later does not become the reason", async () => {
 		const controller = new AbortController();
 		const stream = await openCapture({
@@ -496,18 +480,6 @@ describe("openCapture", () => {
 		expect((records.at(-1) as SummaryRecord).error).toMatchObject({
 			code: "capture/expect-unmet",
 			case: "capture/dropped",
-		});
-	});
-
-	test("recordBytes stops once the entries' JSON reaches that size", async () => {
-		const { records, summary } = await readAll(
-			{ recordBytes: 1, durationMs: 5000, detail: "full" },
-			(s) => send(portOf(s), [REQUEST, REQUEST]),
-		);
-		expect(ofType(records, "packet")).toHaveLength(1);
-		expect(summary).toMatchObject({
-			status: "incomplete",
-			stoppedBy: "record-limit",
 		});
 	});
 });

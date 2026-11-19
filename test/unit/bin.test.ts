@@ -101,7 +101,7 @@ describe("tzsp-sniff executable", () => {
 		const result = await run(["--format", "json"]);
 		expect(result.code).toBe(2);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("error cli/json-needs-limit");
+		expect(result.stderr).toContain("error cli/invalid-value");
 	});
 
 	// Windows has no SIGINT to send to a child; the interrupt path is covered

@@ -71,16 +71,16 @@ export const FLAGS: readonly FlagSpec[] = [
 	},
 	{
 		name: "format",
-		value: "text|jsonl|json",
+		value: "text|jsonl",
 		commands: ["listen"],
-		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last. json: one document at the end; needs --count or --duration.",
+		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array.",
 	},
 	{
 		name: "detail",
 		value: "line|summary|layers|full",
 		commands: ["listen"],
 		conflicts: ["stats"],
-		help: "How much each packet carries: line (text's default), summary (adds addresses, ports, protocols, flags; jsonl's and json's default), layers (adds every layer's fields), full (adds the datagram as hex).",
+		help: "How much each packet carries: line (text's default), summary (adds addresses, ports, protocols, flags; jsonl's default), layers (adds every layer's fields), full (adds the datagram as hex).",
 	},
 	{
 		name: "stats",

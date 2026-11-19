@@ -43,14 +43,15 @@ tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
 ```
 
 With no limit, it stops after 10 seconds and says so, so a guessed command
-never hangs; `--format json`, which holds everything until the end, needs
-an explicit `--count` or `--duration` instead. stdout is the result; in text format the start line, warnings,
+never hangs. stdout is the result; in text format the start line, warnings,
 tips and the summary go to stderr, except that with `--stats` the summary
 is the result, on stdout. `--detail line|summary|layers|full` sets
 how much each packet carries, cheapest first. A JSONL stream starts with a
 `header` record and ends with one `summary` (`complete`, `interrupted`,
 `incomplete` when datagrams were dropped, or `error`); a stream without a
-summary was cut off. An empty capture exits 0 with a warning saying which
+summary was cut off. `jq` reads the stream as it is, and `jq -s .` turns it
+into one array; there is no `--format json`, since a capture is a stream.
+An empty capture exits 0 with a warning saying which
 case it was (`capture/no-datagrams`, `capture/no-frames`); `--expect <n>`
 makes too few packets exit 1. `tzsp-sniff --help` has every flag.
 

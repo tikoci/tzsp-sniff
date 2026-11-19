@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
 import {
 	DEFAULT_DURATION_MS,
-	JSON_MAX_BYTES,
-	JSON_MAX_RECORDS,
 	helpText,
 	type Io,
 	main,
@@ -206,22 +204,31 @@ describe("plan: flags to capture options", () => {
 		expect(planOf(["--follow"]).options.durationMs).toBeUndefined();
 	});
 
-	test("json bounds its document; other formats do not", () => {
-		expect(
-			planOf(["--format", "json", "--count", "1"]).options.recordLimit,
-		).toBe(JSON_MAX_RECORDS);
-		expect(planOf(["--format", "jsonl"]).options.recordLimit).toBeUndefined();
-		expect(
-			planOf(["--format", "json", "--count", "1"]).options.recordBytes,
-		).toBe(JSON_MAX_BYTES);
-		expect(planOf(["--format", "jsonl"]).options.recordBytes).toBeUndefined();
+	test("json is refused whatever the limits, with a fix that names jsonl", () => {
+		for (const extra of [
+			[],
+			["--count", "1"],
+			["--duration", "5s"],
+			["--follow"],
+		]) {
+			let caught: unknown;
+			try {
+				planOf(["--format", "json", ...extra]);
+			} catch (error) {
+				caught = error;
+			}
+			expect({ extra, caught }).toMatchObject({
+				extra,
+				caught: {
+					code: "cli/invalid-value",
+					fix: expect.stringContaining("--format jsonl"),
+				},
+			});
+		}
 	});
 
-	test("jsonl and json default to summary detail", () => {
+	test("jsonl defaults to summary detail", () => {
 		expect(planOf(["--format", "jsonl"]).options.detail).toBe("summary");
-		expect(planOf(["--format", "json", "--count", "1"]).options.detail).toBe(
-			"summary",
-		);
 		expect(
 			planOf(["--format", "jsonl", "--detail", "line"]).options.detail,
 		).toBe("line");
@@ -264,16 +271,7 @@ describe("plan: flags to capture options", () => {
 		}
 	});
 
-	test("refusals that need two flags", () => {
-		expect(codeOf(() => planOf(["--format", "json"]))).toBe(
-			"cli/json-needs-limit",
-		);
-		expect(codeOf(() => planOf(["--format", "json", "--idle", "5s"]))).toBe(
-			"cli/json-needs-limit",
-		);
-		expect(codeOf(() => planOf(["--format", "json", "--follow"]))).toBe(
-			"cli/json-needs-limit",
-		);
+	test("refusals", () => {
 		expect(codeOf(() => planOf(["--count", "2", "--expect", "3"]))).toBe(
 			"cli/flag-conflict",
 		);
@@ -302,7 +300,7 @@ describe("main", () => {
 		expect(await main(["--format", "json"], m.io)).toBe(2);
 		expect(m.stdout()).toBe("");
 		expect(m.stderr()).toMatch(
-			/^error cli\/json-needs-limit: .*\n {2}fix: .*--format jsonl/,
+			/^error cli\/invalid-value: --format does not take json.*\n {2}fix: Use --format jsonl/,
 		);
 	});
 
@@ -390,29 +388,6 @@ describe("main", () => {
 		).toBe(0);
 		expect(m.stdout()).toMatch(/^summary: complete, stopped by duration/);
 		expect(m.stderr()).toContain("warning capture/no-datagrams");
-	});
-
-	test("json: one document with every section, written in pieces", async () => {
-		const m = memoryIo();
-		expect(
-			await main(
-				["--port", "0", "--duration", "50ms", "--format", "json"],
-				m.io,
-			),
-		).toBe(0);
-		// No single write holds the document: header, each section and the
-		// summary go out separately.
-		expect(m.out.length).toBeGreaterThan(5);
-		const doc = JSON.parse(m.stdout());
-		expect(Object.keys(doc)).toEqual([
-			"header",
-			"packets",
-			"records",
-			"warnings",
-			"tips",
-			"summary",
-		]);
-		expect(doc.warnings[0].code).toBe("capture/no-datagrams");
 	});
 
 	test("--expect unmet: exit 1 and the error on stderr, also after an interrupt", async () => {

@@ -66,11 +66,6 @@ export const CODES = {
 		kind: "error",
 		summary: "A positional argument the command does not take.",
 	},
-	"cli/json-needs-limit": {
-		kind: "error",
-		summary:
-			"--format json holds every record until the end, so it needs --count or --duration.",
-	},
 	"capture/dropped": {
 		kind: "warning",
 		summary:
@@ -79,10 +74,6 @@ export const CODES = {
 	"capture/no-datagrams": {
 		kind: "warning",
 		summary: "Nothing arrived on any listener.",
-	},
-	"capture/record-limit": {
-		kind: "warning",
-		summary: "The capture stopped at the most entries the output format holds.",
 	},
 	"capture/unread": {
 		kind: "warning",

@@ -54,17 +54,10 @@ export class OutputClosedError extends Error {
 
 export const DEFAULT_DURATION_MS = 10_000;
 /**
- * The most packet and record entries one `--format json` document holds.
- * Its arrays live in memory until the end, and control or invalid records
- * do not advance `--count`, so the capture stops here with a warning.
+ * No `json`: a capture is a stream, and a document would hold every record
+ * until the end (DESIGN.md, "Decided: JSONL, no `--format json`").
  */
-export const JSON_MAX_RECORDS = 10_000;
-/**
- * The most bytes of entry JSON one `--format json` document holds: far below
- * the runtimes' string limits, and a size a reader can load.
- */
-export const JSON_MAX_BYTES = 64 * 1024 * 1024;
-const FORMATS = ["text", "jsonl", "json"] as const;
+const FORMATS = ["text", "jsonl"] as const;
 type Format = (typeof FORMATS)[number];
 
 export function helpText(): string {
@@ -89,8 +82,8 @@ export function helpText(): string {
 		"Output: stdout is the result. In text format the start line, warnings, tips and",
 		"the summary go to stderr, except that with --stats the summary is the result.",
 		"Every JSONL stream starts with a header record and ends with one summary",
-		"record; a stream without a summary was cut off. --format json stops at",
-		`${JSON_MAX_RECORDS} entries or ${JSON_MAX_BYTES / 1024 / 1024} MiB of them.`,
+		"record; a stream without a summary was cut off. jq reads it as it is, and",
+		"`jq -s .` makes it one array.",
 		"",
 		"Exit: 0 done (also when nothing arrived: a warning says why), 1 the capture",
 		"failed or --expect was not met, 2 a usage error.",
@@ -205,7 +198,15 @@ interface Plan {
 export function plan(args: ParsedArgs): Plan {
 	const one = (name: string) => args.flags.get(name)?.[0];
 	const has = (name: string) => args.flags.has(name);
-	const format = choice("format", one("format") ?? "text", FORMATS);
+	const formatText = one("format") ?? "text";
+	if (formatText === "json") {
+		throw invalid(
+			"format",
+			"does not take json: a capture is a stream, and jsonl carries the same records, one per line.",
+			"Use --format jsonl; jq reads it, and `jq -s .` makes one array.",
+		);
+	}
+	const format = choice("format", formatText, FORMATS);
 	const detailText = one("detail");
 	const detail: Detail =
 		detailText !== undefined
@@ -250,17 +251,6 @@ export function plan(args: ParsedArgs): Plan {
 			"Make --count at least --expect, or drop --count.",
 		);
 	}
-	if (
-		format === "json" &&
-		options.count === undefined &&
-		options.durationMs === undefined
-	) {
-		throw new TzspSniffError(
-			"cli/json-needs-limit",
-			"--format json holds every record until the end, so it needs --count or --duration.",
-			"Add --count <n> or --duration <time>, or stream with --format jsonl.",
-		);
-	}
 	const tips: TipRecord[] = [];
 	if (
 		!has("follow") &&
@@ -274,10 +264,6 @@ export function plan(args: ParsedArgs): Plan {
 			code: "tip/default-duration",
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
-	}
-	if (format === "json") {
-		options.recordLimit = JSON_MAX_RECORDS;
-		options.recordBytes = JSON_MAX_BYTES;
 	}
 	return { options, format, tips };
 }
@@ -349,19 +335,6 @@ async function print(
 	io: Io,
 ): Promise<number> {
 	const showListener = stream.header.listeners.length > 1;
-	// --format json: each entry is kept as its own JSON text and the document
-	// is written piece by piece, so no single string holds every entry (the
-	// capture's recordBytes budget bounds the total).
-	const sections: Record<
-		"packets" | "records" | "warnings" | "tips",
-		string[]
-	> = {
-		packets: [],
-		records: [],
-		warnings: [],
-		tips: tips.map((t) => JSON.stringify(t)),
-	};
-	let header = "";
 	let exitCode = 0;
 
 	for await (const record of stream) {
@@ -371,30 +344,6 @@ async function print(
 			if (record.type === "header") {
 				for (const tip of tips)
 					await io.stdout.write(`${JSON.stringify(tip)}\n`);
-			}
-			continue;
-		}
-		if (format === "json") {
-			if (record.type === "header") header = JSON.stringify(record);
-			else if (record.type === "summary") {
-				await io.stdout.write(`{"header":${header}`);
-				const keys = statsOnly
-					? (["warnings", "tips"] as const)
-					: (["packets", "records", "warnings", "tips"] as const);
-				for (const key of keys) {
-					await io.stdout.write(`,"${key}":[`);
-					const entries = sections[key];
-					for (let i = 0; i < entries.length; i++) {
-						await io.stdout.write(
-							i ? `,${entries[i]}` : (entries[i] as string),
-						);
-					}
-					await io.stdout.write("]");
-				}
-				await io.stdout.write(`,"summary":${JSON.stringify(record)}}\n`);
-			} else {
-				const key = `${record.type}s` as keyof typeof sections;
-				sections[key].push(JSON.stringify(record));
 			}
 			continue;
 		}

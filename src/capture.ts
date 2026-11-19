@@ -41,19 +41,6 @@ export interface CaptureOptions extends ListenOptions {
 	idleMs?: number;
 	/** Fewer packets reported than this makes the summary an error. */
 	expect?: number;
-	/**
-	 * Stop after this many packet and record entries, of any kind: a bound for
-	 * a caller that holds every entry until the end (the CLI's `--format
-	 * json`), since control and invalid records do not advance `count`.
-	 */
-	recordLimit?: number;
-	/**
-	 * Stop once the entries' JSON text reaches this many bytes: the same kind
-	 * of bound as `recordLimit`, for entries that are large (`detail: "full"`
-	 * of big datagrams), so a caller that serializes them all stays well under
-	 * the runtime's string limits.
-	 */
-	recordBytes?: number;
 	/** How much each packet record carries (default `summary`). */
 	detail?: Detail;
 	/** Report only the summary: no packet or record entries. */
@@ -104,14 +91,11 @@ export async function openCapture(
 	/** For tests only; see {@link ListenInternals}. */
 	internals: ListenInternals = {},
 ): Promise<CaptureStream> {
-	const { count, durationMs, idleMs, expect, recordLimit, recordBytes } =
-		options;
+	const { count, durationMs, idleMs, expect } = options;
 	positive("count", count);
 	positive("durationMs", durationMs, MAX_TIMER_MS);
 	positive("idleMs", idleMs, MAX_TIMER_MS);
 	positive("expect", expect);
-	positive("recordLimit", recordLimit);
-	positive("recordBytes", recordBytes);
 	const detail = options.detail ?? "summary";
 	const statsOnly = options.stats ?? false;
 	const listener = await listen(options, internals);
@@ -121,8 +105,6 @@ export async function openCapture(
 	if (durationMs !== undefined) limits.durationMs = durationMs;
 	if (idleMs !== undefined) limits.idleMs = idleMs;
 	if (expect !== undefined) limits.expect = expect;
-	if (recordLimit !== undefined) limits.records = recordLimit;
-	if (recordBytes !== undefined) limits.recordBytes = recordBytes;
 	const header: HeaderRecord = {
 		type: "header",
 		schemaVersion: SCHEMA_VERSION,
@@ -182,9 +164,6 @@ export async function openCapture(
 			unread: 0,
 		};
 		const stats = summarize();
-		let entries = 0;
-		let entryBytes = 0;
-		const encoder = new TextEncoder();
 		let failure: TzspSniffError | undefined;
 		let dropWarned = false;
 		const dropWarning = (): WarningRecord => ({
@@ -215,18 +194,6 @@ export async function openCapture(
 					// is handed over: nothing more is received while the caller
 					// holds it, and a later abort cannot change why it stopped.
 					if (count !== undefined && counters.packets >= count) stop("count");
-					if (record) {
-						entries += 1;
-						if (recordBytes !== undefined) {
-							entryBytes += encoder.encode(JSON.stringify(record)).length;
-						}
-					}
-					if (
-						(recordLimit !== undefined && entries >= recordLimit) ||
-						(recordBytes !== undefined && entryBytes >= recordBytes)
-					) {
-						stop("record-limit");
-					}
 					if (record) yield record;
 					if (!dropWarned && listener.counters.dropped > 0) {
 						dropWarned = true;
@@ -253,15 +220,6 @@ export async function openCapture(
 		counters.dropped = listener.counters.dropped;
 		counters.unread = listener.counters.queued;
 		if (!dropWarned && counters.dropped > 0) yield dropWarning();
-		if (stoppedBy === "record-limit") {
-			yield {
-				type: "warning",
-				code: "capture/record-limit",
-				message: `The capture stopped at ${entries} entries (${entryBytes || "unmeasured"} bytes), the most this output holds.`,
-				fix: "Stream with --format jsonl, or set a smaller --count or --duration.",
-			};
-		}
-
 		let emptyCase: WarningRecord | undefined;
 		let caseCode: Code | undefined;
 		if (!failure && counters.packets === 0) {
@@ -315,8 +273,7 @@ export async function openCapture(
 
 		let status: SummaryStatus = "complete";
 		if (failure) status = "error";
-		else if (counters.dropped > 0 || stoppedBy === "record-limit")
-			status = "incomplete";
+		else if (counters.dropped > 0) status = "incomplete";
 		else if (stoppedBy === "interrupt") status = "interrupted";
 		const summary: SummaryRecord = {
 			type: "summary",

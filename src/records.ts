@@ -34,10 +34,6 @@ export interface HeaderRecord {
 		durationMs?: number;
 		idleMs?: number;
 		expect?: number;
-		/** The most packet and record entries (`--format json` sets one). */
-		records?: number;
-		/** The most bytes of entry JSON (`--format json` sets one). */
-		recordBytes?: number;
 	};
 	queue: { datagrams: number; bytes: number };
 	detail: Detail;
@@ -168,13 +164,7 @@ export interface SummaryTables {
 }
 
 export type SummaryStatus = "complete" | "interrupted" | "incomplete" | "error";
-export type StopReason =
-	| "count"
-	| "duration"
-	| "idle"
-	| "record-limit"
-	| "interrupt"
-	| "error";
+export type StopReason = "count" | "duration" | "idle" | "interrupt" | "error";
 
 export interface SummaryRecord extends SummaryTables {
 	type: "summary";

@@ -65,6 +65,10 @@ README.md is the user overview.
 
 ## House exceptions
 
+- **No `--json` document mode**: `--format jsonl` is the machine output,
+  and `jq -s .` makes one document from it (tikoci-cli-mcp, "Output";
+  DESIGN.md, "Decided: JSONL, no `--format json`").
+
 - **Biome formatter on** (tabs, double quotes; Markdown excluded), from the
   first commit: in a repo with no prior code it costs no noisy diffs, and
   every agent then writes one shape (tikoci-linting, "Lint: Biome").
