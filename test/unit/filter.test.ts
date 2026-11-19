@@ -214,6 +214,27 @@ describe("createFilter: terms", () => {
 				kept: false,
 			});
 		}
+		// Cut short by the capture: a valid AH header whose IPv6 payload length
+		// still counts all 24 bytes, sliced after 3 of them.
+		const ah = `1104${"0000"}${"00000001"}${"00000001"}${"00".repeat(12)}`;
+		const cut = capture(
+			eth(
+				0x86dd,
+				ipv6({
+					next: 51,
+					extensions: ah.slice(0, 6),
+					payload: "",
+					payloadLength: 32,
+				}),
+			),
+		);
+		const ip = dissect(cut.tzsp.payload as Uint8Array).layers.find(
+			(l) => l.protocol === "ipv6",
+		);
+		expect(ip).toMatchObject({ problem: "truncated" });
+		expect(ip?.fields?.protocolName).toBeUndefined();
+		expect(keeps({ proto: ["ah"] }, cut)).toBe(true);
+		expect(keeps({ not: { proto: ["ah"] } }, cut)).toBe(false);
 	});
 
 	test("port-match matches UDP and TCP ports", () => {

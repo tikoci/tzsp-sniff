@@ -294,9 +294,10 @@ Three knobs keep answers small, from cheapest to richest:
   named field (`--fields datagram` reads at `full`). An explicit `--detail`
   below that is refused (`cli/flag-conflict`) rather than printing records
   without the field asked for.
-- Text prints the record's type and the fields as `key=value` on one line,
-  in the order named, with layers, tags and the datagram on lines of their
-  own after it, and only on stdout: the start line, notices and (without
+- Text prints the record's type, then the fields in the order named:
+  `key=value` runs on one line (the first on the type's line, a later one
+  indented), and layers, tags and the datagram on lines of their own where
+  they were named. Only on stdout: the start line, notices and (without
   `--stats`) the summary on stderr are unchanged, so in text a summary field
   is refused unless `--stats` makes the summary the result. `selectFields()` is exported, so an
   adapter shapes records the same way.
@@ -485,7 +486,9 @@ interface, a direction and the router's time.
   (`keeping --proto tcp --not-host 10.0.0.1`), each value one POSIX shell
   word, quoted when it is not one (a library label such as `'router west'`),
   and joined with `=` when it starts with `-` (`--sender=--help`, which
-  `--help` dispatch does not see), so a flag pastes back.
+  `--help` dispatch does not see). Such a flag pastes back into the CLI
+  when the CLI takes its value; a library-only label (a space, a comma,
+  edge whitespace) shows as a quoted display of the spec.
 - **A comma list is the same as repeating the flag** (`--proto tcp,udp`),
   since agents try both.
 - **`--sender` takes a label, an address or `address:port`.** A peer

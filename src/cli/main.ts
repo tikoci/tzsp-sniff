@@ -278,12 +278,18 @@ function checkFields(
 			!stats &&
 			format === "text" &&
 			unknown.some((f) => FIELD_NAMES.includes(f));
+		// --stats prints only the summary: it suits a list of summary fields,
+		// and jsonl keeps a list that mixes in packet ones.
+		const entryNamed = fields.some((f) => f !== "type" && entry.includes(f));
+		const recovery = entryNamed
+			? " Summary fields next to packet fields need --format jsonl."
+			: " Summary fields need --stats or --format jsonl.";
 		throw invalid(
 			"fields",
 			unknown.length
 				? `names ${unknown.map((f) => JSON.stringify(f)).join(", ")}, which ${where} does not have.`
 				: "needs at least one field.",
-			`Fields here: ${known.slice(1).join(", ")}.${summaryOnly ? " Summary fields need --stats or --format jsonl." : ""}`,
+			`Fields here: ${known.slice(1).join(", ")}.${summaryOnly ? recovery : ""}`,
 		);
 	}
 	const rank = (d: Detail) => DETAILS.indexOf(d);

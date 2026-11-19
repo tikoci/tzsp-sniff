@@ -129,7 +129,10 @@ const shellWord = (value: string | number) => {
 /**
  * The spec as CLI flags, positives first, in {@link FILTER_KEYS} order, each
  * value one shell word (quoted when it needs to be) and joined with `=` when
- * it starts with `-`, so a flag can be pasted back. A label with a comma cannot be: the CLI splits on commas.
+ * it starts with `-`. A flag pastes back into the CLI when its value is one
+ * the CLI takes (an address, or a sender in `--port`'s label grammar); for a
+ * library-only label (with a space, a comma or edge whitespace) it is a
+ * display of the spec.
  */
 export function filterFlags(spec: FilterSpec): string[] {
 	const out: string[] = [];

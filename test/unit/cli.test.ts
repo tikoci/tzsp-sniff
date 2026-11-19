@@ -353,16 +353,26 @@ describe("plan: flags to capture options", () => {
 	});
 
 	test("--fields: a summary field needs a summary result (jsonl, or --stats)", () => {
-		let caught: unknown;
-		try {
-			planOf(["--fields", "seq,counters"]);
-		} catch (error) {
-			caught = error;
-		}
-		expect(caught).toMatchObject({
+		const fixOf = (argv: string[]) => {
+			try {
+				planOf(argv);
+			} catch (error) {
+				return error;
+			}
+			return undefined;
+		};
+		// Only summary fields: --stats or jsonl both keep them.
+		expect(fixOf(["--fields", "counters,status"])).toMatchObject({
 			code: "cli/invalid-value",
-			fix: expect.stringContaining("--stats or --format jsonl"),
+			fix: expect.stringContaining("need --stats or --format jsonl"),
 		});
+		// Mixed with a packet field, --stats would refuse seq: name jsonl only.
+		const mixed = fixOf(["--fields", "seq,counters"]) as TzspSniffError;
+		expect(mixed).toMatchObject({
+			code: "cli/invalid-value",
+			fix: expect.stringContaining("next to packet fields need --format jsonl"),
+		});
+		expect(String(mixed.fix).includes("--stats")).toBe(false);
 		expect(
 			planOf(["--format", "jsonl", "--fields", "seq,counters"]).fields,
 		).toEqual(["seq", "counters"]);
@@ -653,7 +663,7 @@ describe("main", () => {
 		);
 	});
 
-	test("text --fields: the type always shows, and blocks follow the line in the order named", async () => {
+	test("text --fields: the type always shows, and every field is printed in the order named", async () => {
 		const m = memoryIo();
 		const run = main(["--port", "0", "--count", "1", "--fields", "type"], m.io);
 		await until(() => m.err.length > 0);
@@ -670,9 +680,10 @@ describe("main", () => {
 		await send(boundPort(n.stderr()), [REQUEST]);
 		expect(await ordered).toBe(0);
 		const lines = n.stdout().split("\n");
-		expect(lines[0]).toBe("packet seq=1");
+		expect(lines[0]).toBe("packet");
 		expect(lines[1]).toBe(`  datagram ${REQUEST}`);
-		expect(lines[2]).toMatch(/^ {2}tzsp @0\+75 /);
+		expect(lines[2]).toBe("  seq=1");
+		expect(lines[3]).toMatch(/^ {2}tzsp @0\+75 /);
 	});
 
 	test("text --stats --fields: the chosen summary fields are the result", async () => {
