@@ -30,11 +30,14 @@ const record = parseTzsp(udpPayload);
 
 `kind` says what the record is: `packet` (received Ethernet, the only kind
 whose `payload` is a frame to dissect), `control` (a keepalive or
-port-opener), `unsupported` (another type or encapsulation) or `invalid`.
-`parseTzsp` never throws: a record it cannot read has a `problem`
-(`truncated`, `malformed` or `unsupported`) and a finer `reason`.
-`datagram` is always the input itself, a view of your buffer rather than a
-copy, so the bytes are kept whatever happened.
+port-opener), `unsupported` (another type or encapsulation, or too many tags)
+or `invalid` (truncated or malformed). `parseTzsp` never throws. A
+`packet` or `control` record has no `problem`; an `unsupported` or `invalid`
+one always has a `problem` (`truncated`, `malformed` or `unsupported`) and a
+finer `reason`. An `unsupported` record can still carry a `payload` view (a
+transmit record, or a radiotap frame), so dispatch on `kind`, not on
+`payload`. `datagram` is always the input itself, a view of your buffer
+rather than a copy, so the bytes are kept whatever happened.
 
 On the router:
 

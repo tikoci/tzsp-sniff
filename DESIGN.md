@@ -50,7 +50,7 @@ host     listener (node:dgram, one unconnected socket per port)
            │ { datagram, peer ip:port, listener label, arrival time }
          parseTzsp ─→ type 0, Ethernet? ─→ dissect ─→ filter ─→ format ─→ stdout
                          │ no                                   └─→ --write (every datagram)
-                         └─→ control or unsupported record, counted, kept
+                         └─→ control, unsupported or invalid record, counted, kept
 ```
 
 What is known about RouterOS's side, and from where:
