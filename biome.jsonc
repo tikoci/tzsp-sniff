@@ -1,0 +1,51 @@
+// From tikoci-linting's biome.example.jsonc. Differences from the example are
+// commented; the formatter is a House exception (AGENTS.md).
+{
+	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+	// Skip what git ignores (node_modules, dist, .scratch).
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	// House skills copied unchanged are linted where they are written.
+	"files": { "includes": ["**", "!.agents/skills/tikoci-*"] },
+	// On from the first commit, so every agent writes one shape and diffs carry
+	// only the change. Tabs and double quotes, as centrs. Markdown is left to
+	// markdownlint, which does not rewrap prose.
+	"formatter": { "enabled": true, "indentStyle": "tab" },
+	"javascript": { "formatter": { "quoteStyle": "double" } },
+	// Import sorting rewrites lines the change did not touch.
+	"assist": { "enabled": false },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				// Use `unknown` and narrow it.
+				"noExplicitAny": "error"
+			},
+			"style": {
+				// Narrow with a check instead of asserting `!`.
+				"noNonNullAssertion": "error",
+				// See tikoci-linting: flags unrelated CSS components.
+				"noDescendingSpecificity": "off",
+				// Style only; Biome rates it info but prints it every run.
+				"useTemplate": "off"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["**/*.md"],
+			"formatter": { "enabled": false }
+		},
+		{
+			// Tests need the looser escapes to reach into results and build odd
+			// inputs, and a failed `!` there is a failed test.
+			"includes": ["test/**"],
+			"linter": {
+				"rules": {
+					"suspicious": { "noExplicitAny": "off" },
+					"style": { "noNonNullAssertion": "off" }
+				}
+			}
+		}
+	]
+}

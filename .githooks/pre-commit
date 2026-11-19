@@ -1,0 +1,5 @@
+#!/bin/sh
+# Near instant (tikoci-linting): Biome only. Enable with
+#   git config core.hooksPath .githooks
+set -eu
+exec bun run lint:code

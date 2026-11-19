@@ -1,0 +1,9 @@
+// Shipped code runs on Node and Bun (DESIGN.md, "Node and npx"), so src/ is
+// type-checked against Node's types alone: a Bun.* call fails here.
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"types": ["node"]
+	},
+	"include": ["src"]
+}

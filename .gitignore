@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+# Temporary work a person or agent may need to see (tikoci-house).
+.scratch/
+*.pcap
+*.pcapng
+!test/fixtures/**/*.pcap
+!test/fixtures/**/*.pcapng

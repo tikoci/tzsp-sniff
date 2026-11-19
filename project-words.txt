@@ -1,0 +1,34 @@
+# Project dictionary for cspell. One word per line, sorted case-insensitively
+# (checked by `bun run lint:words`). A word that is not obvious says what it is
+# after " # ".
+actionlint # GitHub Actions workflow linter
+bunx # Bun's npx
+centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
+CHR # Cloud Hosted Router: RouterOS as a VM
+CMR # MikroTik Centralized Management for RouterOS (/cmr)
+crossref # tikoci-crossref, the house map of repos
+datagram
+datagrams
+dissector
+dissectors
+EtherType
+EtherTypes
+keepalives
+m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
+mcp # as in tikoci-cli-mcp: Model Context Protocol
+MikroTik
+MNDP # MikroTik Neighbor Discovery Protocol
+pcapng
+quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
+radiotap
+RoMON # MikroTik Router Management Overlay Network
+routeros
+shellcheck
+SLIRP # QEMU user-mode networking
+tikoci
+TSHARK
+TZSP # TaZmen Sniffer Protocol
+UDP
+Wireshark
+Wireshark's
+zizmor # GitHub Actions security linter, https://github.com/zizmorcore/zizmor

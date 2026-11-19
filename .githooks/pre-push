@@ -1,0 +1,4 @@
+#!/bin/sh
+# The lint gate (tikoci-linting); tests and the build stay in CI and `bun run check`.
+set -eu
+exec bun run lint

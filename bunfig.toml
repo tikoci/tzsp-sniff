@@ -1,0 +1,7 @@
+# From tikoci-testing's bunfig.example.toml. No preload yet: nothing touches
+# user state, and the unit tier needs no network (tikoci-testing).
+
+[test]
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"
+coveragePathIgnorePatterns = ["test/**"]

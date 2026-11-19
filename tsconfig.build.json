@@ -1,0 +1,12 @@
+// Declarations for dist/; `bun build --target node` writes the JavaScript.
+{
+	"extends": "./tsconfig.src.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"declaration": true,
+		"emitDeclarationOnly": true,
+		"rewriteRelativeImportExtensions": true,
+		"rootDir": "src",
+		"outDir": "dist"
+	}
+}
