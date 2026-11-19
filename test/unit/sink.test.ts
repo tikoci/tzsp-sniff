@@ -1,11 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-	closeSync,
-	mkdtempSync,
-	openSync,
-	readFileSync,
-	rmSync,
-} from "node:fs";
+import { closeSync, mkdtempSync, openSync, readSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -120,7 +114,8 @@ describe("terminalStream", () => {
 	test("fdStream writes every byte, in order, through the descriptor", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-"));
 		const path = join(dir, "out.txt");
-		const fd = openSync(path, "w");
+		// Written and read back through the one descriptor, never by path again.
+		const fd = openSync(path, "w+");
 		try {
 			const out = fdStream(fd);
 			const big = "x".repeat(300_000);
@@ -129,7 +124,10 @@ describe("terminalStream", () => {
 					out.write(text, (e) => (e ? reject(e) : resolve())),
 				);
 			}
-			expect(readFileSync(path, "utf8")).toBe(`one\n${big}two\n`);
+			const expected = `one\n${big}two\n`;
+			const back = Buffer.alloc(expected.length + 1);
+			const n = readSync(fd, back, 0, back.length, 0);
+			expect(back.subarray(0, n).toString("utf8")).toBe(expected);
 		} finally {
 			closeSync(fd);
 			rmSync(dir, { recursive: true, force: true });
