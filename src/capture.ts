@@ -6,6 +6,7 @@
  */
 import { dissect } from "./dissect.ts";
 import { type Code, TzspSniffError } from "./errors.ts";
+import { createFilter, type FilterSpec } from "./filter.ts";
 import {
 	type ListenInternals,
 	type Listener,
@@ -45,6 +46,12 @@ export interface CaptureOptions extends ListenOptions {
 	detail?: Detail;
 	/** Report only the summary: no packet or record entries. */
 	stats?: boolean;
+	/**
+	 * Keep only the frames this spec matches; the rest are counted in
+	 * `filtered`. Control, unsupported and invalid records are not frames,
+	 * and filters do not apply to them.
+	 */
+	filter?: FilterSpec;
 }
 
 /**
@@ -104,6 +111,8 @@ export async function openCapture(
 	positive("expect", expect);
 	const detail = options.detail ?? "summary";
 	const statsOnly = options.stats ?? false;
+	// Checked before the bind, so a bad spec opens no socket.
+	const filter = createFilter(options.filter);
 	const listener = await listen(options, internals);
 
 	const limits: HeaderRecord["limits"] = {};
@@ -120,6 +129,7 @@ export async function openCapture(
 		bind: listener.bind,
 		listeners: listener.listeners.map(({ port, label }) => ({ port, label })),
 		limits,
+		filters: filter.spec,
 		queue: { ...listener.queue },
 		detail,
 		stats: statsOnly,
@@ -187,11 +197,15 @@ export async function openCapture(
 					let record: PacketRecord | DatagramRecord | undefined;
 					if (capture.tzsp.kind === "packet") {
 						const d = dissect(capture.tzsp.payload);
-						const view = viewPacket(d);
-						counters.packets += 1;
-						stats.addPacket(d, view);
-						if (!statsOnly)
-							record = packetRecord(capture, d, detail, undefined, view);
+						if (filter(capture, d)) {
+							const view = viewPacket(d);
+							counters.packets += 1;
+							stats.addPacket(d, view);
+							if (!statsOnly)
+								record = packetRecord(capture, d, detail, undefined, view);
+						} else {
+							counters.filtered += 1;
+						}
 					} else {
 						counters[capture.tzsp.kind] += 1;
 						if (!statsOnly) record = datagramRecord(capture, detail);
@@ -252,11 +266,29 @@ export async function openCapture(
 					message: `${counters.datagrams} datagrams arrived on ${where}, but none was a TZSP Ethernet frame.`,
 					fix: "Run again with --detail full to see each record's bytes.",
 				};
+			} else if (
+				counters.filtered > 0 &&
+				counters.dropped === 0 &&
+				counters.unread === 0
+			) {
+				// Every frame was read, and the filters kept none of them. With
+				// datagrams dropped or unread, one of those might have matched, so
+				// the loss is the diagnosis, not the filters.
+				const flags = filter.flags.join(" ");
+				emptyCase = {
+					type: "warning",
+					code: "capture/all-filtered",
+					message: `${counters.filtered} frames arrived on ${where} in ${elapsed}, and the filters removed all of them: ${flags}.`,
+					fix: `Loosen or drop the filters (${flags}); --stats without them shows what arrived.`,
+				};
 			} else if (counters.dropped === 0 && counters.unread > 0) {
+				const filtered = counters.filtered
+					? ` The filters removed the ${counters.filtered} frames that were read.`
+					: "";
 				emptyCase = {
 					type: "warning",
 					code: "capture/unread",
-					message: `${counters.unread} of the ${counters.datagrams} datagrams that arrived on ${where} were still unread when the capture stopped.`,
+					message: `${counters.unread} of the ${counters.datagrams} datagrams that arrived on ${where} were still unread when the capture stopped.${filtered}`,
 					fix: "Use a longer limit, or read the output faster.",
 				};
 			}

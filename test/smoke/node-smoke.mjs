@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
 import {
+	createFilter,
 	dissect,
 	listen,
 	openCapture,
@@ -33,6 +34,33 @@ assert.deepEqual(dissect(parseTzsp(REQUEST).payload).protocols, [
 	"ipv4",
 	"icmp",
 ]);
+
+// Filters parse addresses with node:net, so check them under Node.
+const filter = createFilter({
+	proto: ["icmp"],
+	dstHost: ["10.0.2.3"],
+	net: ["2001:DB8::1/32"],
+	not: { sender: ["[::ffff:10.0.0.1]:5"] },
+});
+assert.deepEqual(filter.spec.net, ["2001:db8::/32"]);
+assert.deepEqual(filter.spec.not.sender, ["[::ffff:10.0.0.1]:5"]);
+const fake = {
+	seq: 1,
+	time: 0,
+	listener: { address: "0.0.0.0", port: 1, label: "1" },
+	peer: { address: "127.0.0.1", port: 2, family: "IPv4" },
+	datagram: REQUEST,
+	tzsp: parseTzsp(REQUEST),
+};
+assert.equal(
+	createFilter({ proto: ["icmp"], dstHost: ["10.0.2.3"] })(fake),
+	true,
+);
+assert.equal(
+	createFilter({ net: ["10.0.2.0/24"], sender: ["127.0.0.1"] })(fake),
+	true,
+);
+assert.equal(createFilter({ not: { host: ["10.0.2.15"] } })(fake), false);
 
 async function sendTo(port) {
 	const socket = createSocket("udp4");
@@ -118,6 +146,10 @@ const child = spawn(
 		"5s",
 		"--format",
 		"jsonl",
+		"--proto",
+		"icmp",
+		"--fields",
+		"dst",
 	],
 	{
 		env: { PATH: process.env.PATH ?? "" },
@@ -149,5 +181,7 @@ assert.deepEqual(
 	["header", "packet", "summary"],
 );
 assert.equal(records[2].status, "complete");
+assert.deepEqual(records[0].filters, { proto: ["icmp"] });
+assert.deepEqual(records[1], { type: "packet", dst: "10.0.2.3" });
 
 console.log(`node-smoke: ok (node ${process.version})`);

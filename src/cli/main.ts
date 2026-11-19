@@ -16,13 +16,28 @@ import {
 	openCapture,
 } from "../capture.ts";
 import { TzspSniffError } from "../errors.ts";
+import {
+	createFilter,
+	type FilterSpec,
+	type FilterTerms,
+	senderAddress,
+} from "../filter.ts";
 import type { ListenerSpec } from "../listen.ts";
-import { DETAILS, type Detail, type TipRecord } from "../records.ts";
+import {
+	DETAILS,
+	type Detail,
+	ENTRY_FIELDS,
+	SUMMARY_FIELDS,
+	selectFields,
+	type TipRecord,
+} from "../records.ts";
 import { TZSP_PORT } from "../tzsp.ts";
 import { VERSION } from "../version.ts";
 import {
 	COMMANDS,
+	FIELD_NAMES,
 	FLAGS,
+	type FlagSpec,
 	type ParsedArgs,
 	parseArgs,
 	wantsHelp,
@@ -30,6 +45,7 @@ import {
 import {
 	entryText,
 	errorText,
+	fieldsText,
 	headerText,
 	noticeText,
 	summaryText,
@@ -56,6 +72,8 @@ export class OutputClosedError extends Error {
 }
 
 export const DEFAULT_DURATION_MS = 10_000;
+/** A listener label on the command line: --port's, and so --sender's. */
+const LABEL = /^[A-Za-z0-9._-]+$/;
 /**
  * No `json`: a capture is a stream, and a document would hold every record
  * until the end (DESIGN.md, "Decided: JSONL, no `--format json`").
@@ -64,10 +82,12 @@ const FORMATS = ["text", "jsonl"] as const;
 type Format = (typeof FORMATS)[number];
 
 export function helpText(): string {
-	const flagLines = FLAGS.map((f) => {
-		const left = `  --${f.name}${f.value ? ` ${f.value}` : ""}`;
-		return `${left}\n      ${f.help}`;
-	});
+	const lines = (flags: FlagSpec[]) =>
+		flags.map((f) => {
+			const left = `  --${f.name}${f.value ? ` ${f.value}` : ""}`;
+			return `${left}\n      ${f.help}`;
+		});
+	const negated = FLAGS.filter((f) => f.negated);
 	return [
 		"tzsp-sniff: receive the TZSP streams RouterOS sends (/tool/sniffer streaming,",
 		"mangle action=sniff-tzsp) on a plain UDP port, with no root, and decode them.",
@@ -80,7 +100,14 @@ export function helpText(): string {
 		),
 		"",
 		"Flags:",
-		...flagLines,
+		...lines(FLAGS.filter((f) => !f.filter)),
+		"",
+		"Filters keep packets. Repeat a flag, or give a comma list, to OR its values;",
+		"different flags AND. They apply to frames, not to control or invalid TZSP",
+		"records, and removed frames are counted as filtered in the summary.",
+		...lines(FLAGS.filter((f) => f.filter && !f.negated)),
+		"  --not-<filter> <value>",
+		`      Each filter has a --not- form that removes the packets it would keep: ${negated.map((f) => `--${f.name}`).join(", ")}. A packet without the field (no ports on an ARP frame, a later IP fragment, a header cut short) matches no filter and is not removed by a --not- one.`,
 		"",
 		"Output: stdout is the result. In text format the start line, warnings, tips and",
 		"the summary go to stderr, except that with --stats the summary is the result.",
@@ -95,6 +122,7 @@ export function helpText(): string {
 		"Examples:",
 		"  tzsp-sniff --count 10",
 		"  tzsp-sniff --duration 30s --stats",
+		"  tzsp-sniff --proto tcp --not-port-match 22 --format jsonl --fields seq,src,dst,flags",
 		"  tzsp-sniff --port 37008=router-a --port 37009=router-b --format jsonl --follow",
 		"",
 		"On the router (RouterOS 7), toward this host:",
@@ -165,7 +193,9 @@ function ports(texts: readonly string[] | undefined): ListenerSpec[] {
 	const specs: ListenerSpec[] = [];
 	const seen = new Set<string>();
 	for (const text of texts) {
-		const m = /^([0-9]{1,5})(?:=([A-Za-z0-9._-]+))?$/.exec(text);
+		const m = new RegExp(
+			`^([0-9]{1,5})(?:=(${LABEL.source.slice(1, -1)}))?$`,
+		).exec(text);
 		const port = Number(m?.[1]);
 		if (!m || port > 65535) {
 			throw invalid(
@@ -196,6 +226,91 @@ interface Plan {
 	options: CaptureOptions;
 	format: Format;
 	tips: TipRecord[];
+	/** `--fields`, when given. */
+	fields?: string[];
+}
+
+/** Values of a repeatable flag, each split on commas. */
+const listOf = (texts: readonly string[] | undefined) =>
+	(texts ?? []).flatMap((t) => t.split(",")).map((t) => t.trim());
+
+/** The filter spec the filter flags give; createFilter checks it. */
+function filterSpec(args: ParsedArgs): FilterSpec {
+	const spec: FilterSpec = {};
+	const not: FilterTerms = {};
+	for (const flag of FLAGS) {
+		if (!flag.filter || !args.flags.has(flag.name)) continue;
+		const values = listOf(args.flags.get(flag.name));
+		(flag.negated ? not : spec)[flag.filter] = values;
+	}
+	if (Object.keys(not).length) spec.not = not;
+	return spec;
+}
+
+/**
+ * `--fields`, checked: each name must be a field the output can carry, and
+ * without --detail the detail is raised to the least that carries them.
+ */
+function checkFields(
+	text: string,
+	format: Format,
+	stats: boolean,
+	detail: Detail,
+	detailGiven: boolean,
+): { fields: string[]; detail: Detail } {
+	const fields = [...new Set(listOf([text]))];
+	// The fields of the records --fields shapes in this output: with --stats
+	// the summary; in text, packet and record lines (the summary is on stderr,
+	// unshaped); in jsonl, both.
+	const entry = Object.keys(ENTRY_FIELDS);
+	const known: readonly string[] = [
+		"type",
+		...(stats ? SUMMARY_FIELDS : format === "text" ? entry : FIELD_NAMES),
+	];
+	const unknown = fields.filter((f) => !known.includes(f));
+	if (unknown.length || !fields.length) {
+		const where = stats
+			? "a --stats summary"
+			: format === "text"
+				? "a text packet or record line"
+				: "any record";
+		const summaryOnly =
+			!stats &&
+			format === "text" &&
+			unknown.some((f) => FIELD_NAMES.includes(f));
+		// --stats prints only the summary: it suits a list of summary fields,
+		// and jsonl keeps a list that mixes in packet ones.
+		const entryNamed = fields.some((f) => f !== "type" && entry.includes(f));
+		const recovery = entryNamed
+			? " Summary fields next to packet fields need --format jsonl."
+			: " Summary fields need --stats or --format jsonl.";
+		throw invalid(
+			"fields",
+			unknown.length
+				? `names ${unknown.map((f) => JSON.stringify(f)).join(", ")}, which ${where} does not have.`
+				: "needs at least one field.",
+			`Fields here: ${known.slice(1).join(", ")}.${summaryOnly ? recovery : ""}`,
+		);
+	}
+	const rank = (d: Detail) => DETAILS.indexOf(d);
+	let needed: Detail = DETAILS[0];
+	let neededBy = "";
+	for (const field of fields) {
+		const d = (ENTRY_FIELDS as Record<string, Detail | undefined>)[field];
+		if (d && rank(d) > rank(needed)) {
+			needed = d;
+			neededBy = field;
+		}
+	}
+	if (rank(needed) <= rank(detail)) return { fields, detail };
+	if (detailGiven) {
+		throw new TzspSniffError(
+			"cli/flag-conflict",
+			`--fields ${neededBy} needs --detail ${needed} or more, and --detail is ${detail}.`,
+			`Drop --detail, and --fields picks it, or give --detail ${needed}.`,
+		);
+	}
+	return { fields, detail: needed };
 }
 
 /** Turn parsed flags into capture options, refusing what cannot apply. */
@@ -212,16 +327,46 @@ export function plan(args: ParsedArgs): Plan {
 	}
 	const format = choice("format", formatText, FORMATS);
 	const detailText = one("detail");
-	const detail: Detail =
+	let detail: Detail =
 		detailText !== undefined
 			? choice("detail", detailText, DETAILS)
 			: format === "text"
 				? "line"
 				: "summary";
+	const fieldsText = one("fields");
+	let fields: string[] | undefined;
+	if (fieldsText !== undefined) {
+		({ fields, detail } = checkFields(
+			fieldsText,
+			format,
+			has("stats"),
+			detail,
+			detailText !== undefined,
+		));
+	}
 	const options: CaptureOptions = {
 		ports: ports(args.flags.get("port")),
 		detail,
 	};
+	const filter = filterSpec(args);
+	// A label from --port has this grammar, so a sender that is neither one
+	// nor an address is a typo, refused here; the library takes any label.
+	for (const [flag, values] of [
+		["sender", filter.sender],
+		["not-sender", filter.not?.sender],
+	] as const) {
+		for (const value of values ?? []) {
+			if (!LABEL.test(value) && !senderAddress(value)) {
+				throw new TzspSniffError(
+					"filter/invalid-value",
+					`--${flag} ${JSON.stringify(value)} is not a listener label or a peer address.`,
+					`Give a label from --port <port>=<label>, an address such as --${flag} 10.0.2.15, or an address and port such as --${flag} 10.0.2.15:37008.`,
+				);
+			}
+		}
+	}
+	// Checked here, so a bad value is a usage error (exit 2) before any bind.
+	if (createFilter(filter).flags.length) options.filter = filter;
 	const bind = one("bind");
 	if (bind !== undefined) {
 		if (isIP(bind) === 0) {
@@ -269,7 +414,7 @@ export function plan(args: ParsedArgs): Plan {
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
 	}
-	return { options, format, tips };
+	return { options, format, tips, ...(fields ? { fields } : {}) };
 }
 
 /** Run the CLI; resolves to the exit code. */
@@ -309,7 +454,7 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(`${VERSION}\n`);
 		return 0;
 	}
-	const { options, format, tips } = planned;
+	const { options, format, tips, fields } = planned;
 	if (io.signal) options.signal = io.signal;
 
 	let stream: Awaited<ReturnType<typeof openCapture>>;
@@ -325,7 +470,11 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		throw error;
 	}
 	try {
-		return await print(stream, format, tips, options.stats ?? false, io);
+		return await print(
+			stream,
+			{ format, tips, statsOnly: options.stats ?? false, fields },
+			io,
+		);
 	} finally {
 		// Exit means released, however the loop ended (an output error too):
 		// the ports can be bound again once this returns.
@@ -336,18 +485,23 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 /** Render the stream in `format`; resolves to the exit code. */
 async function print(
 	stream: CaptureStream,
-	format: Format,
-	tips: TipRecord[],
-	statsOnly: boolean,
+	how: {
+		format: Format;
+		tips: TipRecord[];
+		statsOnly: boolean;
+		fields: string[] | undefined;
+	},
 	io: Io,
 ): Promise<number> {
+	const { format, tips, statsOnly, fields } = how;
 	const showListener = stream.header.listeners.length > 1;
 	let exitCode = 0;
 
 	for await (const record of stream) {
 		if (record.type === "summary" && record.status === "error") exitCode = 1;
 		if (format === "jsonl") {
-			await io.stdout.write(`${JSON.stringify(record)}\n`);
+			const shaped = fields ? selectFields(record, fields) : record;
+			await io.stdout.write(`${JSON.stringify(shaped)}\n`);
 			if (record.type === "header") {
 				for (const tip of tips)
 					await io.stdout.write(`${JSON.stringify(tip)}\n`);
@@ -361,14 +515,23 @@ async function print(
 				break;
 			case "packet":
 			case "record":
-				await io.stdout.write(entryText(record, showListener));
+				await io.stdout.write(
+					fields
+						? fieldsText(selectFields(record, fields))
+						: entryText(record, showListener),
+				);
 				break;
 			case "warning":
 			case "tip":
 				await io.stderr.write(noticeText(record));
 				break;
 			case "summary":
-				await (statsOnly ? io.stdout : io.stderr).write(summaryText(record));
+				// --fields shapes the result: the summary only when it is the result.
+				await (statsOnly ? io.stdout : io.stderr).write(
+					statsOnly && fields
+						? fieldsText(selectFields(record, fields))
+						: summaryText(record),
+				);
 				if (record.error) await io.stderr.write(errorText(record.error));
 				break;
 		}

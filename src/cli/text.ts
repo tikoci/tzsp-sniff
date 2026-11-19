@@ -2,7 +2,9 @@
  * Text rendering of stream records, for people on a terminal. Plain text
  * only: no color, so nothing changes when stdout is not a terminal.
  */
+import { filterFlags } from "../filter.ts";
 import type { RecordLayer } from "../records.ts";
+import type { TzspTag } from "../tzsp.ts";
 import type {
 	DatagramRecord,
 	HeaderRecord,
@@ -30,7 +32,9 @@ export function headerText(h: HeaderRecord): string {
 	const limit = until.length
 		? `until ${until.join(" or ")}`
 		: "until interrupted";
-	return `listening on UDP ${where}, ${limit}\n`;
+	const flags = filterFlags(h.filters);
+	const keeping = flags.length ? `, keeping ${flags.join(" ")}` : "";
+	return `listening on UDP ${where}, ${limit}${keeping}\n`;
 }
 
 const value = (v: unknown): string => {
@@ -95,6 +99,41 @@ export function entryText(
 	return text;
 }
 
+/** Fields shown on lines of their own, after the `key=value` line. */
+const BLOCK_FIELDS = new Set(["layers", "tags", "datagram"]);
+
+/**
+ * A record shaped by `--fields`, in the order named: its type, then each
+ * run of fields as `key=value` on one line (the first on the type's line,
+ * a later one indented), and layers, tags and the datagram on lines of
+ * their own where they were named.
+ */
+export function fieldsText(r: Record<string, unknown>): string {
+	let text = "";
+	let run: string[] = [String(r.type)];
+	let first = true;
+	const flush = () => {
+		if (run.length) text += `${first ? "" : "  "}${run.join(" ")}\n`;
+		run = [];
+		first = false;
+	};
+	for (const [k, v] of Object.entries(r)) {
+		if (k === "type") continue;
+		if (!BLOCK_FIELDS.has(k)) {
+			run.push(`${k}=${value(v)}`);
+			continue;
+		}
+		flush();
+		if (k === "layers" && Array.isArray(v))
+			text += (v as RecordLayer[]).map(layerText).join("");
+		else if (k === "tags" && Array.isArray(v))
+			text += `  tags ${(v as TzspTag[]).map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;
+		else if (k === "datagram") text += `  datagram ${String(v)}\n`;
+	}
+	flush();
+	return text;
+}
+
 export function noticeText(r: WarningRecord | TipRecord): string {
 	if (r.type === "tip") return `tip ${r.code}: ${r.message}\n`;
 	return `warning ${r.code}: ${r.message}\n${r.fix ? `  fix: ${r.fix}\n` : ""}`;
@@ -112,7 +151,7 @@ export function summaryText(s: SummaryRecord): string {
 	const c = s.counters;
 	const lines = [
 		`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
-		`  datagrams ${c.datagrams}: packets ${c.packets}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
+		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
 	];
 	const counts = (o: Record<string, number>) =>
 		Object.entries(o)

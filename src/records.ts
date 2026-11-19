@@ -11,6 +11,7 @@
  */
 import type { Dissection, Layer } from "./dissect.ts";
 import type { Code, ErrorCode, TipCode, WarningCode } from "./errors.ts";
+import type { FilterSpec } from "./filter.ts";
 import type { Capture } from "./listen.ts";
 import { type TzspTag, toHex } from "./tzsp.ts";
 
@@ -35,6 +36,8 @@ export interface HeaderRecord {
 		idleMs?: number;
 		expect?: number;
 	};
+	/** The filters in effect, in canonical form; `{}` keeps every frame. */
+	filters: FilterSpec;
 	queue: { datagrams: number; bytes: number };
 	detail: Detail;
 	stats: boolean;
@@ -127,7 +130,7 @@ export interface Counters {
 	control: number;
 	unsupported: number;
 	invalid: number;
-	/** Frames a filter removed. */
+	/** Frames the filters removed: not reported, not in the tables. */
 	filtered: number;
 	/** Datagrams dropped because the queue was full. */
 	dropped: number;
@@ -148,6 +151,11 @@ export interface Ranked<T> {
 	otherCount: number;
 }
 
+/**
+ * Protocols, problems and conversations count the packets reported, after
+ * filters. Senders count every datagram the capture read, of any kind,
+ * filtered frames included; dropped and unread ones are not read.
+ */
 export interface SummaryTables {
 	/** How many packets each protocol appeared in. */
 	protocols: Record<string, number>;
@@ -187,6 +195,79 @@ export type StreamRecord =
 	| WarningRecord
 	| TipRecord
 	| SummaryRecord;
+
+/**
+ * The fields `--fields` can name on a packet or record, each with the least
+ * `--detail` that carries it.
+ */
+export const ENTRY_FIELDS = {
+	seq: "line",
+	time: "line",
+	listener: "line",
+	line: "line",
+	peer: "summary",
+	length: "summary",
+	kind: "summary",
+	tzspType: "summary",
+	protocols: "summary",
+	src: "summary",
+	srcPort: "summary",
+	dst: "summary",
+	dstPort: "summary",
+	vlan: "summary",
+	flags: "summary",
+	problem: "summary",
+	reason: "summary",
+	layers: "layers",
+	tags: "layers",
+	datagram: "full",
+} as const satisfies Record<string, Detail>;
+
+/** The fields `--fields` can name on a summary. */
+export const SUMMARY_FIELDS = [
+	"status",
+	"stoppedBy",
+	"durationMs",
+	"counters",
+	"protocols",
+	"problems",
+	"senders",
+	"conversations",
+	"error",
+] as const;
+
+/**
+ * A record with only the named fields, in that order, after `type`
+ * (DESIGN.md, "Output for agents"). It shapes the results: packets,
+ * records and the summary. A summary keeps its `status`, and its `error`
+ * when it has one, so a failed capture still says why. A header, warning or
+ * tip is returned whole: they frame the stream, and their codes are what a
+ * reader acts on. A field the record does not have is left out.
+ */
+export function selectFields(
+	record: StreamRecord,
+	fields: readonly string[],
+): Record<string, unknown> {
+	if (
+		record.type !== "packet" &&
+		record.type !== "record" &&
+		record.type !== "summary"
+	) {
+		return record as unknown as Record<string, unknown>;
+	}
+	const source = record as unknown as Record<string, unknown>;
+	const out: Record<string, unknown> = { type: record.type };
+	const keep = [...fields];
+	if (record.type === "summary") {
+		if (!keep.includes("status")) keep.unshift("status");
+		if (record.error && !keep.includes("error")) keep.push("error");
+	}
+	for (const field of keep) {
+		if (field !== "type" && Object.hasOwn(source, field))
+			out[field] = source[field];
+	}
+	return out;
+}
 
 export const isoTime = (ms: number) => new Date(ms).toISOString();
 

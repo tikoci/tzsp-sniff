@@ -40,6 +40,17 @@ export {
 	type VlanLayer,
 } from "./dissect.ts";
 export {
+	createFilter,
+	FILTER_KEYS,
+	FILTER_PROTOCOLS,
+	type FilterKey,
+	type FilterSpec,
+	type FilterTerms,
+	filterFlag,
+	filterFlags,
+	type PacketFilter,
+} from "./filter.ts";
+export {
 	CODES,
 	type Code,
 	type ErrorCode,
@@ -67,6 +78,7 @@ export {
 	type Detail,
 	datagramLine,
 	datagramRecord,
+	ENTRY_FIELDS,
 	type HeaderRecord,
 	type PacketRecord,
 	packetLine,
@@ -78,7 +90,9 @@ export {
 	type StreamRecord,
 	type SummaryRecord,
 	type SummaryStatus,
+	SUMMARY_FIELDS,
 	type SummaryTables,
+	selectFields,
 	type TipRecord,
 	type WarningRecord,
 } from "./records.ts";

@@ -143,7 +143,8 @@ dissect(frame: Uint8Array): Dissection                   // exists: layers, neve
 listen(options): Promise<Listener>                       // exists: ports, queue, signal
 openCapture(options): Promise<CaptureStream>             // exists: limits, counters, records
 summarize(): StatsAccumulator                            // exists: bounded, see Limits
-createFilter(spec): (capture: Capture) => boolean
+createFilter(spec): PacketFilter                         // exists: (capture, dissection?) => boolean
+selectFields(record, fields)                             // exists: --fields, for any surface
 pcapngWriter(sink): CaptureWriter                        // streaming, with backpressure
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
@@ -277,6 +278,29 @@ Three knobs keep answers small, from cheapest to richest:
   `full` adds the raw bytes as hex.
 - `--fields a,b,c`: only the named fields, in that order. Record `type` and,
   on a summary, `status` cannot be removed.
+
+**Decided, `--fields`** (second slice, 2026-11-19):
+
+- It shapes the results: `packet`, `record` and `summary` records. A
+  `header`, `warning` or `tip` stays whole: they frame the stream, and their
+  codes are what a reader acts on. A summary also keeps its `error` when it
+  has one, so a failed capture still says why on stdout.
+- A field a record does not have (ports on ARP) is left out of that record,
+  as it is without `--fields`.
+- A name no record has is refused (`cli/invalid-value`, with the list in the
+  fix). With `--stats` only summary fields are known, since nothing else is
+  printed.
+- Without `--detail`, the detail is raised to the least that carries every
+  named field (`--fields datagram` reads at `full`). An explicit `--detail`
+  below that is refused (`cli/flag-conflict`) rather than printing records
+  without the field asked for.
+- Text prints the record's type, then the fields in the order named:
+  `key=value` runs on one line (the first on the type's line, a later one
+  indented), and layers, tags and the datagram on lines of their own where
+  they were named. Only on stdout: the start line, notices and (without
+  `--stats`) the summary on stderr are unchanged, so in text a summary field
+  is refused unless `--stats` makes the summary the result. `selectFields()` is exported, so an
+  adapter shapes records the same way.
 
 `--format text|jsonl|pcapng`. Text is the default, one line per packet,
 plain when stdout is not a terminal or `NO_COLOR` is set. `jsonl` is one
@@ -434,6 +458,57 @@ interface, a direction and the router's time.
   `mndp`).
 - `--sender` matches the outer UDP peer or the listener label, never a
   field inside the captured packet.
+
+**Decided, filters** (second slice, 2026-11-19; `src/filter.ts`):
+
+- **Filters select frames.** Control, unsupported and invalid TZSP records
+  are not frames: no filter applies to them, and they are still reported, so
+  a router problem is not hidden by `--proto tcp`. `filtered` counts the
+  frames removed. Applying `--sender` to those records too is in
+  BACKLOG.md.
+- **A negated term is the plain negation of the positive one**, and a
+  packet without the field never matches. That gives the rule above:
+  `--port-match 22` drops an ARP frame, a later IP fragment and a TCP header
+  cut short, and `--not-port-match 22` keeps them. Unit vectors cover each.
+- **`--proto` also matches the protocol the IP header names**, so `--proto
+  ospf` or `gre` works before a dissector for it exists, and a later
+  fragment of a TCP datagram matches `--proto tcp`. Names are the dissector's
+  layers (`data` excluded) and the IP protocols it names; any other is
+  refused.
+- **Values are checked once**, when the filter is made: an unknown term or
+  a value that does not parse is `filter/invalid-value`, naming the flag, and
+  the CLI exits 2 before any socket opens. Matching never throws.
+- **Values have one canonical form**: addresses in RFC 5952 or dotted form,
+  a prefix with its host bits cleared, a lowercase colon MAC, a four-digit
+  EtherType, a port as a number. A `--sender` value is kept as given, since
+  a label matches exactly; its address, if it is one, is compared parsed. The header's `filters` is that canonical
+  spec (`{}` for none), and the text start line lists it as flags
+  (`keeping --proto tcp --not-host 10.0.0.1`), each value one POSIX shell
+  word, quoted when it is not one (a library label such as `'router west'`),
+  and joined with `=` when it starts with `-` (`--sender=--help`, which
+  `--help` dispatch does not see). Such a flag pastes back into the CLI
+  when the CLI takes its value; a library-only label (a space, a comma,
+  edge whitespace) shows as a quoted display of the spec.
+- **A comma list is the same as repeating the flag** (`--proto tcp,udp`),
+  since agents try both.
+- **`--sender` takes a label, an address or `address:port`.** A peer
+  reported as IPv4-mapped IPv6 (a listener bound to `::`) matches its IPv4
+  address. A value that is both a label and an address matches either. The
+  library takes any label `listen()` does; the CLI refuses a value that is
+  neither `--port`'s label grammar nor an address, as a typo.
+- **`--proto` also matches an IPv6 extension that is a protocol** (`ah`),
+  and the IP protocol number the header names when what follows is
+  malformed or cut short (an AH header too short), which leaves no name.
+- **`--host` and `--net` read the IP header and ARP's sender and target
+  addresses**, as tcpdump's `host` does; `--mac` reads the Ethernet header.
+- **The summary's tables follow the filters**: protocols, problems and
+  conversations count the packets reported; senders count every datagram
+  the capture read, filtered frames and non-frame records included (not
+  dropped or unread ones), so it still shows who sent what was filtered out.
+- **`capture/all-filtered` needs every frame read.** With datagrams dropped
+  or unread, one of them might have matched, so the loss is the empty case
+  (`capture/dropped`, `capture/unread`, which then says how many frames the
+  filters removed), and `--expect` names that case, not the filters.
 
 ### `setup`
 

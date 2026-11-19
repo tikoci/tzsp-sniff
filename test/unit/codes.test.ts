@@ -18,7 +18,9 @@ const sources = (readdirSync(SRC, { recursive: true }) as string[])
 const used = new Set(
 	sources.flatMap((s) =>
 		[
-			...s.matchAll(/"((?:listen|capture|cli|output|summary|tip)\/[a-z-]+)"/g),
+			...s.matchAll(
+				/"((?:listen|capture|cli|filter|output|summary|tip)\/[a-z-]+)"/g,
+			),
 		].map((m) => m[1] as string),
 	),
 );

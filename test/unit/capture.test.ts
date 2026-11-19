@@ -14,7 +14,19 @@ import type {
 	SummaryRecord,
 	WarningRecord,
 } from "../../src/records.ts";
-import { childEnv, expectPortFree, fixture, send, until } from "./helpers.ts";
+import {
+	childEnv,
+	closeSocket,
+	eth,
+	expectPortFree,
+	fixture,
+	holdPort,
+	ipv4,
+	send,
+	TZSP_HEADER,
+	tcp,
+	until,
+} from "./helpers.ts";
 
 /**
  * The capture core (DESIGN.md, "Counters and --expect", "Stream
@@ -25,6 +37,19 @@ const STREAM = fixture("7.25.1-x86-sniffer-stream");
 const REQUEST = STREAM[0] as string;
 const KEEPALIVE = "01040000";
 const INVALID = "02000001";
+
+/** A TCP SYN to port 22, as RouterOS would stream it. */
+const SSH =
+	TZSP_HEADER +
+	eth(
+		0x0800,
+		ipv4({
+			proto: 6,
+			src: "10.0.2.15",
+			dst: "192.0.2.7",
+			payload: tcp({ sp: 50000, dp: 22, flags: 0x02 }),
+		}),
+	);
 
 const portOf = (s: CaptureStream) => s.header.listeners[0]?.port as number;
 
@@ -261,6 +286,152 @@ describe("openCapture", () => {
 		expect(ofType(records, "warning").map((w) => w.code)).toEqual([
 			"capture/dropped",
 		]);
+	});
+
+	test("filters: removed frames are counted as filtered, and the header lists the filters", async () => {
+		const { stream, records, summary } = await readAll(
+			{ idleMs: 150, filter: { proto: ["TCP"], not: { host: ["10.9.9.9"] } } },
+			(s) => send(portOf(s), [REQUEST, SSH, KEEPALIVE, STREAM[1] as string]),
+		);
+		expect(stream.header.filters).toEqual({
+			proto: ["tcp"],
+			not: { host: ["10.9.9.9"] },
+		});
+		// Only the TCP frame is reported; the keepalive is not a frame, and
+		// filters do not apply to it.
+		expect(ofType(records, "packet").map((p) => p.seq)).toEqual([2]);
+		expect(ofType(records, "record").map((r) => r.seq)).toEqual([3]);
+		expect(summary.counters).toMatchObject({
+			datagrams: 4,
+			packets: 1,
+			control: 1,
+			filtered: 2,
+		});
+		expect(sumOf(summary.counters)).toBe(4);
+		// The tables count what was reported; senders count every datagram.
+		expect(summary.protocols).toEqual({ ethernet: 1, ipv4: 1, tcp: 1 });
+		expect(summary.conversations.top.map((c) => c.protocol)).toEqual(["tcp"]);
+		expect(summary.senders.top[0]?.datagrams).toBe(4);
+		expect(ofType(records, "warning")).toEqual([]);
+	});
+
+	test("no filters: the header says so with an empty spec", async () => {
+		const stream = await openCapture({ ports: [{ port: 0 }] });
+		stream.listener.close();
+		expect(stream.header.filters).toEqual({});
+		await stream.listener.closed;
+	});
+
+	test("--count counts after filters", async () => {
+		const { records, summary } = await readAll(
+			{ count: 2, durationMs: 5000, filter: { portMatch: [22] } },
+			(s) => send(portOf(s), [REQUEST, SSH, REQUEST, REQUEST, SSH, SSH]),
+		);
+		expect(summary).toMatchObject({ status: "complete", stoppedBy: "count" });
+		expect(ofType(records, "packet").map((p) => p.seq)).toEqual([2, 5]);
+		expect(summary.counters).toMatchObject({ packets: 2, filtered: 3 });
+	});
+
+	test("filters removed every frame: capture/all-filtered names them, and --expect carries the case", async () => {
+		const { records, summary } = await readAll(
+			{
+				idleMs: 150,
+				expect: 1,
+				filter: { portMatch: [443], not: { proto: ["arp"] } },
+			},
+			(s) => send(portOf(s), [REQUEST, KEEPALIVE, SSH]),
+		);
+		const warnings = ofType(records, "warning");
+		expect(warnings.map((w) => w.code)).toEqual(["capture/all-filtered"]);
+		expect(warnings[0]?.message).toContain("2 frames");
+		expect(warnings[0]?.message).toContain("--port-match 443 --not-proto arp");
+		expect(warnings[0]?.fix).toContain("--port-match 443 --not-proto arp");
+		expect(summary.counters).toMatchObject({
+			packets: 0,
+			filtered: 2,
+			control: 1,
+		});
+		expect(summary.status).toBe("error");
+		expect(summary.error).toMatchObject({
+			code: "capture/expect-unmet",
+			case: "capture/all-filtered",
+			fix: warnings[0]?.fix,
+		});
+	});
+
+	test("filtered frames with a drop: the drop is the diagnosis, not the filters", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			queue: { datagrams: 1 },
+			idleMs: 150,
+			expect: 1,
+			filter: { proto: ["tcp"] },
+		});
+		const records: StreamRecord[] = [];
+		for await (const record of stream) {
+			records.push(record);
+			if (record.type === "header") {
+				// Not reading: the ICMP frame fits, the TCP one is dropped.
+				await send(portOf(stream), [REQUEST, SSH]);
+				await until(() => stream.listener.counters.received === 2);
+			}
+		}
+		const summary = records.at(-1) as SummaryRecord;
+		expect(summary.counters).toMatchObject({ filtered: 1, dropped: 1 });
+		expect(ofType(records, "warning").map((w) => w.code)).toEqual([
+			"capture/dropped",
+		]);
+		expect(summary.error).toMatchObject({
+			code: "capture/expect-unmet",
+			case: "capture/dropped",
+			fix: expect.stringContaining("--stats"),
+		});
+	});
+
+	test("filtered frames with some unread: capture/unread, which says what was filtered", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			durationMs: 300,
+			expect: 1,
+			filter: { proto: ["tcp"] },
+		});
+		const it = stream[Symbol.asyncIterator]();
+		await it.next(); // header
+		const sent = send(portOf(stream), [REQUEST, KEEPALIVE, SSH]);
+		// The ICMP frame is read and filtered; the keepalive is yielded, and
+		// holding it leaves the matching TCP frame queued past the limit.
+		expect((await it.next()).value).toMatchObject({ type: "record", seq: 2 });
+		await sent;
+		await until(() => stream.listener.counters.received === 3);
+		await stream.listener.closed;
+		const rest: StreamRecord[] = [];
+		for (let r = await it.next(); !r.done; r = await it.next())
+			rest.push(r.value);
+		const summary = rest.at(-1) as SummaryRecord;
+		expect(summary.counters).toMatchObject({
+			packets: 0,
+			filtered: 1,
+			control: 1,
+			unread: 1,
+		});
+		const warnings = ofType(rest, "warning");
+		expect(warnings.map((w) => w.code)).toEqual(["capture/unread"]);
+		expect(warnings[0]?.message).toContain("filters removed the 1 frames");
+		expect(summary.error).toMatchObject({ case: "capture/unread" });
+	});
+
+	test("a filter it cannot read is refused before any socket opens", async () => {
+		// The port is taken: a bind first would fail with listen/bind-failed.
+		const held = await holdPort();
+		try {
+			const error = await openCapture({
+				ports: [{ port: held.port }],
+				filter: { host: ["nope"] },
+			}).catch((e: unknown) => e);
+			expect(error).toMatchObject({ code: "filter/invalid-value" });
+		} finally {
+			await closeSocket(held.socket);
+		}
 	});
 
 	test("stats: no packet records, the same summary", async () => {
