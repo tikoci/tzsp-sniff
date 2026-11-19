@@ -27,3 +27,7 @@ updates:
     ignore:
       # Moves with the Bun pin in packageManager (tikoci-toolchain).
       - dependency-name: "@types/bun"
+      # Follows the engines.node floor (22), so src/ is never typed with
+      # Node APIs the oldest supported Node lacks; raised with engines.node.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
