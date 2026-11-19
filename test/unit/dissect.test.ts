@@ -620,6 +620,23 @@ describe("dissect: IPv6", () => {
 			reason: "message",
 		});
 	});
+
+	test("a whole IPv6 first fragment with a short ICMPv6 message is not exempt", () => {
+		// Offset 0, M set, next header ICMPv6; 8 of the 24 bytes a neighbor
+		// solicitation needs. Unlike IPv4, IPv6 puts the whole upper-layer
+		// header in the first fragment, so the rest is not in a later one.
+		const ns = `8700000000000000${"20010db8000000000000000000000009"}`;
+		const d = packet({
+			next: 44,
+			extensions: "3a00000100000001",
+			payload: ns.slice(0, 16),
+		});
+		expect(layer(d, "ipv6").problem).toBeUndefined();
+		expect(layer(d, "icmpv6")).toMatchObject({
+			problem: "truncated",
+			reason: "message",
+		});
+	});
 });
 
 describe("dissect: cross-review vectors (#20)", () => {

@@ -808,8 +808,10 @@ class Dissector {
 		const minimum =
 			(protocol === "icmp" ? ICMP_MINIMUM : ICMPV6_MINIMUM)[type] ?? 4;
 		if (length < minimum) {
-			// A whole first fragment: the message goes on in the next one.
-			if (ip.fragment && !ip.cut) return;
+			// A whole IPv4 first fragment: the message goes on in the next one.
+			// IPv6 puts the whole upper-layer header in the first fragment
+			// (RFC 8200, 4.5), so there a short message is checked as usual.
+			if (ip.version === 4 && ip.fragment && !ip.cut) return;
 			layer.problem = "truncated";
 			layer.reason = "message";
 			return;
