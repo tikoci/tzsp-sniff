@@ -333,9 +333,12 @@ export async function stalledTerminal(command: string[], budgetMs: number) {
 	try {
 		await until(() => /listening on UDP [^ ]*:\d+/.test(stderr), budgetMs);
 		const port = Number(/listening on UDP [^ ]*:(\d+)/.exec(stderr)?.[1]);
-		// Each line is the datagram as hex, over 60 KB: more than a terminal holds.
-		const big = REQUEST_HEX() + "00".repeat(30_000);
-		await send(port, [big, big, big, big]);
+		// Each line is the datagram as hex, about 16 KB; 16 of them are more
+		// than a terminal holds. Each datagram stays under macOS's default
+		// loopback UDP limit (net.inet.udp.maxdgram, 9216 bytes): a 30 KB one
+		// failed there with EMSGSIZE (CI, macos-latest).
+		const big = REQUEST_HEX() + "00".repeat(8000);
+		await send(port, Array(16).fill(big));
 		await new Promise((r) => setTimeout(r, 500));
 		const runningBeforeInterrupt = proc.exitCode === null;
 		const interruptedAt = performance.now();

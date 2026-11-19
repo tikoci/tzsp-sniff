@@ -64,6 +64,20 @@ describe("summarize: bounded tables", () => {
 		}
 		const all = summarize({ track: 0 });
 		all.addDatagram(capture(1));
-		expect(all.tables().senders).toMatchObject({ top: [], otherCount: 1 });
+		expect(all.tables().senders).toEqual({
+			top: [],
+			otherEntries: 1,
+			otherEntriesCapped: false,
+			otherCount: 1,
+		});
+		all.addDatagram(capture(2));
+		all.addDatagram(capture(2));
+		// The second key is past the bound: at least 1 entry, 3 datagrams.
+		expect(all.tables().senders).toEqual({
+			top: [],
+			otherEntries: 1,
+			otherEntriesCapped: true,
+			otherCount: 3,
+		});
 	});
 });

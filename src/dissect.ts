@@ -725,6 +725,8 @@ class Dissector {
 			}
 			if (protocol === 44) {
 				const offsetFlags = u16(b, offset + 2);
+				// The offset is the top 13 bits, in 8-byte units, so clearing the
+				// low 3 bits (reserved, M) leaves it in bytes (RFC 8200, 4.5).
 				fields.fragmentOffset = offsetFlags & 0xfff8;
 				fields.moreFragments = (offsetFlags & 1) !== 0;
 				fields.fragmentId = u32(b, offset + 4);

@@ -502,7 +502,8 @@ describe("dissect: IPv6", () => {
 	});
 
 	test("a later fragment is data, with the fragment header's fields", () => {
-		const fragment = `11000${(1480 | 1).toString(16).padStart(3, "0")}0000abcd`;
+		// Offset 185 units of 8 bytes (1480 bytes) in the top 13 bits, M set.
+		const fragment = `1100${((185 << 3) | 1).toString(16).padStart(4, "0")}0000abcd`;
 		const d = packet({ next: 44, extensions: fragment, payload: "aabb" });
 		expect(layer(d, "ipv6").fields).toMatchObject({
 			fragmentOffset: 1480,

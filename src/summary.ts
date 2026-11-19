@@ -46,8 +46,10 @@ class Table<T extends object> {
 			this.entries.set(key, entry);
 			return entry;
 		}
-		// Count distinct folded keys up to the same cap; past it, note only that there were more.
-		if (this.foldedEntries.size < this.track) this.foldedEntries.add(key);
+		// Count distinct folded keys up to the same cap (at least one, so that
+		// track 0 still reports a bucket); past it, note only that there were more.
+		if (this.foldedEntries.size < Math.max(this.track, 1))
+			this.foldedEntries.add(key);
 		else if (!this.foldedEntries.has(key)) this.foldedCapped = true;
 		this.foldedCount += amount;
 		return undefined;

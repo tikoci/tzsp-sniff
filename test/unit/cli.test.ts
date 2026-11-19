@@ -302,6 +302,14 @@ describe("main", () => {
 		expect(m.stderr()).toContain("error cli/invalid-value");
 	});
 
+	test("interrupted before the bind: exit 130, nothing on stdout", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const m = memoryIo({ signal: controller.signal });
+		expect(await main(["--port", "0", "--count", "1"], m.io)).toBe(130);
+		expect(m.stdout()).toBe("");
+	});
+
 	test("a usage error: exit 2, the code and fix on stderr, nothing on stdout", async () => {
 		const m = memoryIo();
 		expect(await main(["--format", "json"], m.io)).toBe(2);

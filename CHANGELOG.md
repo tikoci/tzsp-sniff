@@ -15,7 +15,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   `--format text|jsonl`, `--detail line|summary|layers|full`, `--stats`
   and `--expect`. Exit 0 done (an empty capture carries a
   `capture/no-datagrams` or `capture/no-frames` warning), 1 the capture
-  failed or `--expect` was not met, 2 a usage error. Runs on Node 22 or
+  failed or `--expect` was not met, 2 a usage error, 130 interrupted before
+  the capture started or by a second Ctrl-C (no summary). Runs on Node 22 or
   later and on Bun.
 - `openCapture()`: the capture as a stream of records, a `header` first and
   one `summary` last (status, counters, protocol, problem, sender and

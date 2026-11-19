@@ -340,7 +340,10 @@ different fix:
 **Decided:** `--expect N` turns fewer than N packets reported into exit 1
 with error `capture/expect-unmet`, also when the capture ended by SIGINT;
 the error carries the same case as the table. Without `--expect`, SIGINT
-ends a capture normally (summary written, exit 0).
+ends a capture normally (summary written, exit 0). SIGINT before the
+sockets are bound, or a second SIGINT, exits 130, the shell's code for it:
+no header or summary was written, so it is not reported as an empty
+capture.
 
 ### Stream termination
 

@@ -4,7 +4,10 @@
  * with their own sinks and signal (`bin.ts` wires the real ones).
  *
  * Exit codes: 0 done (also an empty capture, which carries a warning), 1 the
- * capture failed or `--expect` was not met, 2 a usage error.
+ * capture failed or `--expect` was not met, 2 a usage error, 130 interrupted
+ * before the sockets were bound (no header, no summary; `bin.ts` also exits
+ * 130 on a second Ctrl-C). 130 is the shell's code for SIGINT, so a caller
+ * cannot mistake a capture that never started for an empty one.
  */
 import { isIP } from "node:net";
 import {
@@ -86,7 +89,8 @@ export function helpText(): string {
 		"`jq -s .` makes it one array.",
 		"",
 		"Exit: 0 done (also when nothing arrived: a warning says why), 1 the capture",
-		"failed or --expect was not met, 2 a usage error.",
+		"failed or --expect was not met, 2 a usage error, 130 interrupted before the",
+		"capture started, or a second Ctrl-C (no summary).",
 		"",
 		"Examples:",
 		"  tzsp-sniff --count 10",
