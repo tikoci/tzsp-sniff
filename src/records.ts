@@ -36,6 +36,8 @@ export interface HeaderRecord {
 		expect?: number;
 		/** The most packet and record entries (`--format json` sets one). */
 		records?: number;
+		/** The most bytes of entry JSON (`--format json` sets one). */
+		recordBytes?: number;
 	};
 	queue: { datagrams: number; bytes: number };
 	detail: Detail;
@@ -340,7 +342,10 @@ export function packetLine(d: Dissection): string {
 		if (last.protocol === "ethernet")
 			what = f.etherType ? `ethertype ${f.etherType}` : "llc";
 		else if (last.protocol === "vlan" && last.fields)
-			what = `ethertype ${last.fields.etherType}`;
+			// An inner 802.3 length means LLC, as it does untagged.
+			what = last.fields.etherType
+				? `ethertype ${last.fields.etherType}`
+				: "llc";
 		parts.push(`${f.src} > ${f.dst} ${what} len=${d.frame.length}`);
 	} else {
 		parts.push(`ethernet len=${d.frame.length}`);

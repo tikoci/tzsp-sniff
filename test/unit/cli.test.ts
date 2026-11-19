@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
 import {
 	DEFAULT_DURATION_MS,
+	JSON_MAX_BYTES,
 	JSON_MAX_RECORDS,
 	helpText,
 	type Io,
@@ -210,6 +211,10 @@ describe("plan: flags to capture options", () => {
 			planOf(["--format", "json", "--count", "1"]).options.recordLimit,
 		).toBe(JSON_MAX_RECORDS);
 		expect(planOf(["--format", "jsonl"]).options.recordLimit).toBeUndefined();
+		expect(
+			planOf(["--format", "json", "--count", "1"]).options.recordBytes,
+		).toBe(JSON_MAX_BYTES);
+		expect(planOf(["--format", "jsonl"]).options.recordBytes).toBeUndefined();
 	});
 
 	test("jsonl and json default to summary detail", () => {
@@ -387,7 +392,7 @@ describe("main", () => {
 		expect(m.stderr()).toContain("warning capture/no-datagrams");
 	});
 
-	test("json: one document with every section", async () => {
+	test("json: one document with every section, written in pieces", async () => {
 		const m = memoryIo();
 		expect(
 			await main(
@@ -395,7 +400,9 @@ describe("main", () => {
 				m.io,
 			),
 		).toBe(0);
-		expect(m.out).toHaveLength(1);
+		// No single write holds the document: header, each section and the
+		// summary go out separately.
+		expect(m.out.length).toBeGreaterThan(5);
 		const doc = JSON.parse(m.stdout());
 		expect(Object.keys(doc)).toEqual([
 			"header",
@@ -439,6 +446,38 @@ describe("main", () => {
 				m.io,
 			),
 		).toBe(1);
+		expect(m.stderr()).toContain("error output/failed");
+	});
+
+	test("after an output error, main returns only once the port is free", async () => {
+		const m = memoryIo();
+		m.io.stdout = {
+			async write() {
+				throw new TzspSniffError(
+					"output/failed",
+					"Writing to stdout failed: ENOSPC",
+				);
+			},
+		};
+		const run = main(["--port", "0", "--follow"], m.io);
+		await until(() => m.err.length > 0);
+		const port = boundPort(m.stderr());
+		await send(port, [REQUEST]);
+		expect(await run).toBe(1);
+		await expectPortFree(port);
+	});
+
+	test("--version to a failing stdout is an output error (exit 1), not a usage one", async () => {
+		const m = memoryIo();
+		m.io.stdout = {
+			async write() {
+				throw new TzspSniffError(
+					"output/failed",
+					"Writing to stdout failed: ENOSPC",
+				);
+			},
+		};
+		expect(await main(["--version"], m.io)).toBe(1);
 		expect(m.stderr()).toContain("error output/failed");
 	});
 

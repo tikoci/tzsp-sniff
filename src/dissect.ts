@@ -349,6 +349,10 @@ export const formatIpv6 = (b: Uint8Array, o = 0) => {
 interface IpContext {
 	/** The packet is a first fragment: a transport length past its end is expected. */
 	fragment: boolean;
+	/** Where the IP header says its payload ends, which may be past the captured bytes. */
+	declaredEnd: number;
+	/** The capture ended before that point (an IP layer marked `truncated`). */
+	cut: boolean;
 }
 
 class Dissector {
@@ -420,12 +424,13 @@ class Dissector {
 			}
 			return;
 		}
-		fields.etherType = hex16(value);
 		if (value < 0x0600) {
+			// Neither a length nor an EtherType: no field claims to be either.
 			layer.problem = "malformed";
 			layer.reason = "type-length";
 			return;
 		}
+		fields.etherType = hex16(value);
 		this.etherPayload(start, end, value, vlans);
 	}
 
@@ -596,6 +601,13 @@ class Dissector {
 			fields,
 		};
 		this.layers.push(layer);
+		// A total length shorter than the header contradicts it, however many
+		// bytes were captured; that is known from the first 20 bytes.
+		if (totalLength < headerLength) {
+			layer.problem = "malformed";
+			layer.reason = "total-length";
+			return;
+		}
 		if (headerLength > available) {
 			layer.problem = "truncated";
 			layer.reason = "header";
@@ -603,16 +615,17 @@ class Dissector {
 		}
 		if (headerLength > 20)
 			fields.options = hex(b, start + 20, start + headerLength);
-		if (totalLength < headerLength) {
-			layer.problem = "malformed";
-			layer.reason = "total-length";
-			return;
-		}
 		if (totalLength > available) {
 			layer.problem = "truncated";
 			layer.reason = "total-length";
 		} else {
 			layer.length = totalLength;
+		}
+		// Every fragment but the last carries a multiple of 8 bytes (RFC 791,
+		// "Fragmentation and Reassembly"). Marked, and the payload still read.
+		if (fields.moreFragments && (totalLength - headerLength) % 8 !== 0) {
+			layer.problem ??= "malformed";
+			layer.reason ??= "fragment-length";
 		}
 		const payloadEnd = start + layer.length;
 		if (fields.fragmentOffset > 0) {
@@ -621,6 +634,8 @@ class Dissector {
 		}
 		this.ipPayload(start + headerLength, payloadEnd, protocol, {
 			fragment: fields.moreFragments,
+			declaredEnd: start + totalLength,
+			cut: totalLength > available,
 		});
 	}
 
@@ -665,6 +680,7 @@ class Dissector {
 			layer.length = 40 + payloadLength;
 		}
 		const payloadEnd = start + layer.length;
+		const declaredEnd = start + 40 + payloadLength;
 		let offset = start + 40;
 		let protocol = nextHeader;
 		for (
@@ -693,9 +709,16 @@ class Dissector {
 			} else if (protocol !== 44 && left >= 2) {
 				length = (u8(b, offset + 1) + 1) * 8;
 			}
-			if (length > left) {
+			if (offset + length > declaredEnd) {
+				// Longer than the payload the IPv6 header declares: a contradiction.
 				fields.protocol = protocol;
-				// A real cut beats a declared length that runs past the bytes there are.
+				layer.problem = "malformed";
+				layer.reason = "extension-header";
+				return;
+			}
+			if (length > left) {
+				// Within the declared payload, but the capture ends first.
+				fields.protocol = protocol;
 				layer.problem = "truncated";
 				layer.reason = "extension-header";
 				return;
@@ -722,6 +745,8 @@ class Dissector {
 		}
 		this.ipPayload(offset, payloadEnd, protocol, {
 			fragment: fields.moreFragments ?? false,
+			declaredEnd,
+			cut: declaredEnd > end,
 		});
 	}
 
@@ -734,7 +759,7 @@ class Dissector {
 				this.icmp(start, end, "icmpv6");
 				return;
 			case 6:
-				this.tcp(start, end);
+				this.tcp(start, end, ip);
 				return;
 			case 17:
 				this.udp(start, end, ip);
@@ -820,7 +845,10 @@ class Dissector {
 		if (length <= available) layer.length = length;
 		// The first fragment of a datagram holds only part of what `length` counts.
 		else if (!ip.fragment) {
-			layer.problem = "truncated";
+			// Past what the IP header declares: a contradiction. Within it, the
+			// capture ended early.
+			layer.problem =
+				start + length > ip.declaredEnd ? "malformed" : "truncated";
 			layer.reason = "length";
 		}
 		fields.payloadLength = layer.length - 8;
@@ -828,9 +856,19 @@ class Dissector {
 	}
 
 	// RFC 9293.
-	tcp(start: number, end: number) {
+	tcp(start: number, end: number, ip: IpContext) {
 		const b = this.b;
 		const available = end - start;
+		// A whole first fragment too short for the TCP header: the header goes
+		// on in the next fragment, so this is fragment data, not a cut capture.
+		const splitHeader =
+			ip.fragment &&
+			!ip.cut &&
+			(available < 20 || (u8(b, start + 12) >> 4) * 4 > available);
+		if (splitHeader) {
+			this.data(start, end);
+			return;
+		}
 		if (available < 20) {
 			this.layers.push({
 				protocol: "tcp",

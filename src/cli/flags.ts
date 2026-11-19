@@ -55,7 +55,7 @@ export const FLAGS: readonly FlagSpec[] = [
 		value: "<time>",
 		commands: ["listen"],
 		conflicts: ["follow"],
-		help: "Stop when nothing has arrived for <time>, counted from the start.",
+		help: "Stop when nothing has arrived for <time>: the clock starts when the ports are bound and restarts with each datagram.",
 	},
 	{
 		name: "follow",
@@ -73,7 +73,7 @@ export const FLAGS: readonly FlagSpec[] = [
 		name: "format",
 		value: "text|jsonl|json",
 		commands: ["listen"],
-		help: "text (default): a line per packet, everything else on stderr. jsonl: a JSON record per line, header first, summary last. json: one document at the end; needs --count or --duration.",
+		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last. json: one document at the end; needs --count or --duration.",
 	},
 	{
 		name: "detail",

@@ -5,6 +5,7 @@
  * key first seen after that is folded straight into the bucket.
  */
 import type { Dissection } from "./dissect.ts";
+import { TzspSniffError } from "./errors.ts";
 import type { Capture } from "./listen.ts";
 import {
 	formatPeer,
@@ -58,7 +59,8 @@ class Table<T extends object> {
 		);
 		const rest = all.slice(top);
 		return {
-			top: all.slice(0, top),
+			// Copies: a caller that changes a row cannot change the tables.
+			top: all.slice(0, top).map((entry) => ({ ...entry })),
 			otherEntries: rest.length + this.foldedEntries.size,
 			otherEntriesCapped: this.foldedCapped,
 			otherCount:
@@ -91,6 +93,18 @@ const endpoint = (host: string | undefined, port: number | undefined) =>
 export function summarize(options: SummaryOptions = {}): StatsAccumulator {
 	const top = options.top ?? 10;
 	const track = options.track ?? 1000;
+	for (const [name, value] of [
+		["top", top],
+		["track", track],
+	] as const) {
+		if (!Number.isSafeInteger(value) || value < 0) {
+			throw new TzspSniffError(
+				"summary/invalid-option",
+				`summarize()'s ${name} must be a whole number of 0 or more, not ${value}.`,
+				`Leave ${name} unset for the default; 0 folds every entry into "other".`,
+			);
+		}
+	}
 	const protocols: Record<string, number> = {};
 	const problems: Record<string, number> = {};
 	const senders = new Table<Sender>(track, (e) => e.datagrams);

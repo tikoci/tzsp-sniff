@@ -152,30 +152,31 @@ export const fixtureInfo = (name: string) => {
 export async function send(port: number, datagrams: (Uint8Array | string)[]) {
 	const socket = createSocket("udp4");
 	// Every socket error names its role, so a CI failure says which bind failed
-	// (the Windows leg showed a bare "bind EADDRINUSE 0.0.0.0").
-	let failure: Error | undefined;
-	socket.on("error", (error) => {
-		failure = new Error(`sender to port ${port} failed: ${error.message}`, {
+	// (the Windows leg showed a bare "bind EADDRINUSE 0.0.0.0"). An error
+	// event rejects the send in flight, even if its callback never comes.
+	const failed = (error: Error) =>
+		new Error(`sender to port ${port} failed: ${error.message}`, {
 			cause: error,
 		});
+	let rejectInFlight: ((error: Error) => void) | undefined;
+	let failure: Error | undefined;
+	socket.on("error", (error) => {
+		failure = failed(error);
+		rejectInFlight?.(failure);
 	});
 	try {
 		for (const d of datagrams) {
-			const data = typeof d === "string" ? bytes(d) : d;
-			await new Promise<void>((resolve, reject) =>
-				socket.send(data, port, "127.0.0.1", (error) =>
-					error
-						? reject(
-								new Error(`sender to port ${port} failed: ${error.message}`, {
-									cause: error,
-								}),
-							)
-						: resolve(),
-				),
-			);
 			if (failure) throw failure;
+			const data = typeof d === "string" ? bytes(d) : d;
+			await new Promise<void>((resolve, reject) => {
+				rejectInFlight = reject;
+				socket.send(data, port, "127.0.0.1", (error) =>
+					error ? reject(failed(error)) : resolve(),
+				);
+			});
 		}
 	} finally {
+		rejectInFlight = undefined;
 		socket.close();
 	}
 }
@@ -204,6 +205,9 @@ export const closeSocket = (socket: Socket) =>
 export async function freePort(): Promise<number> {
 	const { socket, port } = await holdPort();
 	await closeSocket(socket);
+	// On Windows the port is free a few ms after close (see expectPortFree):
+	// wait for that, so the caller's own bind does not race it.
+	await expectPortFree(port);
 	return port;
 }
 

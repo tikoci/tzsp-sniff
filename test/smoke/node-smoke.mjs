@@ -42,43 +42,103 @@ async function sendTo(port) {
 	socket.close();
 }
 
+/** Settle within `ms` or fail naming the phase, so a stalled phase cannot hang CI. */
+async function within(ms, what, promise) {
+	let timer;
+	const timeout = new Promise((_, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`node-smoke: ${what} did not finish in ${ms} ms`)),
+			ms,
+		);
+	});
+	try {
+		return await Promise.race([promise, timeout]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
 // A real UDP round trip on Node's sockets: listen(), then the capture core.
 const listener = await listen({ ports: [{ port: 0 }], bind: "127.0.0.1" });
-await sendTo(listener.listeners[0].port);
-for await (const capture of listener) {
-	assert.equal(capture.tzsp.kind, "packet");
-	assert.equal(Object.getPrototypeOf(capture.datagram), Uint8Array.prototype);
-	break;
+try {
+	await within(
+		5000,
+		"listen() round trip",
+		(async () => {
+			await sendTo(listener.listeners[0].port);
+			for await (const capture of listener) {
+				assert.equal(capture.tzsp.kind, "packet");
+				assert.equal(
+					Object.getPrototypeOf(capture.datagram),
+					Uint8Array.prototype,
+				);
+				break;
+			}
+		})(),
+	);
+} finally {
+	listener.close();
+	await within(5000, "listener close", listener.closed);
 }
-await listener.closed;
 
-const stream = await openCapture({ ports: [{ port: 0 }], count: 1 });
-const types = [];
-for await (const record of stream) {
-	types.push(record.type);
-	if (record.type === "header") await sendTo(record.listeners[0].port);
+const stream = await openCapture({
+	ports: [{ port: 0 }],
+	count: 1,
+	durationMs: 5000,
+});
+try {
+	const types = await within(
+		6000,
+		"openCapture() round trip",
+		(async () => {
+			const seen = [];
+			for await (const record of stream) {
+				seen.push(record.type);
+				if (record.type === "header") await sendTo(record.listeners[0].port);
+			}
+			return seen;
+		})(),
+	);
+	assert.deepEqual(types, ["header", "packet", "summary"]);
+} finally {
+	stream.listener.close();
+	await within(5000, "capture close", stream.listener.closed);
 }
-assert.deepEqual(types, ["header", "packet", "summary"]);
 
 // The built executable under Node.
 const child = spawn(
 	process.execPath,
-	["dist/cli/bin.js", "--port", "0", "--count", "1", "--format", "jsonl"],
+	[
+		"dist/cli/bin.js",
+		"--port",
+		"0",
+		"--count",
+		"1",
+		"--duration",
+		"5s",
+		"--format",
+		"jsonl",
+	],
 	{
 		env: { PATH: process.env.PATH ?? "" },
 		stdio: ["ignore", "pipe", "inherit"],
 	},
 );
 let out = "";
-child.stdout.setEncoding("utf8");
-child.stdout.on("data", (chunk) => {
-	const first = out === "" || !out.includes("\n");
-	out += chunk;
-	if (first && out.includes("\n"))
-		sendTo(JSON.parse(out.split("\n")[0]).listeners[0].port);
-});
-// "close", not "exit": stdio is fully read by then.
-const [code] = await once(child, "close");
+let code;
+try {
+	child.stdout.setEncoding("utf8");
+	child.stdout.on("data", (chunk) => {
+		const first = !out.includes("\n");
+		out += chunk;
+		if (first && out.includes("\n"))
+			sendTo(JSON.parse(out.split("\n")[0]).listeners[0].port);
+	});
+	// "close", not "exit": stdio is fully read by then.
+	[code] = await within(10000, "the built CLI", once(child, "close"));
+} finally {
+	child.kill("SIGKILL");
+}
 assert.equal(code, 0);
 const records = out
 	.trimEnd()

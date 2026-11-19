@@ -208,7 +208,11 @@ and macOS it must succeed at once.
   constant memory.
 - **`--format json`** holds the whole result until the end, so it requires a
   `--count` or `--duration` limit and refuses `--follow` with a code that
-  names `--format jsonl`.
+  names `--format jsonl`. Control and invalid records do not advance
+  `--count`, and full-detail entries can be large, so the document also
+  stops at 10,000 entries or 64 MiB of entry JSON (`stoppedBy:
+  record-limit`, status `incomplete`, warning `capture/record-limit`), and
+  is written piece by piece rather than as one string.
 - **Writers stream** with backpressure; a sink that stalls past a timeout
   ends the capture with a coded error instead of growing the queue.
 - **Parsers** are bounded too; see "Dissectors".
@@ -279,7 +283,8 @@ malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
 dropped by the queue, datagrams still queued when a limit stopped the
 capture (`unread`), and packets reported; all but the first add up to it.
 The summary also says what stopped the capture (`stoppedBy`: `count`,
-`duration`, `idle`, `interrupt` or `error`). `--count`
+`duration`, `idle`, `record-limit`, `interrupt` or `error`): whichever
+ended intake first, and nothing later changes it. `--count`
 and `--expect` count **packets reported** (after filters). `--idle` is time
 since the last datagram received, of any kind, starting when the sockets
 are bound.

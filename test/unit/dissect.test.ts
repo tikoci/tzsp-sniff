@@ -7,6 +7,7 @@ import {
 	MAX_IPV6_EXTENSIONS,
 	MAX_VLAN_TAGS,
 } from "../../src/dissect.ts";
+import { packetLine } from "../../src/records.ts";
 import { parseTzsp } from "../../src/tzsp.ts";
 import {
 	bytes,
@@ -38,14 +39,18 @@ type LayerOf<P> = Layer extends infer L
 const layer = <P extends Layer["protocol"]>(d: Dissection, protocol: P) =>
 	d.layers.find((l) => l.protocol === protocol) as LayerOf<P>;
 
-/** Every span lies inside the frame, and each layer starts at or after the one before. */
+/** Every layer lies inside the one that carries it, and so inside the frame. */
 function expectSpansInside(d: Dissection) {
-	let previous = 0;
+	// Layers form one chain, each carried by the one before: a layer starts at
+	// or after its parent and ends no later than it.
+	let parentStart = 0;
+	let parentEnd = d.frame.length;
 	for (const l of d.layers) {
-		expect(l.offset).toBeGreaterThanOrEqual(previous);
+		expect(l.offset).toBeGreaterThanOrEqual(parentStart);
 		expect(l.length).toBeGreaterThanOrEqual(0);
-		expect(l.offset + l.length).toBeLessThanOrEqual(d.frame.length);
-		previous = l.offset;
+		expect(l.offset + l.length).toBeLessThanOrEqual(parentEnd);
+		parentStart = l.offset;
+		parentEnd = l.offset + l.length;
 	}
 }
 
@@ -380,9 +385,15 @@ describe("dissect: IPv4", () => {
 				eth(0x0800, ipv4({ proto: 17, payload: "", ihl: 4 })),
 				{ problem: "malformed", reason: "header-length" },
 			],
+			// A 60-byte header that declares 60 bytes, but only 20 were captured.
+			[
+				eth(0x0800, ipv4({ proto: 17, payload: "", ihl: 15, totalLength: 60 })),
+				{ problem: "truncated", reason: "header" },
+			],
+			// A 60-byte header in a 20-byte packet contradicts itself, whatever was captured.
 			[
 				eth(0x0800, ipv4({ proto: 17, payload: "", ihl: 15 })),
-				{ problem: "truncated", reason: "header" },
+				{ problem: "malformed", reason: "total-length" },
 			],
 			[
 				eth(0x0800, ipv4({ proto: 17, payload: "", totalLength: 19 })),
@@ -403,15 +414,47 @@ describe("dissect: IPv4", () => {
 			fragmentOffset: 1480,
 			moreFragments: false,
 		});
+		// 16 bytes of payload: a multiple of 8, as a non-final fragment must be.
 		const first = packet({
 			proto: 17,
-			payload: udp(1, 2, "aabb", 3000),
+			payload: udp(1, 2, "aabbccddeeff0011", 3000),
 			flagsOffset: 0x2000,
 		});
 		expect(first.problem).toBeUndefined();
 		expect(layer(first, "udp").fields).toMatchObject({
 			length: 3000,
-			payloadLength: 2,
+			payloadLength: 8,
+		});
+		const misaligned = packet({
+			proto: 17,
+			payload: udp(1, 2, "aabb", 3000),
+			flagsOffset: 0x2000,
+		});
+		expect(layer(misaligned, "ipv4")).toMatchObject({
+			problem: "malformed",
+			reason: "fragment-length",
+		});
+		expect(misaligned.protocols).toEqual(["ethernet", "ipv4", "udp", "data"]);
+	});
+
+	test("a TCP header split across fragments: a whole first fragment holds data, a cut capture is truncated", () => {
+		// 8 bytes of a TCP header in a complete first fragment: the rest is in the next one.
+		const split = packet({
+			proto: 6,
+			payload: tcp({ sp: 1, dp: 2, flags: 2 }).slice(0, 16),
+			flagsOffset: 0x2000,
+		});
+		expect(split.protocols).toEqual(["ethernet", "ipv4", "data"]);
+		expect(split.problem).toBeUndefined();
+		// The same 8 bytes in a packet that declares more: the capture ended early.
+		const cut = packet({
+			proto: 6,
+			payload: tcp({ sp: 1, dp: 2, flags: 2 }).slice(0, 16),
+			totalLength: 40,
+		});
+		expect(layer(cut, "tcp")).toMatchObject({
+			problem: "truncated",
+			reason: "header",
 		});
 	});
 
@@ -507,10 +550,22 @@ describe("dissect: IPv6", () => {
 			reason: "payload-length",
 		});
 		expect(layer(long, "udp").fields?.srcPort).toBe(1);
+		// A 16-byte extension in an 8-byte payload: the declaration contradicts it.
+		const longExtension = packet({
+			next: 0,
+			extensions: "3b01000000000000",
+			payload: "",
+		});
+		expect(layer(longExtension, "ipv6")).toMatchObject({
+			problem: "malformed",
+			reason: "extension-header",
+		});
+		// The payload declares the 16 bytes, but the capture ends after 8.
 		const cutExtension = packet({
 			next: 0,
 			extensions: "3b01000000000000",
 			payload: "",
+			payloadLength: 16,
 		});
 		expect(layer(cutExtension, "ipv6")).toMatchObject({
 			problem: "truncated",
@@ -545,6 +600,15 @@ describe("dissect: cross-review vectors (#20)", () => {
 			fields: { length: 9 },
 		});
 		expect(layer(cut, "data").length).toBe(6);
+	});
+
+	test("the line names LLC after a VLAN tag's inner length, as untagged", () => {
+		expect(packetLine(dissect(bytes(eth(0x8100, "000a0003424203"))))).toBe(
+			`vlan 10 ${MAC_A} > ${MAC_B} llc len=21`,
+		);
+		expect(packetLine(dissect(bytes(eth(0x8100, "000a88cc0207"))))).toBe(
+			`vlan 10 ${MAC_A} > ${MAC_B} ethertype 0x88cc len=20`,
+		);
 	});
 
 	test("a VLAN tag's inner type/length follows the same rules", () => {
@@ -664,12 +728,27 @@ describe("dissect: ICMP, UDP, TCP", () => {
 		});
 	});
 
-	test("UDP: a length under 8 is malformed, past the bytes truncated", () => {
+	test("UDP: a length under 8 or past the declared packet is malformed; past the captured bytes, truncated", () => {
 		expect(layer(v4(17, udp(1, 2, "", 7)), "udp")).toMatchObject({
 			problem: "malformed",
 			reason: "length",
 		});
+		// 100 bytes of UDP in a packet that declares 9: a contradiction.
 		expect(layer(v4(17, udp(1, 2, "aa", 100)), "udp")).toMatchObject({
+			problem: "malformed",
+			reason: "length",
+			fields: { payloadLength: 1 },
+		});
+		// The packet declares the 100 bytes, but the capture ends after 9.
+		const cut = dissect(
+			bytes(
+				eth(
+					0x0800,
+					ipv4({ proto: 17, payload: udp(1, 2, "aa", 100), totalLength: 120 }),
+				),
+			),
+		);
+		expect(layer(cut, "udp")).toMatchObject({
 			problem: "truncated",
 			reason: "length",
 			fields: { payloadLength: 1 },

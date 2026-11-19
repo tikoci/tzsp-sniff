@@ -42,4 +42,28 @@ describe("summarize: bounded tables", () => {
 			otherEntriesCapped: false,
 		});
 	});
+
+	test("rows are copies: changing one does not change the tables", () => {
+		const stats = summarize();
+		stats.addDatagram(capture(1));
+		const first = stats.tables();
+		(first.senders.top[0] as { datagrams: number }).datagrams = 99;
+		expect(stats.tables().senders.top[0]?.datagrams).toBe(1);
+	});
+
+	test("top and track must be whole numbers of 0 or more; track 0 folds everything", () => {
+		for (const options of [
+			{ top: -1 },
+			{ track: 1.5 },
+			{ track: Number.POSITIVE_INFINITY },
+			{ top: Number.NaN },
+		]) {
+			expect(() => summarize(options)).toThrow(
+				expect.objectContaining({ code: "summary/invalid-option" }),
+			);
+		}
+		const all = summarize({ track: 0 });
+		all.addDatagram(capture(1));
+		expect(all.tables().senders).toMatchObject({ top: [], otherCount: 1 });
+	});
 });

@@ -11,7 +11,9 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 - `tzsp-sniff` CLI, `listen` command (the default): receives TZSP on one or
   more UDP ports (`--port <port>[=<label>]`, `--bind`), stops at `--count`,
   `--duration` or `--idle`, or runs to Ctrl-C with `--follow`, and stops
-  after 10 seconds with a `tip/default-duration` when no limit is given.
+  after 10 seconds with a `tip/default-duration` when no limit is given
+  (`--format json` needs an explicit `--count` or `--duration`, and stops at
+  10,000 entries or 64 MiB of them).
   `--format text|jsonl|json`, `--detail line|summary|layers|full`, `--stats`
   and `--expect`. Exit 0 done (an empty capture carries a
   `capture/no-datagrams` or `capture/no-frames` warning), 1 the capture

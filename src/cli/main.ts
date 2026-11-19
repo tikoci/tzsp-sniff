@@ -7,15 +7,14 @@
  * capture failed or `--expect` was not met, 2 a usage error.
  */
 import { isIP } from "node:net";
-import { type CaptureOptions, openCapture } from "../capture.ts";
+import {
+	type CaptureOptions,
+	type CaptureStream,
+	openCapture,
+} from "../capture.ts";
 import { TzspSniffError } from "../errors.ts";
 import type { ListenerSpec } from "../listen.ts";
-import {
-	DETAILS,
-	type Detail,
-	type StreamRecord,
-	type TipRecord,
-} from "../records.ts";
+import { DETAILS, type Detail, type TipRecord } from "../records.ts";
 import { TZSP_PORT } from "../tzsp.ts";
 import { VERSION } from "../version.ts";
 import {
@@ -60,6 +59,11 @@ export const DEFAULT_DURATION_MS = 10_000;
  * do not advance `--count`, so the capture stops here with a warning.
  */
 export const JSON_MAX_RECORDS = 10_000;
+/**
+ * The most bytes of entry JSON one `--format json` document holds: far below
+ * the runtimes' string limits, and a size a reader can load.
+ */
+export const JSON_MAX_BYTES = 64 * 1024 * 1024;
 const FORMATS = ["text", "jsonl", "json"] as const;
 type Format = (typeof FORMATS)[number];
 
@@ -86,7 +90,7 @@ export function helpText(): string {
 		"the summary go to stderr, except that with --stats the summary is the result.",
 		"Every JSONL stream starts with a header record and ends with one summary",
 		"record; a stream without a summary was cut off. --format json stops at",
-		`${JSON_MAX_RECORDS} entries.`,
+		`${JSON_MAX_RECORDS} entries or ${JSON_MAX_BYTES / 1024 / 1024} MiB of them.`,
 		"",
 		"Exit: 0 done (also when nothing arrived: a warning says why), 1 the capture",
 		"failed or --expect was not met, 2 a usage error.",
@@ -271,7 +275,10 @@ export function plan(args: ParsedArgs): Plan {
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
 	}
-	if (format === "json") options.recordLimit = JSON_MAX_RECORDS;
+	if (format === "json") {
+		options.recordLimit = JSON_MAX_RECORDS;
+		options.recordBytes = JSON_MAX_BYTES;
+	}
 	return { options, format, tips };
 }
 
@@ -295,18 +302,19 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(helpText());
 		return 0;
 	}
-	let planned: Plan;
+	let planned: Plan | "version";
 	try {
 		const args = parseArgs(argv);
-		if (args.flags.has("version")) {
-			await io.stdout.write(`${VERSION}\n`);
-			return 0;
-		}
-		planned = plan(args);
+		planned = args.flags.has("version") ? "version" : plan(args);
 	} catch (error) {
 		if (!(error instanceof TzspSniffError)) throw error;
 		await io.stderr.write(errorText(error));
 		return 2;
+	}
+	// Outside the usage catch: a failed write is an output error (exit 1), not a usage one.
+	if (planned === "version") {
+		await io.stdout.write(`${VERSION}\n`);
+		return 0;
 	}
 	const { options, format, tips } = planned;
 	if (io.signal) options.signal = io.signal;
@@ -323,15 +331,37 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		if (io.signal?.aborted) return 130;
 		throw error;
 	}
+	try {
+		return await print(stream, format, tips, options.stats ?? false, io);
+	} finally {
+		// Exit means released, however the loop ended (an output error too):
+		// the ports can be bound again once this returns.
+		await stream.listener.closed;
+	}
+}
 
+/** Render the stream in `format`; resolves to the exit code. */
+async function print(
+	stream: CaptureStream,
+	format: Format,
+	tips: TipRecord[],
+	statsOnly: boolean,
+	io: Io,
+): Promise<number> {
 	const showListener = stream.header.listeners.length > 1;
-	const statsOnly = options.stats ?? false;
-	const document: Record<string, unknown> = {};
-	const collect = (key: string, record: StreamRecord) => {
-		const list = (document[key] ?? []) as StreamRecord[];
-		list.push(record);
-		document[key] = list;
+	// --format json: each entry is kept as its own JSON text and the document
+	// is written piece by piece, so no single string holds every entry (the
+	// capture's recordBytes budget bounds the total).
+	const sections: Record<
+		"packets" | "records" | "warnings" | "tips",
+		string[]
+	> = {
+		packets: [],
+		records: [],
+		warnings: [],
+		tips: tips.map((t) => JSON.stringify(t)),
 	};
+	let header = "";
 	let exitCode = 0;
 
 	for await (const record of stream) {
@@ -345,21 +375,26 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 			continue;
 		}
 		if (format === "json") {
-			if (record.type === "header") {
-				document.header = record;
-				if (!statsOnly) {
-					document.packets = [];
-					document.records = [];
-				}
-				document.warnings = [];
-				document.tips = [...tips];
-			} else if (record.type === "packet") collect("packets", record);
-			else if (record.type === "record") collect("records", record);
-			else if (record.type === "warning") collect("warnings", record);
-			else if (record.type === "tip") collect("tips", record);
+			if (record.type === "header") header = JSON.stringify(record);
 			else if (record.type === "summary") {
-				document.summary = record;
-				await io.stdout.write(`${JSON.stringify(document)}\n`);
+				await io.stdout.write(`{"header":${header}`);
+				const keys = statsOnly
+					? (["warnings", "tips"] as const)
+					: (["packets", "records", "warnings", "tips"] as const);
+				for (const key of keys) {
+					await io.stdout.write(`,"${key}":[`);
+					const entries = sections[key];
+					for (let i = 0; i < entries.length; i++) {
+						await io.stdout.write(
+							i ? `,${entries[i]}` : (entries[i] as string),
+						);
+					}
+					await io.stdout.write("]");
+				}
+				await io.stdout.write(`,"summary":${JSON.stringify(record)}}\n`);
+			} else {
+				const key = `${record.type}s` as keyof typeof sections;
+				sections[key].push(JSON.stringify(record));
 			}
 			continue;
 		}
@@ -382,7 +417,5 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 				break;
 		}
 	}
-	// Exit means released: the ports can be bound again once this returns.
-	await stream.listener.closed;
 	return exitCode;
 }

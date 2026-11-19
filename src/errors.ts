@@ -17,6 +17,10 @@ export const CODES = {
 		kind: "error",
 		summary: "A bound UDP socket failed; the capture ended.",
 	},
+	"summary/invalid-option": {
+		kind: "error",
+		summary: "A summarize() option is not a whole number of 0 or more.",
+	},
 	"capture/expect-unmet": {
 		kind: "error",
 		summary: "Fewer packets were reported than --expect asked for.",

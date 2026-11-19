@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createSocket, type Socket, type SocketOptions } from "node:dgram";
 import {
 	type CaptureOptions,
 	type CaptureStream,
@@ -148,19 +149,22 @@ describe("openCapture", () => {
 	});
 
 	test("--idle counts from the last datagram, not from the bind", async () => {
-		let sentAt = 0;
+		let sending: Promise<void> = Promise.resolve();
 		const { stream, summary } = await readAll({ idleMs: 150 }, async (s) => {
 			// Sent while the next read is pending, 100 ms after the bind: idle
 			// must move to 150 ms after this arrival, not stop at 150 ms.
-			setTimeout(() => {
-				sentAt = Date.now();
-				send(portOf(s), [REQUEST]);
-			}, 100);
+			sending = new Promise((resolve, reject) =>
+				setTimeout(() => send(portOf(s), [REQUEST]).then(resolve, reject), 100),
+			);
 		});
+		await sending;
 		expect(summary).toMatchObject({ status: "complete", stoppedBy: "idle" });
 		expect(summary.counters.packets).toBe(1);
-		const stoppedAt = stream.listener.boundAt + summary.durationMs;
-		expect(stoppedAt - sentAt).toBeGreaterThanOrEqual(140);
+		// Measured from the arrival the listener saw, not from when the test sent.
+		const arrival = stream.listener.lastArrival as number;
+		const stoppedAt = stream.listener.endedAt as number;
+		expect(arrival - stream.listener.boundAt).toBeGreaterThanOrEqual(90);
+		expect(stoppedAt - arrival).toBeGreaterThanOrEqual(140);
 	});
 
 	test("--expect unmet: status error, the code, and the empty case", async () => {
@@ -425,5 +429,85 @@ describe("openCapture", () => {
 			stoppedBy: "record-limit",
 		});
 		expect(sumOf(summary.counters)).toBe(summary.counters.datagrams);
+	});
+
+	test("an abort ends intake for good: a duration that fires later does not become the reason", async () => {
+		const controller = new AbortController();
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			durationMs: 40,
+			signal: controller.signal,
+		});
+		controller.abort();
+		await new Promise((r) => setTimeout(r, 80));
+		const records: StreamRecord[] = [];
+		for await (const r of stream) records.push(r);
+		const summary = records.at(-1) as SummaryRecord;
+		expect(summary).toMatchObject({
+			status: "interrupted",
+			stoppedBy: "interrupt",
+		});
+		// The duration runs to the end of intake, not to when the summary was read.
+		expect(summary.durationMs).toBeLessThan(40);
+	});
+
+	test("a socket error nobody read yet is the reason, even after the duration passes", async () => {
+		const sockets: Socket[] = [];
+		const stream = await openCapture(
+			{ ports: [{ port: 0 }], durationMs: 40 },
+			{
+				createSocket: ((options: SocketOptions) => {
+					const socket = createSocket(options);
+					sockets.push(socket);
+					return socket;
+				}) as typeof createSocket,
+			},
+		);
+		sockets[0]?.emit("error", new Error("injected"));
+		await new Promise((r) => setTimeout(r, 80));
+		const records: StreamRecord[] = [];
+		for await (const r of stream) records.push(r);
+		expect(records.at(-1)).toMatchObject({
+			status: "error",
+			stoppedBy: "error",
+			error: { code: "listen/socket-error" },
+		});
+	});
+
+	test("control records plus dropped datagrams: no capture/no-frames, and the case is capture/dropped", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			queue: { datagrams: 1 },
+			idleMs: 80,
+			expect: 1,
+		});
+		const records: StreamRecord[] = [];
+		for await (const record of stream) {
+			records.push(record);
+			if (record.type === "header") {
+				// One keepalive fits; the frames after it are dropped unread.
+				await send(portOf(stream), [KEEPALIVE, REQUEST, REQUEST]);
+				await until(() => stream.listener.counters.received === 3);
+			}
+		}
+		expect(ofType(records, "warning").map((w) => w.code)).toEqual([
+			"capture/dropped",
+		]);
+		expect((records.at(-1) as SummaryRecord).error).toMatchObject({
+			code: "capture/expect-unmet",
+			case: "capture/dropped",
+		});
+	});
+
+	test("recordBytes stops once the entries' JSON reaches that size", async () => {
+		const { records, summary } = await readAll(
+			{ recordBytes: 1, durationMs: 5000, detail: "full" },
+			(s) => send(portOf(s), [REQUEST, REQUEST]),
+		);
+		expect(ofType(records, "packet")).toHaveLength(1);
+		expect(summary).toMatchObject({
+			status: "incomplete",
+			stoppedBy: "record-limit",
+		});
 	});
 });

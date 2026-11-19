@@ -26,7 +26,9 @@ On the router (RouterOS 7), point the sniffer at this host:
 /tool/sniffer/start
 ```
 
-A CHR under quickchr reaches the host at `10.0.2.2`. Then, on the host:
+A CHR under quickchr reaches the host at `10.0.2.2`. Then, on the host
+(until the package is on npm, run `bun install && bun run build` in a
+checkout and use `node dist/cli/bin.js` for `tzsp-sniff`):
 
 ```sh
 tzsp-sniff --count 10                     # ten packets, one line each
@@ -41,7 +43,8 @@ tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
 ```
 
 With no limit, it stops after 10 seconds and says so, so a guessed command
-never hangs. stdout is the result; in text format the start line, warnings,
+never hangs; `--format json`, which holds everything until the end, needs
+an explicit `--count` or `--duration` instead. stdout is the result; in text format the start line, warnings,
 tips and the summary go to stderr, except that with `--stats` the summary
 is the result, on stdout. `--detail line|summary|layers|full` sets
 how much each packet carries, cheapest first. A JSONL stream starts with a

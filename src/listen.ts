@@ -7,6 +7,7 @@
  * listener, and a bind failure is an error that names it.
  */
 import { createSocket, type Socket } from "node:dgram";
+import { addAbortListener } from "node:events";
 import { isIP } from "node:net";
 import { TzspSniffError } from "./errors.ts";
 import { parseTzsp, TZSP_PORT, type TzspDatagram } from "./tzsp.ts";
@@ -91,6 +92,8 @@ export interface Listener extends AsyncIterable<Capture> {
 	/** When the last datagram arrived, dropped or not. */
 	readonly lastArrival: number | undefined;
 	readonly ended: ListenerEnd | undefined;
+	/** When intake stopped, ms since the epoch: the end of the capture's duration. */
+	readonly endedAt: number | undefined;
 	/**
 	 * Resolves once every socket has closed. Its port can then be bound
 	 * again, except that Windows frees it a few milliseconds later (about
@@ -124,7 +127,9 @@ const invalid = (message: string, fix: string) =>
 	new TzspSniffError("listen/invalid-option", message, fix);
 
 function checkOptions(options: ListenOptions) {
-	const ports = options.ports ?? [{ port: TZSP_PORT }];
+	// A copy: a caller that changes its array while a bind is awaited cannot
+	// change what is validated or bound.
+	const ports = (options.ports ?? [{ port: TZSP_PORT }]).map((p) => ({ ...p }));
 	const bind = options.bind ?? "0.0.0.0";
 	if (ports.length === 0) {
 		throw invalid("No ports to listen on.", "Pass at least one port.");
@@ -196,7 +201,9 @@ function bindOne(socket: Socket, port: number, address: string) {
 		socket.once("error", onError);
 		socket.once("listening", onListening);
 		socket.once("close", onClose);
-		socket.bind({ port, address });
+		// Exclusive: a cluster worker binds its own socket rather than sharing the
+		// primary's, so a port has one owner here too (DESIGN.md, "no reusePort").
+		socket.bind({ port, address, exclusive: true });
 	});
 }
 
@@ -257,15 +264,19 @@ export async function listen(
 	const closeSockets = () => {
 		for (const socket of sockets.splice(0)) socket.close();
 	};
-	const onAbort = () => end("aborted");
+	// addAbortListener runs even when an earlier listener on a shared signal
+	// stops propagation (checked on Node 22.0.0, Node 26 and Bun 1.4.4).
+	let abortRegistration: Disposable | undefined;
+	let endedAt: number | undefined;
 	const end = (how: ListenerEnd, error?: TzspSniffError) => {
 		if (ended) return;
 		ended = how;
+		endedAt = Date.now();
 		failure = error;
 		items.length = 0;
 		head = 0;
 		queuedBytes = 0;
-		signal?.removeEventListener("abort", onAbort);
+		abortRegistration?.[Symbol.dispose]();
 		closeSockets();
 		wake();
 	};
@@ -304,6 +315,8 @@ export async function listen(
 			);
 		}
 		if (failure) return abandon(failure);
+		// An abort between binds starts no further bind.
+		if (signal?.aborted) return abandon(signal.reason);
 		const port = socket.address().port;
 		const listener: BoundListener = {
 			address: bind,
@@ -368,7 +381,8 @@ export async function listen(
 			),
 		);
 	}
-	signal?.addEventListener("abort", onAbort, { once: true });
+	if (signal)
+		abortRegistration = addAbortListener(signal, () => end("aborted"));
 	const boundAt = Date.now();
 	const closed = Promise.all(closedPromises).then(() => undefined);
 
@@ -420,6 +434,9 @@ export async function listen(
 		},
 		get ended() {
 			return ended;
+		},
+		get endedAt() {
+			return endedAt;
 		},
 		close: () => end("closed"),
 		[Symbol.asyncIterator]: () => iterator,

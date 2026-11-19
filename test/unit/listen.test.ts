@@ -189,9 +189,14 @@ describe("listen", () => {
 			expect(listener.counters.queued).toBe(1);
 			await send(portOf(listener), [REQUEST]);
 			await until(() => listener.counters.received === 6);
-			// Room for one again: the sixth was queued, so seq 3, 4 and 5 are the gap.
+			// Room for one again: the sixth was queued, so 3, 4 and 5 are the gap.
+			expect((await it.next()).value.seq).toBe(2);
+			expect((await it.next()).value.seq).toBe(6);
+			// One more, left unread when the listener closes.
+			await send(portOf(listener), [REQUEST]);
+			await until(() => listener.counters.received === 7);
 			listener.close();
-			expect(listener.counters.queued).toBe(2);
+			expect(listener.counters.queued).toBe(1);
 			expect((await it.next()).done).toBe(true);
 		} finally {
 			listener.close();
@@ -291,12 +296,83 @@ describe("listen: cross-review cases (#20)", () => {
 				);
 			return socket;
 		}) as typeof createSocket;
+		const closes: Promise<void>[] = [];
+		const record = factory.createSocket;
+		factory.createSocket = ((options: SocketOptions) => {
+			const socket = record(options);
+			closes.push(
+				new Promise((resolve) => socket.once("close", () => resolve())),
+			);
+			return socket;
+		}) as typeof createSocket;
 		const error = await expectCode(
 			listen({ ports: [{ port: first }, { port: 0 }] }, factory),
 			"listen/socket-error",
 		);
 		expect(error.message).toContain(`:${first}`);
+		// Both sockets closed: the faulted one, and the one still binding.
+		expect(factory.sockets).toHaveLength(2);
+		await Promise.all(closes);
 		await expectPortFree(first);
+	});
+
+	test("an abort that another listener stops from propagating still ends the listener", async () => {
+		const controller = new AbortController();
+		// Registered first, so it runs first and stops the event for the rest.
+		controller.signal.addEventListener("abort", (event) =>
+			event.stopImmediatePropagation(),
+		);
+		const listener = await listen({
+			ports: [{ port: 0 }],
+			signal: controller.signal,
+		});
+		const pending = listener[Symbol.asyncIterator]().next();
+		controller.abort();
+		expect((await pending).done).toBe(true);
+		expect(listener.ended).toBe("aborted");
+		await listener.closed;
+		await expectPortFree(portOf(listener));
+	});
+
+	test("an abort between binds starts no further bind and frees what was bound", async () => {
+		const controller = new AbortController();
+		const factory = recording();
+		const create = factory.createSocket;
+		factory.createSocket = ((options: SocketOptions) => {
+			const socket = create(options);
+			if (factory.sockets.length === 1) controller.abort();
+			return socket;
+		}) as typeof createSocket;
+		const error = await listen(
+			{
+				ports: [{ port: 0 }, { port: 0 }, { port: 0 }],
+				signal: controller.signal,
+			},
+			factory,
+		).catch((e: unknown) => e);
+		expect((error as Error).name).toBe("AbortError");
+		expect(factory.sockets).toHaveLength(1);
+	});
+
+	test("the ports are copied: changing the caller's array during a bind changes nothing", async () => {
+		const ports = [
+			{ port: 0, label: "a" },
+			{ port: 0, label: "b" },
+		];
+		const factory = recording();
+		const create = factory.createSocket;
+		factory.createSocket = ((options: SocketOptions) => {
+			const socket = create(options);
+			if (factory.sockets.length === 1) {
+				ports.pop();
+				(ports[0] as { label: string }).label = "changed";
+			}
+			return socket;
+		}) as typeof createSocket;
+		const listener = await listen({ ports }, factory);
+		expect(listener.listeners.map((l) => l.label)).toEqual(["a", "b"]);
+		listener.close();
+		await listener.closed;
 	});
 
 	test("a label that repeats another port's default label is refused after binding", async () => {
