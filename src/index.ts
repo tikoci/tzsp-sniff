@@ -9,7 +9,9 @@ export {
 	TZSP_TAGS,
 	TZSP_TYPES,
 	type TzspDatagram,
+	type TzspKind,
 	type TzspProblem,
+	type TzspReason,
 	type TzspTag,
 	toHex,
 } from "./tzsp.ts";

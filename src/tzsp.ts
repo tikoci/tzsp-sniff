@@ -77,13 +77,46 @@ export interface TzspTag {
 	hex: string;
 }
 
-export type TzspProblem =
-	| "too-short" // fewer than 4 header bytes
-	| "bad-version" // version is not 1
-	| "no-end-tag" // the tag list runs off the end
-	| "truncated-tag"; // a tag's length runs past the datagram
+/**
+ * What a record is, so a caller can count records apart and dissect only
+ * frames (DESIGN.md, "Decided: dispatch on record type and encapsulation").
+ *
+ * - `packet`: type 0 (received) with encapsulation 1 (Ethernet). `payload` is
+ *   an Ethernet frame, the only record to dissect.
+ * - `control`: a keepalive (4) or port-opener (5). No tags, no payload.
+ * - `unsupported`: valid TZSP, but another type or encapsulation; not dissected.
+ * - `invalid`: the datagram is truncated or malformed.
+ */
+export type TzspKind = "packet" | "control" | "unsupported" | "invalid";
+
+/**
+ * What went wrong, in the three classes every parser in this package uses
+ * (DESIGN.md, "Requirement, bytes in and records out"):
+ *
+ * - `truncated`: the bytes end early.
+ * - `malformed`: a field contradicts the format.
+ * - `unsupported`: valid, not decoded here.
+ */
+export type TzspProblem = "truncated" | "malformed" | "unsupported";
+
+/** Which check failed, finer than {@link TzspProblem}. */
+export type TzspReason =
+	| "too-short" // truncated: fewer than 4 header bytes
+	| "bad-version" // malformed: version is not 1
+	| "no-end-tag" // truncated: the tag list runs off the end
+	| "truncated-tag" // truncated: a tag's length byte or value runs past the end
+	| "record-type" // unsupported: a type other than received, keepalive or port-opener
+	| "encapsulation"; // unsupported: a received record that is not Ethernet
 
 export interface TzspDatagram {
+	/** What the record is; only `packet` carries a frame to dissect. */
+	kind: TzspKind;
+	/**
+	 * The complete datagram: the input array itself, not a copy, so it shares
+	 * memory with the caller's buffer. Kept whatever the kind or problem, so
+	 * no bytes are lost; copy it to keep it past a reused buffer.
+	 */
+	datagram: Uint8Array;
 	version: number;
 	type: number;
 	/** A name from {@link TZSP_TYPES}, or `type-<n>`. */
@@ -91,12 +124,18 @@ export interface TzspDatagram {
 	encapsulation: number;
 	/** A name from {@link TZSP_ENCAPSULATIONS}, or `encap-<n>`. */
 	encapsulationName: string;
-	/** Every tag except pad and end, in order. */
+	/** Every tag except pad and end, in order; those read before a problem, if any. */
 	tags: TzspTag[];
-	/** The captured frame. Empty when there is a problem, or for keepalives. */
+	/**
+	 * The inner frame after the end tag, a view into `datagram`. Set for a
+	 * `packet`, and for a received record whose encapsulation is unsupported;
+	 * empty otherwise.
+	 */
 	payload: Uint8Array;
-	/** Set when the datagram could not be parsed to its payload. */
+	/** Set when `kind` is `unsupported` or `invalid`. */
 	problem?: TzspProblem;
+	/** Which check set `problem`. */
+	reason?: TzspReason;
 }
 
 const name = (table: Record<number, string>, value: number, prefix: string) =>
@@ -105,9 +144,12 @@ const name = (table: Record<number, string>, value: number, prefix: string) =>
 export const toHex = (bytes: Uint8Array): string =>
 	Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
-/** Parse one TZSP datagram (a UDP payload). Never throws; see `problem`. */
+/**
+ * Parse one TZSP datagram (a UDP payload). Never throws: a datagram it cannot
+ * read comes back with `kind`, `problem` and `reason` set, and its bytes in
+ * `datagram`.
+ */
 export function parseTzsp(datagram: Uint8Array): TzspDatagram {
-	const empty = new Uint8Array(0);
 	const version = datagram[0] ?? 0;
 	const type = datagram[1] ?? 0;
 	const encapsulation =
@@ -115,23 +157,39 @@ export function parseTzsp(datagram: Uint8Array): TzspDatagram {
 			? ((datagram[2] as number) << 8) | (datagram[3] as number)
 			: 0;
 	const result: TzspDatagram = {
+		kind: "packet",
+		datagram,
 		version,
 		type,
 		typeName: name(TZSP_TYPES, type, "type"),
 		encapsulation,
 		encapsulationName: name(TZSP_ENCAPSULATIONS, encapsulation, "encap"),
 		tags: [],
-		payload: empty,
+		payload: new Uint8Array(0),
 	};
-	if (datagram.length < 4) return { ...result, problem: "too-short" };
-	if (version !== 1) return { ...result, problem: "bad-version" };
+	const fail = (problem: TzspProblem, reason: TzspReason): TzspDatagram => ({
+		...result,
+		kind: problem === "unsupported" ? "unsupported" : "invalid",
+		problem,
+		reason,
+	});
+
+	if (datagram.length < 4) return fail("truncated", "too-short");
+	if (version !== 1) return fail("malformed", "bad-version");
+	// packet-tzsp.c (e0929ac4, dissect_tzsp) reads no tags or encapsulated
+	// frame for keepalive and port-opener; bytes after the header stay in
+	// `datagram` and are not read.
+	if (type === 4 || type === 5) return { ...result, kind: "control" };
+	if (type !== 0) return fail("unsupported", "record-type");
 
 	let offset = 4;
 	while (offset < datagram.length) {
 		const tag = datagram[offset] as number;
 		if (tag === 1) {
 			result.payload = datagram.subarray(offset + 1);
-			return result;
+			return encapsulation === 1
+				? result
+				: fail("unsupported", "encapsulation");
 		}
 		if (tag === 0) {
 			offset += 1;
@@ -139,7 +197,7 @@ export function parseTzsp(datagram: Uint8Array): TzspDatagram {
 		}
 		const length = datagram[offset + 1];
 		if (length === undefined || offset + 2 + length > datagram.length) {
-			return { ...result, problem: "truncated-tag" };
+			return fail("truncated", "truncated-tag");
 		}
 		const value = datagram.subarray(offset + 2, offset + 2 + length);
 		result.tags.push({
@@ -149,5 +207,5 @@ export function parseTzsp(datagram: Uint8Array): TzspDatagram {
 		});
 		offset += 2 + length;
 	}
-	return { ...result, problem: "no-end-tag" };
+	return fail("truncated", "no-end-tag");
 }
