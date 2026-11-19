@@ -3,7 +3,7 @@
 # Design
 
 Why tzsp-sniff is built the way it is. Status: **proposal**, 2026-11-18,
-for review in the first PR. Decisions that hold are marked **Decided**;
+for review in the first PR; maintainer answers folded in the same day. Decisions that hold are marked **Decided**;
 the rest are proposals until that PR merges, and open questions are listed
 at the end.
 
@@ -28,6 +28,7 @@ Boundaries with other tikoci repos (tikoci-crossref):
 | RouterOS binary protocol knowledge | m2ir (YAML schemas) | consumes it: dissector tables generated from m2ir at a pinned commit |
 | How to use the sniffer on RouterOS | routeros-skills `routeros-sniffer` | links here once published |
 | Booting CHRs for tests | quickchr | devDependency for the integration tier |
+| An MCP server | centrs, if anyone | none: a CLI run with `npx` or `bunx` needs no MCP setup on top of the router setup |
 
 The library is meant to be a dependency, of centrs (a later
 `centrs tools tzsp` adapter) and of quickchr's CMR lab, whose
@@ -58,6 +59,20 @@ host     receiver (node:dgram, one socket per port, unconnected)
   source MAC is the best capture-point hint, as quickchr's `dedupe()` found.
 - **The socket stays unconnected** (`recvfrom`): a connected socket drops the
   datagrams QEMU's SLIRP relays (quickchr `docs/networking-recipes.md`).
+- **`reusePort` is off by default, an option to measure.** For MNDP it matters,
+  because broadcasts reach every socket bound with it, and centrs sets it
+  everywhere but Windows (`defaultMndpReusePort()`). TZSP arrives as unicast,
+  and on Linux unicast to a port shared through `SO_REUSEPORT` is expected
+  to be spread across the sockets rather than copied, so a second listener
+  would take some of the packets without saying so. That needs a test on
+  Linux and macOS before it is offered. Node has the `reusePort` option in
+  `node:dgram` (it is in `@types/node` 22); which Node versions and
+  platforms honor it is to be checked too.
+- **quickchr may give TZSP a default port.** quickchr already maps common
+  services for a CHR; a pre-assigned TZSP port there (and as the default in our
+  `snifferCommands()`) would let `tzsp-sniff --port` and quickchr agree
+  without a lookup. That is a quickchr change; until then `setup --quickchr`
+  prints what to run.
 - **Always closed.** An open dgram socket keeps the process alive; every
   capture ends by count, duration, idle time, a signal or the caller's
   `AbortSignal`, and closes its sockets in `finally`.
@@ -89,12 +104,14 @@ everything else goes to stderr, errors carry a code from one registry.
 | Command | Does |
 | --- | --- |
 | `listen` (the default) | receive and print, until `--count`, `--duration` or `--idle` is met, or forever with `--follow` |
-| `decode <file\|->` | the same pipeline over a pcap or pcapng file (RouterOS writes pcapng since 7.20) or hex datagrams on stdin; no network |
+| `decode <file\|->` | the same pipeline over a pcap or pcapng file (ours from `--write`, or one RouterOS saved: pcapng since 7.20) or hex datagrams on stdin; no network |
 | `setup` | print the RouterOS commands for this host's addresses and port; `--quickchr` uses the SLIRP gateway 10.0.2.2; `--mangle` for `sniff-tzsp` |
 | `dissectors` | list protocols, how each is matched (EtherType, IP protocol, port) and its detail fields |
 
-Flags come from one registry with declared arity; `--help` is answered before
-dispatch. Every flag has a `TZSP_SNIFF_<KEY>` environment variable
+**Decided: `listen` is the default command**, so `tzsp-sniff --count 10`
+works, which is what an agent guesses; `--help` lists `listen` and says it is
+the default. Flags come from one registry with declared arity; `--help` is
+answered before dispatch. Every flag has a `TZSP_SNIFF_<KEY>` environment variable
 (`TZSP_SNIFF_PORT`); a flag wins.
 
 ### Output for agents
@@ -114,6 +131,25 @@ plain when stdout is not a terminal or `NO_COLOR` is set. `jsonl` is one
 record per line and is the streaming form; `json` is one document at the end;
 `pcapng` hands the capture to Wireshark or `tshark -r -`.
 
+**Capture now, look later.** `--write <file.pcapng>` saves every datagram as
+received, whatever `--format`, `--detail` or the filters print. With
+`--stats`, the first look costs a few lines:
+
+```sh
+tzsp-sniff --duration 30s --write /tmp/cmr.pcapng --stats
+tzsp-sniff decode /tmp/cmr.pcapng --proto tcp --port-match 54321 --detail layers
+```
+
+The summary says whether the file is worth reading and which filter to
+start with, and `decode` drills in without capturing again, with no `tee`,
+`jq` or a script in between. The file keeps the raw bytes, so it can be
+decoded again after a dissector improves, or opened in Wireshark.
+
+**Decided: the output shape is this tool's own.** It is not centrs's envelope
+(`ok`, `data`, `warnings`, `tips`, `error`), which fits centrs's
+explain-retrieve-execute flow. A centrs adapter maps our records to whatever
+its `tools` commands return; `tools btest` has the same question there.
+
 Streaming rules (not covered by tikoci-cli-mcp yet; see the road test):
 
 - **JSONL records carry a `type`**: one `header` first (with `schemaVersion`,
@@ -121,8 +157,10 @@ Streaming rules (not covered by tikoci-cli-mcp yet; see the road test):
   they happen, and one `summary` last. A reader can stop at any line.
 - **A capture that ends with no packets is a read with an empty result**:
   exit 0, a `capture/no-packets` warning, and a tip naming `tzsp-sniff setup`
-  (the most common cause is an unarmed router). `--expect N` turns fewer than
-  N packets into exit 1 for scripts and tests.
+  (the most common cause is an unarmed router). **Decided:** `--expect N`
+  turns fewer than N packets into exit 1, for scripts and tests that need
+  traffic; the error then names the router-side checks (is the sniffer
+  running, is `streaming-server` this host and port).
 - **SIGINT ends a capture normally**: the summary is written, then exit 0.
 - **Malformed datagrams are counted and kept**, not dropped: a `problem`
   record at `--detail full`, a count in the summary.
@@ -244,10 +282,7 @@ Before code relies on them (tikoci-grounding):
 
 ## Open questions
 
-- Should `listen` be the default command, so `tzsp-sniff --count 10` works?
-- `--expect` versus a non-zero exit on no packets by default.
-- Whether the JSONL record shape follows centrs's envelope (`ok`, `data`,
-  `warnings`, `tips`, `error`) for the one-document `json` form, so a future
-  `centrs tools tzsp` passes it through unchanged.
-- An MCP server: not in the first release; the core keeps it a thin adapter
-  if it is wanted (the earlier experimental mcp-tzsp had four tools).
+- `reusePort`: whether to offer it at all, after measuring unicast delivery
+  with two listeners on Linux and macOS, under Node and Bun.
+- The exact JSONL record fields, settled with the first `listen` slice and
+  pinned by tests, with `schemaVersion` in the header record.

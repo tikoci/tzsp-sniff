@@ -3,6 +3,7 @@
 # after " # ".
 actionlint # GitHub Actions workflow linter
 BPF # Berkeley Packet Filter
+btest # MikroTik bandwidth test
 bunx # Bun's npx
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
 CHR # Cloud Hosted Router: RouterOS as a VM
@@ -28,6 +29,7 @@ pcapng
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
 restraml # RouterOS command schemas, https://github.com/tikoci/restraml
+REUSEPORT # as in SO_REUSEPORT, the socket option
 RoMON # MikroTik Router Management Overlay Network
 routeros
 shellcheck
