@@ -168,17 +168,20 @@ jobs:
             tail -n 40 "$RUNNER_TEMP/integration-output.txt" 2> /dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # The results and output, and on a failure quickchr's machine logs and
-      # failure files; never the image cache. include-hidden-files keeps any
+      # The results and output, the QEMU log the tests copy out before they
+      # remove the machine, and quickchr's data root (boot-failure files);
+      # never the image cache. include-hidden-files keeps any
       # dot path quickchr writes, or the upload is silently thinner.
       - name: Upload results and diagnostics
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: integration-${{ steps.resolve.outputs.version || 'unresolved' }}
+          # The target when it did not resolve: sweep legs each pass their own.
+          name: integration-${{ steps.resolve.outputs.version || inputs.routeros }}
           path: |
             ${{ runner.temp }}/integration-results.json
             ${{ runner.temp }}/integration-output.txt
+            ${{ runner.temp }}/tzsp-it-*.log
             ${{ runner.temp }}/kvm-probe.log
             ${{ env.QUICKCHR_DATA_DIR }}
             !${{ env.QUICKCHR_DATA_DIR }}/cache

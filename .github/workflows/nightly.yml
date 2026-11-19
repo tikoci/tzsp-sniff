@@ -1,0 +1,49 @@
+# The nightly sweep of every active RouterOS channel (sweep.yml), and its
+# report. GitHub mails a scheduled run's failure only to whoever last edited
+# the cron line, so this run files its own issue, as CI's weekly run does.
+# The report lives here, not in sweep.yml, because a reusable workflow's
+# callers must grant every permission its jobs ask for, even a job that
+# skips: a release caller would otherwise need `issues: write`.
+name: Nightly
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: Sweep
+    uses: ./.github/workflows/sweep.yml
+
+  report:
+    name: Report the scheduled run
+    if: ${{ !cancelled() }}
+    needs: [sweep]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write # open or comment on the issue
+    steps:
+      - name: Open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RESULT: ${{ needs.sweep.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: Nightly integration sweep is red
+        shell: bash
+        run: |
+          number=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number,title \
+            --jq '[.[] | select(.title == env.TITLE)][0].number // empty')
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$number" ]; then gh issue comment "$number" --body "Green again: $RUN_URL"; fi
+          elif [ -n "$number" ]; then
+            gh issue comment "$number" --body "Still red: $RUN_URL"
+          else
+            gh issue create --title "$TITLE" --body "$(printf '%s\n\n%s\n' \
+              "The nightly sweep of the active RouterOS channels failed: $RUN_URL" \
+              "Each leg's summary names the RouterOS version and architecture the CHR reported; its artifact holds the test output and the QEMU log. A red plan job means a channel did not resolve. Reproduce one leg with TZSP_SNIFF_ROUTEROS=<version> bun run test:integration.")"
+          fi

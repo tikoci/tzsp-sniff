@@ -714,13 +714,23 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
 
   `TZSP_SNIFF_ROUTEROS` (a channel or a version, default `stable`) picks
   the router, and `TZSP_SNIFF_INTEGRATION_RESULTS` names a JSON file for
-  the results; both are test knobs, which shipped code never reads. In CI,
+  the results, beside which the machine's QEMU log is copied before
+  removal; both are test knobs, which shipped code never reads. Setup
+  asserts that the CHR reported a version and an architecture (and the
+  version asked for, when one was pinned). The guest architecture is always
+  the host's own, given to quickchr explicitly, so its `default-arch`
+  setting cannot turn the boot into cross-architecture emulation; the setup
+  hook's timeout is derived from quickchr's download and boot budgets, and
+  `afterAll` waits for the setup to settle before it removes the machine. In CI,
   `.github/workflows/integration.yml` owns the QEMU setup: CI's `smoke` job
   calls it with `stable` for any diff that is not docs-only, after lint and
   unit pass, and `sweep.yml` calls it nightly, once per version the active
   channels resolve to (`scripts/sweep-plan.ts`, quickchr's
-  `selectActiveChannels`), every leg must-pass. The release workflow (#17)
-  calls `sweep.yml` before it publishes.
+  `selectActiveChannels`), every leg must-pass. `nightly.yml` calls
+  `sweep.yml` on a schedule and files a red run as an issue; the release
+  workflow (#17) calls `sweep.yml` before it publishes. The issue-writing
+  job stays out of `sweep.yml` because a caller must grant every
+  permission a reusable workflow's jobs ask for, even a skipped job's.
 
   **Decided: quickchr through its CLI** (slice 3, 2026-11-19), the
   devDependency's `node_modules/.bin/quickchr`, not its library. quickchr
@@ -736,8 +746,11 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   keeps its image cache inside it and has no separate cache setting, so an
   isolated `QUICKCHR_DATA_DIR` would download the image on every run. The
   tier only touches machines it created, under the `tzsp-it-` prefix, and
-  removes them in `afterAll`; a run killed before then leaves one that
-  `quickchr list` shows and `quickchr remove` clears. CI sets
+  removes them in `afterAll`. A run killed before then prints the name
+  first (`machine: tzsp-it-…`), and `quickchr remove <name>` clears it;
+  `quickchr list` shows it unless the kill came during `quickchr add`, which
+  can leave a machine directory without its state file, which `list` omits
+  (0.5.6). CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.

@@ -15,7 +15,7 @@
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { copyFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 export const ROOT = join(import.meta.dir, "..", "..");
@@ -31,11 +31,20 @@ export const QUICKCHR_MS = 30_000;
 /** quickchr 0.5.2 and 0.5.6 for a name it does not know: `Machine "<name>" not found.`, exit 1. */
 const NOT_FOUND = /Machine "[^"]+" not found/;
 
-/** What to boot: a channel or an exact version, and the guest architecture (default: the host's). */
+/**
+ * What to boot: a channel or an exact version, and the guest architecture.
+ * The architecture is always given, so quickchr's own default (its
+ * `default-arch` setting or QUICKCHR_DEFAULT_ARCH) cannot turn a boot into
+ * cross-architecture emulation with a far longer budget.
+ */
 export interface Target {
 	routeros: string;
-	arch?: "x86" | "arm64";
+	arch: "x86" | "arm64";
 }
+
+/** The guest architecture this host runs natively (no cross-architecture emulation). */
+export const hostArch = (): Target["arch"] =>
+	process.arch === "arm64" ? "arm64" : "x86";
 
 /** Child processes get an allowlisted env, never a copy of process.env (tikoci-testing). */
 export function childEnv(
@@ -197,20 +206,28 @@ async function provision(prefix: string, target: Target): Promise<string> {
 		);
 	if (stopping.signal.aborted)
 		throw new Error("interrupted; not creating a machine");
+	const which = [
+		CHANNELS.includes(target.routeros) ? "--channel" : "--version",
+		target.routeros,
+		"--arch",
+		target.arch,
+	];
+	// The image first, under quickchr's own download budget (a stall timeout
+	// and a size-scaled transfer budget, quickchr 0.5.6 download.ts), so the
+	// deadline on `add` below never kills a cold download.
+	const cached = await quickchr(["cache", "add", ...which]);
+	if (cached.code !== 0)
+		throw new Error(
+			`quickchr cache add exited ${cached.code}: ${lastLine(cached)}`,
+		);
+	if (stopping.signal.aborted)
+		throw new Error("interrupted; not creating a machine");
 	// Owned from here: the name was absent and is random, and `add` refuses
 	// an existing name, so what `add` leaves behind is this process's.
 	owned.add(name);
-	const added = await quickchr(
-		[
-			"add",
-			"--name",
-			name,
-			CHANNELS.includes(target.routeros) ? "--channel" : "--version",
-			target.routeros,
-			...(target.arch ? ["--arch", target.arch] : []),
-		],
-		{ timeoutMs: QUICKCHR_MS },
-	);
+	const added = await quickchr(["add", "--name", name, ...which], {
+		timeoutMs: QUICKCHR_MS,
+	});
 	if (added.code !== 0) {
 		if (/MACHINE_EXISTS/.test(added.stdout + added.stderr)) owned.delete(name);
 		throw new Error(
@@ -266,6 +283,32 @@ export async function services(name: string): Promise<Services> {
 	if (ssh !== undefined) out.sshPort = ssh;
 	out.auth = { username: rest.auth.username, password: rest.auth.password };
 	return out;
+}
+
+/**
+ * Copy the machine's QEMU log (and serial log, when quickchr kept one) to
+ * `<dir>/<name>.<log>` before `teardown` deletes the machine's directory.
+ * Returns the files written; a log that is not there is skipped.
+ */
+export async function saveLogs(name: string, dir: string): Promise<string[]> {
+	const listed = await quickchr(["list", name, "--json"], {
+		timeoutMs: QUICKCHR_MS,
+	});
+	let machineDir: string | undefined;
+	try {
+		machineDir = (JSON.parse(listed.stdout) as { machineDir?: string })
+			.machineDir;
+	} catch {}
+	if (!machineDir) return [];
+	const saved: string[] = [];
+	for (const log of ["qemu.log", "serial.log"]) {
+		const to = join(dir, `${name}.${log}`);
+		try {
+			await copyFile(join(machineDir, log), to);
+			saved.push(to);
+		} catch {}
+	}
+	return saved;
 }
 
 /** The `-accel` QEMU was started with, read from its command line (Linux /proc). */

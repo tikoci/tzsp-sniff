@@ -6,7 +6,8 @@
  *
  * One CHR, booted by quickchr (test/chr/), serves every test in this file
  * and is removed in `afterAll`, which bun:test runs after a failed or timed
- * out hook or test too. Each test binds its own listener to 127.0.0.1 port
+ * out hook or test too. `afterAll` first waits for the setup to settle (a
+ * timed-out hook keeps running), so removal never races `add` or `start`. Each test binds its own listener to 127.0.0.1 port
  * 0 and closes it in `finally`; the router sends to the SLIRP gateway at
  * that port, which QEMU delivers to the loopback listener.
  *
@@ -14,11 +15,12 @@
  * - TZSP_SNIFF_ROUTEROS: a channel or an exact version, default `stable`.
  * - TZSP_SNIFF_INTEGRATION_RESULTS: a file to write the results to (JSON):
  *   the RouterOS version and architecture the CHR reported, the quickchr
- *   version and accelerator, and each check that passed.
+ *   version and accelerator, and each check that passed. The machine's QEMU
+ *   log is copied beside it, as `<machine>.qemu.log`, before removal.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
 import type {
 	PacketRecord,
@@ -28,13 +30,15 @@ import type {
 import {
 	accelerator,
 	childEnv,
+	cleanupAll,
 	create,
-	owned,
+	hostArch,
+	QUICKCHR_MS,
 	ROOT,
+	saveLogs,
 	services,
 	start,
 	TEARDOWN_MS,
-	teardown,
 	version,
 } from "../chr/quickchr.ts";
 import {
@@ -52,17 +56,24 @@ const RESULTS = process.env.TZSP_SNIFF_INTEGRATION_RESULTS;
 const BIN = join(ROOT, "src", "cli", "bin.ts");
 
 /**
- * The boot hook's timeout outlives quickchr's own boot budget, so a slow
- * boot fails inside quickchr with its evidence rather than being cut off
- * here (tikoci-testing, "Timeouts"). quickchr 0.5.6 `defaultBootTimeout`:
- * 120 s scaled by the accelerator, 1.5x under KVM or HVF and 4x under TCG
- * for the host's own architecture, the one booted here; plus
- * QUICKCHR_TIMEOUT_EXTRA, which quickchr adds. On top: `add`, a first
- * image download (CI prefetches it) and the REST reads after boot.
+ * The setup hook's timeout outlives each budget quickchr enforces itself,
+ * so a slow step fails inside quickchr with its evidence rather than being
+ * cut off here (tikoci-testing, "Timeouts"). From quickchr 0.5.6:
+ * - the image download (`cache add`): at most DOWNLOAD_NO_LENGTH_BUDGET_MS,
+ *   15 min, when the server sends no length; with a length it is 30 s plus
+ *   the size at 120 kB/s, about 6.5 min for a 43 MB image (download.ts).
+ *   Free when the image is cached, as CI prefetches it;
+ * - the boot (`defaultBootTimeout`, quickchr.ts): 120 s scaled by the
+ *   accelerator, 1.5x under KVM or HVF and 4x under TCG, for the host's own
+ *   architecture, which `hostArch` pins; plus QUICKCHR_TIMEOUT_EXTRA;
+ * - `list`, `add` and `inspect`, and the REST reads, under QUICKCHR_MS each.
  */
+const DOWNLOAD_BUDGET_MS = 15 * 60_000;
 const BOOT_BUDGET_MS =
 	120_000 * 4 + Number(process.env.QUICKCHR_TIMEOUT_EXTRA ?? 0);
-const BOOT_HOOK_MS = BOOT_BUDGET_MS + 30_000 + 180_000 + 30_000;
+const SETUP_MS = DOWNLOAD_BUDGET_MS + BOOT_BUDGET_MS + 6 * QUICKCHR_MS;
+/** `afterAll` may wait out a setup still running, then removes the machine. */
+const CLEANUP_MS = SETUP_MS + TEARDOWN_MS + 2 * QUICKCHR_MS;
 /** Each test: REST commands with their own budgets (router.ts), and a 3-packet ping. */
 const TEST_MS = 120_000;
 /** A capture that sees fewer packets than it waits for ends here, well inside TEST_MS. */
@@ -90,6 +101,10 @@ const results: Results = {
 	passed: [],
 };
 let router: Router;
+/** The setup, so `afterAll` can wait for it to settle before removing. */
+let setup: Promise<void> | undefined;
+/** A version as RouterOS reports it: `7.25.1`, `7.26beta5`. */
+const VERSION = /^\d+\.\d+(\.\d+)?(beta\d+|rc\d+)?$/;
 
 /** The ICMP type of a packet record with layers: 8 echo request, 0 reply. */
 function icmpType(p: PacketRecord): number | undefined {
@@ -162,29 +177,45 @@ const sniffAndPing = (port: number, pings: number) => async () => {
 
 describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 	beforeAll(async () => {
-		results.quickchr = await version();
-		results.machine = await create("tzsp-it", { routeros: TARGET });
-		results.bootMs = await start(results.machine);
-		results.accelerator = await accelerator(results.machine);
-		const rest = await services(results.machine);
-		router = new Router(rest.restUrl, rest.basic);
-		results.router = await router.identity();
+		setup = (async () => {
+			results.quickchr = await version();
+			results.machine = await create("tzsp-it", {
+				routeros: TARGET,
+				arch: hostArch(),
+			});
+			// Named before the boot, so a run killed later says what to remove.
+			console.log(`machine: ${results.machine}`);
+			results.bootMs = await start(results.machine);
+			results.accelerator = await accelerator(results.machine);
+			const rest = await services(results.machine);
+			router = new Router(rest.restUrl, rest.basic);
+			results.router = await router.identity();
+		})();
+		await setup;
+		// The record this tier promises: what the CHR itself reported.
 		const r = results.router;
+		expect(r?.version).toMatch(VERSION);
+		expect(r?.architecture).toMatch(/\S/);
+		if (VERSION.test(TARGET)) expect(r?.version).toBe(TARGET);
 		console.log(
-			`routeros: ${r.version} ${r.architecture} (${TARGET}), board ${r.board}; ` +
+			`routeros: ${r?.version} ${r?.architecture} (${TARGET}), board ${r?.board}; ` +
 				`${results.quickchr}, accel ${results.accelerator}, boot ${results.bootMs} ms`,
 		);
-	}, BOOT_HOOK_MS);
+	}, SETUP_MS);
 
 	afterAll(async () => {
-		const left = [...owned];
-		const removed = await Promise.all(left.map((n) => teardown(n)));
+		await setup?.catch(() => {});
+		if (RESULTS && results.machine)
+			await saveLogs(results.machine, dirname(RESULTS));
+		// Waits for any `add` still running, then removes and verifies.
+		const left = await cleanupAll();
 		if (RESULTS)
 			await writeFile(RESULTS, `${JSON.stringify(results, null, "\t")}\n`);
-		const stuck = left.filter((_, i) => !removed[i]);
-		if (stuck.length > 0)
-			throw new Error(`NOT REMOVED: ${stuck.join(", ")} (quickchr list)`);
-	}, TEARDOWN_MS + 30_000);
+		if (left.length > 0)
+			throw new Error(
+				`NOT REMOVED: ${left.join(", ")}; quickchr remove <name> clears it`,
+			);
+	}, CLEANUP_MS);
 
 	test(
 		"/tool/sniffer streaming, read through openCapture()",

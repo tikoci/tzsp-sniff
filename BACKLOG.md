@@ -40,4 +40,7 @@ Small items, one or two sentences each, deleted when done or declined
   can tell them from a run still in progress (quickchr has no owner field).
 - CI smoke waits for the whole unit matrix; split the Linux unit leg out
   (centrs `unit-linux`) if macOS or Windows make it wait noticeably.
+- zizmor `self-repository` (a note) asks for `$/.github/workflows/…` in
+  place of `./.github/workflows/…`; actionlint 1.7.12 rejects that form,
+  so switch once actionlint accepts it.
 - `--port-match` ranges (`8000-8100`), if a lab asks for one.
