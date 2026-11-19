@@ -6,6 +6,7 @@ import {
 	FILTER_KEYS,
 	type FilterSpec,
 	filterFlag,
+	filterFlags,
 } from "../../src/filter.ts";
 import type { Capture } from "../../src/listen.ts";
 import { parseTzsp } from "../../src/tzsp.ts";
@@ -180,6 +181,39 @@ describe("createFilter: terms", () => {
 		expect(keeps({ proto: ["ah"] }, c)).toBe(true);
 		expect(keeps({ not: { proto: ["ah"] } }, c)).toBe(false);
 		expect(keeps({ proto: ["ah"] }, V6_UDP)).toBe(false);
+	});
+
+	test("proto ah still matches when the AH header is malformed or cut short", () => {
+		for (const [what, extensions, payload] of [
+			[
+				"too short for its fixed fields",
+				`1100${"00".repeat(6)}`,
+				udp(1, 2, ""),
+			],
+			["past the declared payload", "", ""],
+		] as const) {
+			const c = capture(eth(0x86dd, ipv6({ next: 51, extensions, payload })));
+			const ip = dissect(c.tzsp.payload as Uint8Array).layers.find(
+				(l) => l.protocol === "ipv6",
+			);
+			expect({
+				what,
+				problem: ip?.problem,
+				name: ip?.fields?.protocolName,
+			}).toEqual({
+				what,
+				problem: "malformed",
+				name: undefined,
+			});
+			expect({ what, kept: keeps({ proto: ["ah"] }, c) }).toEqual({
+				what,
+				kept: true,
+			});
+			expect({ what, kept: keeps({ not: { proto: ["ah"] } }, c) }).toEqual({
+				what,
+				kept: false,
+			});
+		}
 	});
 
 	test("port-match matches UDP and TCP ports", () => {
@@ -380,6 +414,32 @@ describe("createFilter: the spec", () => {
 		// The canonical spec makes the same filter.
 		expect(createFilter(f.spec).spec).toEqual(f.spec);
 	});
+
+	test("flags quote a value that is not one shell word, so it pastes back", () => {
+		const labels = ["router west", "it's", "[::1]:5", "*", ""];
+		const flags = filterFlags({ sender: ["a-b.c", ...labels] });
+		expect(flags).toEqual([
+			"--sender a-b.c",
+			"--sender 'router west'",
+			"--sender 'it'\\''s'",
+			"--sender '[::1]:5'",
+			"--sender '*'",
+			"--sender ''",
+		]);
+	});
+
+	// The quoting is POSIX shell's; Windows runners do not promise an `sh`.
+	test.skipIf(process.platform === "win32")(
+		"a POSIX shell reads each quoted flag back as the flag and the value, whole",
+		() => {
+			const labels = ["router west", "it's", "[::1]:5", "*", ""];
+			for (const label of labels) {
+				const [flag] = filterFlags({ sender: [label] });
+				const out = Bun.spawnSync(["sh", "-c", `printf '%s\\n' ${flag}`]);
+				expect(out.stdout.toString()).toBe(`--sender\n${label}\n`);
+			}
+		},
+	);
 
 	test("empty lists and undefined terms are not set", () => {
 		// As a JavaScript caller may write it.

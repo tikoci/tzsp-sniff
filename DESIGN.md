@@ -482,7 +482,9 @@ interface, a direction and the router's time.
   EtherType, a port as a number. A `--sender` value is kept as given, since
   a label matches exactly; its address, if it is one, is compared parsed. The header's `filters` is that canonical
   spec (`{}` for none), and the text start line lists it as flags
-  (`keeping --proto tcp --not-host 10.0.0.1`).
+  (`keeping --proto tcp --not-host 10.0.0.1`), each value one POSIX shell
+  word, quoted when it is not one (a library label such as `'router west'`),
+  so a flag pastes back.
 - **A comma list is the same as repeating the flag** (`--proto tcp,udp`),
   since agents try both.
 - **`--sender` takes a label, an address or `address:port`.** A peer
@@ -490,7 +492,9 @@ interface, a direction and the router's time.
   address. A value that is both a label and an address matches either. The
   library takes any label `listen()` does; the CLI refuses a value that is
   neither `--port`'s label grammar nor an address, as a typo.
-- **`--proto` also matches an IPv6 extension that is a protocol** (`ah`).
+- **`--proto` also matches an IPv6 extension that is a protocol** (`ah`),
+  and the IP protocol number the header names when what follows is
+  malformed or cut short (an AH header too short), which leaves no name.
 - **`--host` and `--net` read the IP header and ARP's sender and target
   addresses**, as tcpdump's `host` does; `--mac` reads the Ethernet header.
 - **The summary's tables follow the filters**: protocols, problems and

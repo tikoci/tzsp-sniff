@@ -115,7 +115,22 @@ export const FILTER_PROTOCOLS: readonly string[] = [
 	]),
 ];
 
-/** The spec as CLI flags, positives first, in {@link FILTER_KEYS} order. */
+/**
+ * A value as one POSIX shell word: bare when it is safe as one, else in
+ * single quotes. A label from the library can hold spaces or quotes.
+ */
+const shellWord = (value: string | number) => {
+	const text = String(value);
+	return /^[A-Za-z0-9._:/-]+$/.test(text)
+		? text
+		: `'${text.replaceAll("'", `'\\''`)}'`;
+};
+
+/**
+ * The spec as CLI flags, positives first, in {@link FILTER_KEYS} order, each
+ * value one shell word (quoted when it needs to be), so a flag can be
+ * pasted back. A label with a comma cannot be: the CLI splits on commas.
+ */
 export function filterFlags(spec: FilterSpec): string[] {
 	const out: string[] = [];
 	for (const [prefix, terms] of [
@@ -124,7 +139,7 @@ export function filterFlags(spec: FilterSpec): string[] {
 	] as const) {
 		for (const key of FILTER_KEYS) {
 			for (const value of terms[key] ?? [])
-				out.push(`--${prefix}${filterFlag(key)} ${value}`);
+				out.push(`--${prefix}${filterFlag(key)} ${shellWord(value)}`);
 		}
 	}
 	return out;
@@ -476,8 +491,13 @@ function factsOf(capture: Capture, d: Dissection | undefined): Facts {
 			case "ipv6":
 				facts.srcHosts.push(layer.fields.src);
 				facts.dstHosts.push(layer.fields.dst);
-				if (layer.fields.protocolName)
-					facts.protocols.add(layer.fields.protocolName);
+				{
+					// A header cut short or malformed after the IP header (an AH
+					// header too short) leaves no name, but the number still names it.
+					const name =
+						layer.fields.protocolName ?? IP_PROTOCOLS[layer.fields.protocol];
+					if (name) facts.protocols.add(name);
+				}
 				// An IPv6 extension that is a protocol of its own (AH) is in the chain.
 				if (layer.protocol === "ipv6") {
 					for (const e of layer.fields.extensions)
