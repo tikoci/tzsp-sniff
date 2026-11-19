@@ -16,7 +16,12 @@ import {
 	openCapture,
 } from "../capture.ts";
 import { TzspSniffError } from "../errors.ts";
-import { createFilter, type FilterSpec, type FilterTerms } from "../filter.ts";
+import {
+	createFilter,
+	type FilterSpec,
+	type FilterTerms,
+	senderAddress,
+} from "../filter.ts";
 import type { ListenerSpec } from "../listen.ts";
 import {
 	DETAILS,
@@ -67,6 +72,8 @@ export class OutputClosedError extends Error {
 }
 
 export const DEFAULT_DURATION_MS = 10_000;
+/** A listener label on the command line: --port's, and so --sender's. */
+const LABEL = /^[A-Za-z0-9._-]+$/;
 /**
  * No `json`: a capture is a stream, and a document would hold every record
  * until the end (DESIGN.md, "Decided: JSONL, no `--format json`").
@@ -186,7 +193,9 @@ function ports(texts: readonly string[] | undefined): ListenerSpec[] {
 	const specs: ListenerSpec[] = [];
 	const seen = new Set<string>();
 	for (const text of texts) {
-		const m = /^([0-9]{1,5})(?:=([A-Za-z0-9._-]+))?$/.exec(text);
+		const m = new RegExp(
+			`^([0-9]{1,5})(?:=(${LABEL.source.slice(1, -1)}))?$`,
+		).exec(text);
 		const port = Number(m?.[1]);
 		if (!m || port > 65535) {
 			throw invalid(
@@ -244,22 +253,37 @@ function filterSpec(args: ParsedArgs): FilterSpec {
  */
 function checkFields(
 	text: string,
+	format: Format,
 	stats: boolean,
 	detail: Detail,
 	detailGiven: boolean,
 ): { fields: string[]; detail: Detail } {
 	const fields = [...new Set(listOf([text]))];
-	const known: readonly string[] = stats
-		? ["type", ...SUMMARY_FIELDS]
-		: ["type", ...FIELD_NAMES];
+	// The fields of the records --fields shapes in this output: with --stats
+	// the summary; in text, packet and record lines (the summary is on stderr,
+	// unshaped); in jsonl, both.
+	const entry = Object.keys(ENTRY_FIELDS);
+	const known: readonly string[] = [
+		"type",
+		...(stats ? SUMMARY_FIELDS : format === "text" ? entry : FIELD_NAMES),
+	];
 	const unknown = fields.filter((f) => !known.includes(f));
 	if (unknown.length || !fields.length) {
+		const where = stats
+			? "a --stats summary"
+			: format === "text"
+				? "a text packet or record line"
+				: "any record";
+		const summaryOnly =
+			!stats &&
+			format === "text" &&
+			unknown.some((f) => FIELD_NAMES.includes(f));
 		throw invalid(
 			"fields",
 			unknown.length
-				? `names ${unknown.map((f) => JSON.stringify(f)).join(", ")}, which ${stats ? "a --stats summary" : "no record"} has.`
+				? `names ${unknown.map((f) => JSON.stringify(f)).join(", ")}, which ${where} does not have.`
 				: "needs at least one field.",
-			`Fields${stats ? " with --stats" : ""}: ${known.slice(1).join(", ")}.`,
+			`Fields here: ${known.slice(1).join(", ")}.${summaryOnly ? " Summary fields need --stats or --format jsonl." : ""}`,
 		);
 	}
 	const rank = (d: Detail) => DETAILS.indexOf(d);
@@ -308,6 +332,7 @@ export function plan(args: ParsedArgs): Plan {
 	if (fieldsText !== undefined) {
 		({ fields, detail } = checkFields(
 			fieldsText,
+			format,
 			has("stats"),
 			detail,
 			detailText !== undefined,
@@ -318,6 +343,22 @@ export function plan(args: ParsedArgs): Plan {
 		detail,
 	};
 	const filter = filterSpec(args);
+	// A label from --port has this grammar, so a sender that is neither one
+	// nor an address is a typo, refused here; the library takes any label.
+	for (const [flag, values] of [
+		["sender", filter.sender],
+		["not-sender", filter.not?.sender],
+	] as const) {
+		for (const value of values ?? []) {
+			if (!LABEL.test(value) && !senderAddress(value)) {
+				throw new TzspSniffError(
+					"filter/invalid-value",
+					`--${flag} ${JSON.stringify(value)} is not a listener label or a peer address.`,
+					`Give a label from --port <port>=<label>, an address such as --${flag} 10.0.2.15, or an address and port such as --${flag} 10.0.2.15:37008.`,
+				);
+			}
+		}
+	}
 	// Checked here, so a bad value is a usage error (exit 2) before any bind.
 	if (createFilter(filter).flags.length) options.filter = filter;
 	const bind = one("bind");

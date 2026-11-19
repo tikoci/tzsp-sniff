@@ -153,7 +153,8 @@ export interface Ranked<T> {
 
 /**
  * Protocols, problems and conversations count the packets reported, after
- * filters; senders count every datagram received, of any kind.
+ * filters. Senders count every datagram the capture read, of any kind,
+ * filtered frames included; dropped and unread ones are not read.
  */
 export interface SummaryTables {
 	/** How many packets each protocol appeared in. */

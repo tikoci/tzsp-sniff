@@ -359,6 +359,67 @@ describe("openCapture", () => {
 		});
 	});
 
+	test("filtered frames with a drop: the drop is the diagnosis, not the filters", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			queue: { datagrams: 1 },
+			idleMs: 150,
+			expect: 1,
+			filter: { proto: ["tcp"] },
+		});
+		const records: StreamRecord[] = [];
+		for await (const record of stream) {
+			records.push(record);
+			if (record.type === "header") {
+				// Not reading: the ICMP frame fits, the TCP one is dropped.
+				await send(portOf(stream), [REQUEST, SSH]);
+				await until(() => stream.listener.counters.received === 2);
+			}
+		}
+		const summary = records.at(-1) as SummaryRecord;
+		expect(summary.counters).toMatchObject({ filtered: 1, dropped: 1 });
+		expect(ofType(records, "warning").map((w) => w.code)).toEqual([
+			"capture/dropped",
+		]);
+		expect(summary.error).toMatchObject({
+			code: "capture/expect-unmet",
+			case: "capture/dropped",
+			fix: expect.stringContaining("--stats"),
+		});
+	});
+
+	test("filtered frames with some unread: capture/unread, which says what was filtered", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			durationMs: 300,
+			expect: 1,
+			filter: { proto: ["tcp"] },
+		});
+		const it = stream[Symbol.asyncIterator]();
+		await it.next(); // header
+		const sent = send(portOf(stream), [REQUEST, KEEPALIVE, SSH]);
+		// The ICMP frame is read and filtered; the keepalive is yielded, and
+		// holding it leaves the matching TCP frame queued past the limit.
+		expect((await it.next()).value).toMatchObject({ type: "record", seq: 2 });
+		await sent;
+		await until(() => stream.listener.counters.received === 3);
+		await stream.listener.closed;
+		const rest: StreamRecord[] = [];
+		for (let r = await it.next(); !r.done; r = await it.next())
+			rest.push(r.value);
+		const summary = rest.at(-1) as SummaryRecord;
+		expect(summary.counters).toMatchObject({
+			packets: 0,
+			filtered: 1,
+			control: 1,
+			unread: 1,
+		});
+		const warnings = ofType(rest, "warning");
+		expect(warnings.map((w) => w.code)).toEqual(["capture/unread"]);
+		expect(warnings[0]?.message).toContain("filters removed the 1 frames");
+		expect(summary.error).toMatchObject({ case: "capture/unread" });
+	});
+
 	test("a filter it cannot read is refused before any socket opens", async () => {
 		// The port is taken: a bind first would fail with listen/bind-failed.
 		const held = await holdPort();

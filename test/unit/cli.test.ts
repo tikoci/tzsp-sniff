@@ -351,6 +351,49 @@ describe("plan: flags to capture options", () => {
 		);
 	});
 
+	test("--fields: a summary field needs a summary result (jsonl, or --stats)", () => {
+		let caught: unknown;
+		try {
+			planOf(["--fields", "seq,counters"]);
+		} catch (error) {
+			caught = error;
+		}
+		expect(caught).toMatchObject({
+			code: "cli/invalid-value",
+			fix: expect.stringContaining("--stats or --format jsonl"),
+		});
+		expect(
+			planOf(["--format", "jsonl", "--fields", "seq,counters"]).fields,
+		).toEqual(["seq", "counters"]);
+		expect(planOf(["--stats", "--fields", "counters"]).fields).toEqual([
+			"counters",
+		]);
+	});
+
+	test("--sender on the command line is a --port label or an address", () => {
+		expect(
+			planOf([
+				"--sender",
+				"router-a,10.0.2.2,[::1]:5",
+				"--not-sender",
+				"1.2.3.4:9",
+			]).options.filter,
+		).toEqual({
+			sender: ["router-a", "10.0.2.2", "[::1]:5"],
+			not: { sender: ["1.2.3.4:9"] },
+		});
+		for (const argv of [
+			["--sender", "a b"],
+			["--sender", "10.0.2.2:70000"],
+			["--not-sender", "[10.0.2.2]:5"],
+		]) {
+			expect({ argv, code: codeOf(() => planOf(argv)) }).toEqual({
+				argv,
+				code: "filter/invalid-value",
+			});
+		}
+	});
+
 	test("--fields refuses a field the output never has", () => {
 		for (const argv of [
 			["--fields", "src,nope"],
@@ -587,11 +630,33 @@ describe("main", () => {
 		await send(boundPort(m.stderr()), [REQUEST]);
 		expect(await run).toBe(0);
 		expect(m.stdout()).toBe(
-			"src=10.0.2.15 dst=10.0.2.3 protocols=ethernet,ipv4,icmp\n",
+			"packet src=10.0.2.15 dst=10.0.2.3 protocols=ethernet,ipv4,icmp\n",
 		);
 		expect(m.stderr()).toMatch(
 			/^listening on UDP 0\.0\.0\.0:\d+, until 1 packets, keeping --host 10\.0\.2\.3\n/,
 		);
+	});
+
+	test("text --fields: the type always shows, and blocks follow the line in the order named", async () => {
+		const m = memoryIo();
+		const run = main(["--port", "0", "--count", "1", "--fields", "type"], m.io);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), ["01040000", REQUEST]);
+		expect(await run).toBe(0);
+		expect(m.stdout()).toBe("record\npacket\n");
+
+		const n = memoryIo();
+		const ordered = main(
+			["--port", "0", "--count", "1", "--fields", "datagram,seq,layers"],
+			n.io,
+		);
+		await until(() => n.err.length > 0);
+		await send(boundPort(n.stderr()), [REQUEST]);
+		expect(await ordered).toBe(0);
+		const lines = n.stdout().split("\n");
+		expect(lines[0]).toBe("packet seq=1");
+		expect(lines[1]).toBe(`  datagram ${REQUEST}`);
+		expect(lines[2]).toMatch(/^ {2}tzsp @0\+75 /);
 	});
 
 	test("text --stats --fields: the chosen summary fields are the result", async () => {

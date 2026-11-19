@@ -23,7 +23,6 @@ import {
 } from "./dissect.ts";
 import { TzspSniffError } from "./errors.ts";
 import type { Capture } from "./listen.ts";
-import { formatPeer } from "./records.ts";
 
 /** Every filter term, in the order help and the header list them. */
 export const FILTER_KEYS = [
@@ -215,14 +214,37 @@ interface Value {
 	sender?: { label: string; ip?: string; port?: number };
 }
 
+/** A value for a message, whatever a JavaScript caller passed: never throws. */
+const show = (value: unknown) =>
+	typeof value === "string"
+		? JSON.stringify(value)
+		: typeof value === "number" || typeof value === "boolean"
+			? String(value)
+			: `(${value === null ? "null" : Array.isArray(value) ? "an array" : `${["object", "undefined"].includes(typeof value) ? "an" : "a"} ${typeof value}`})`;
+
 const invalid = (flag: string, value: unknown, what: string, fix: string) =>
 	new TzspSniffError(
 		"filter/invalid-value",
-		`--${flag} ${JSON.stringify(value)} is not ${what}.`,
+		`--${flag} ${show(value)} is not ${what}.`,
 		fix,
 	);
 
-const LABEL = /^[A-Za-z0-9._-]+$/;
+/**
+ * A sender value that names a UDP peer: an address, or `address:port` with
+ * an IPv6 address in brackets. Undefined when it is neither (a label).
+ */
+export function senderAddress(
+	text: string,
+): { ip: string; port?: number } | undefined {
+	const b = parseIp(text);
+	if (b) return { ip: peerKey(formatIp(b)) as string };
+	const m = /^(?:\[([^\]]+)\]|([0-9.]+)):([0-9]{1,5})$/.exec(text);
+	const host = m ? parseIp((m[1] ?? m[2]) as string) : undefined;
+	const port = Number(m?.[3]);
+	if (!host || (m?.[1] !== undefined) !== (host.length === 16) || port > 65535)
+		return undefined;
+	return { ip: peerKey(formatIp(host)) as string, port };
+}
 
 function checkValue(key: FilterKey, flag: string, raw: unknown): Value {
 	const isPort = /portMatch$/i.test(key);
@@ -234,7 +256,8 @@ function checkValue(key: FilterKey, flag: string, raw: unknown): Value {
 			`Give each value of ${key} as ${isPort ? "a number or " : ""}a string.`,
 		);
 	}
-	const text = String(raw).trim();
+	// A label is matched exactly, so only the other kinds are trimmed.
+	const text = key === "sender" ? String(raw) : String(raw).trim();
 	switch (key) {
 		case "proto": {
 			const name = text.toLowerCase();
@@ -339,33 +362,18 @@ function checkValue(key: FilterKey, flag: string, raw: unknown): Value {
 			return { text: hex16(value) };
 		}
 		case "sender": {
-			const b = parseIp(text);
-			if (b) {
-				const canonical = formatIp(b);
-				return {
-					text: canonical,
-					sender: { label: text, ip: peerKey(canonical) as string },
-				};
+			// Kept as given: a listener label matches exactly, so its spelling
+			// is its identity. An address is compared by its parsed form.
+			if (text === "") {
+				throw invalid(
+					flag,
+					raw,
+					"a listener label or a peer address",
+					`Give a label from --port <port>=<label>, an address such as --${flag} 10.0.2.15, or an address and port such as --${flag} 10.0.2.15:37008.`,
+				);
 			}
-			const m = /^(?:\[([^\]]+)\]|([0-9.]+)):([0-9]{1,5})$/.exec(text);
-			const host = m ? parseIp((m[1] ?? m[2]) as string) : undefined;
-			const port = Number(m?.[3]);
-			if (host && (m?.[1] !== undefined) === (host.length === 16)) {
-				if (port <= 65535) {
-					const canonical = formatIp(host);
-					return {
-						text: formatPeer(canonical, port),
-						sender: { label: text, ip: peerKey(canonical) as string, port },
-					};
-				}
-			}
-			if (LABEL.test(text)) return { text, sender: { label: text } };
-			throw invalid(
-				flag,
-				raw,
-				"a listener label or a peer address",
-				`Give a label from --port <port>=<label>, an address such as --${flag} 10.0.2.15, or an address and port such as --${flag} 10.0.2.15:37008.`,
-			);
+			const address = senderAddress(text);
+			return { text, sender: { label: text, ...address } };
 		}
 	}
 }
@@ -470,6 +478,11 @@ function factsOf(capture: Capture, d: Dissection | undefined): Facts {
 				facts.dstHosts.push(layer.fields.dst);
 				if (layer.fields.protocolName)
 					facts.protocols.add(layer.fields.protocolName);
+				// An IPv6 extension that is a protocol of its own (AH) is in the chain.
+				if (layer.protocol === "ipv6") {
+					for (const e of layer.fields.extensions)
+						if (FILTER_PROTOCOLS.includes(e.name)) facts.protocols.add(e.name);
+				}
 				break;
 			case "udp":
 			case "tcp":

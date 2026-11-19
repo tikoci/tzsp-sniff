@@ -100,27 +100,26 @@ export function entryText(
 }
 
 /** Fields shown on lines of their own, after the `key=value` line. */
-const BLOCK_FIELDS = new Set(["type", "layers", "tags", "datagram"]);
+const BLOCK_FIELDS = new Set(["layers", "tags", "datagram"]);
 
 /**
- * A record shaped by `--fields`: its fields as `key=value` on one line, in
- * order, then layers, tags and the datagram on lines of their own. A packet
- * or record with none of the fields prints nothing.
+ * A record shaped by `--fields`: its type, then its fields as `key=value`
+ * in the order named; layers, tags and the datagram follow on lines of
+ * their own, in the order named among themselves.
  */
 export function fieldsText(r: Record<string, unknown>): string {
-	const pairs = Object.entries(r)
-		.filter(([k]) => !BLOCK_FIELDS.has(k))
-		.map(([k, v]) => `${k}=${value(v)}`);
-	let text = "";
-	if (Array.isArray(r.layers))
-		text += (r.layers as RecordLayer[]).map(layerText).join("");
-	if (Array.isArray(r.tags)) {
-		text += `  tags ${(r.tags as TzspTag[]).map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;
+	const pairs: string[] = [];
+	let blocks = "";
+	for (const [k, v] of Object.entries(r)) {
+		if (k === "type") continue;
+		if (!BLOCK_FIELDS.has(k)) pairs.push(`${k}=${value(v)}`);
+		else if (k === "layers" && Array.isArray(v))
+			blocks += (v as RecordLayer[]).map(layerText).join("");
+		else if (k === "tags" && Array.isArray(v))
+			blocks += `  tags ${(v as TzspTag[]).map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;
+		else if (k === "datagram") blocks += `  datagram ${String(v)}\n`;
 	}
-	if (typeof r.datagram === "string") text += `  datagram ${r.datagram}\n`;
-	const lead = r.type === "packet" ? [] : [String(r.type)];
-	if (r.type !== "summary" && !pairs.length && !text) return "";
-	return `${[...lead, ...pairs].join(" ")}\n${text}`;
+	return `${[String(r.type), ...pairs].join(" ")}\n${blocks}`;
 }
 
 export function noticeText(r: WarningRecord | TipRecord): string {

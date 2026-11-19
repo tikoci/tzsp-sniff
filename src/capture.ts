@@ -266,8 +266,14 @@ export async function openCapture(
 					message: `${counters.datagrams} datagrams arrived on ${where}, but none was a TZSP Ethernet frame.`,
 					fix: "Run again with --detail full to see each record's bytes.",
 				};
-			} else if (counters.filtered > 0) {
-				// Frames arrived, and the filters kept none of them.
+			} else if (
+				counters.filtered > 0 &&
+				counters.dropped === 0 &&
+				counters.unread === 0
+			) {
+				// Every frame was read, and the filters kept none of them. With
+				// datagrams dropped or unread, one of those might have matched, so
+				// the loss is the diagnosis, not the filters.
 				const flags = filter.flags.join(" ");
 				emptyCase = {
 					type: "warning",
@@ -276,10 +282,13 @@ export async function openCapture(
 					fix: `Loosen or drop the filters (${flags}); --stats without them shows what arrived.`,
 				};
 			} else if (counters.dropped === 0 && counters.unread > 0) {
+				const filtered = counters.filtered
+					? ` The filters removed the ${counters.filtered} frames that were read.`
+					: "";
 				emptyCase = {
 					type: "warning",
 					code: "capture/unread",
-					message: `${counters.unread} of the ${counters.datagrams} datagrams that arrived on ${where} were still unread when the capture stopped.`,
+					message: `${counters.unread} of the ${counters.datagrams} datagrams that arrived on ${where} were still unread when the capture stopped.${filtered}`,
 					fix: "Use a longer limit, or read the output faster.",
 				};
 			}

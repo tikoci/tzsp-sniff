@@ -66,8 +66,8 @@ ORs its values; different flags AND. A packet without the field (no ports
 on ARP, a later IP fragment) matches no filter and is not removed by a
 `--not-` one. Filters apply to frames, not to TZSP control records; the
 summary counts what they removed as `filtered`, and `--count` counts what
-they kept. `--fields a,b,c` prints only those fields of each packet and of
-the summary, raising `--detail` as far as they need. To take the first few packets, use
+they kept. `--fields a,b,c` prints only those fields of each packet, and of the
+summary in JSONL or with `--stats`, raising `--detail` as far as they need. To take the first few packets, use
 `--count <n>` rather than `| head`: a closed pipe is noticed only at the next
 write, so a quiet `--follow | head` waits for the next datagram.
 `tzsp-sniff --help` has every flag.

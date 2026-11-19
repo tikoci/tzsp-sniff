@@ -294,9 +294,11 @@ Three knobs keep answers small, from cheapest to richest:
   named field (`--fields datagram` reads at `full`). An explicit `--detail`
   below that is refused (`cli/flag-conflict`) rather than printing records
   without the field asked for.
-- Text prints the fields as `key=value` on one line, with layers, tags and
-  the datagram on lines of their own, and only on stdout: the start line and
-  the notices on stderr are unchanged. `selectFields()` is exported, so an
+- Text prints the record's type and the fields as `key=value` on one line,
+  in the order named, with layers, tags and the datagram on lines of their
+  own after it, and only on stdout: the start line, notices and (without
+  `--stats`) the summary on stderr are unchanged, so in text a summary field
+  is refused unless `--stats` makes the summary the result. `selectFields()` is exported, so an
   adapter shapes records the same way.
 
 `--format text|jsonl|pcapng`. Text is the default, one line per packet,
@@ -477,19 +479,28 @@ interface, a direction and the router's time.
   the CLI exits 2 before any socket opens. Matching never throws.
 - **Values have one canonical form**: addresses in RFC 5952 or dotted form,
   a prefix with its host bits cleared, a lowercase colon MAC, a four-digit
-  EtherType, a port as a number. The header's `filters` is that canonical
+  EtherType, a port as a number. A `--sender` value is kept as given, since
+  a label matches exactly; its address, if it is one, is compared parsed. The header's `filters` is that canonical
   spec (`{}` for none), and the text start line lists it as flags
   (`keeping --proto tcp --not-host 10.0.0.1`).
 - **A comma list is the same as repeating the flag** (`--proto tcp,udp`),
   since agents try both.
 - **`--sender` takes a label, an address or `address:port`.** A peer
   reported as IPv4-mapped IPv6 (a listener bound to `::`) matches its IPv4
-  address. A value that is both a label and an address matches either.
+  address. A value that is both a label and an address matches either. The
+  library takes any label `listen()` does; the CLI refuses a value that is
+  neither `--port`'s label grammar nor an address, as a typo.
+- **`--proto` also matches an IPv6 extension that is a protocol** (`ah`).
 - **`--host` and `--net` read the IP header and ARP's sender and target
   addresses**, as tcpdump's `host` does; `--mac` reads the Ethernet header.
 - **The summary's tables follow the filters**: protocols, problems and
   conversations count the packets reported; senders count every datagram
-  received, so it still shows who sent what was filtered out.
+  the capture read, filtered frames and non-frame records included (not
+  dropped or unread ones), so it still shows who sent what was filtered out.
+- **`capture/all-filtered` needs every frame read.** With datagrams dropped
+  or unread, one of them might have matched, so the loss is the empty case
+  (`capture/dropped`, `capture/unread`, which then says how many frames the
+  filters removed), and `--expect` names that case, not the filters.
 
 ### `setup`
 

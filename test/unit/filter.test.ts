@@ -166,6 +166,22 @@ describe("createFilter: terms", () => {
 		expect(keeps({ net: ["10.0.2.15"] }, SSH)).toBe(true);
 	});
 
+	test("proto matches an IPv6 extension that is a protocol: AH", () => {
+		// RFC 4302: next header UDP, payload length 4 (24 bytes), SPI, sequence, ICV.
+		const ah = `1104${"0000"}${"00000001"}${"00000001"}${"00".repeat(12)}`;
+		const c = capture(
+			eth(0x86dd, ipv6({ next: 51, extensions: ah, payload: udp(1, 2, "") })),
+		);
+		expect(dissect(c.tzsp.payload as Uint8Array).protocols).toEqual([
+			"ethernet",
+			"ipv6",
+			"udp",
+		]);
+		expect(keeps({ proto: ["ah"] }, c)).toBe(true);
+		expect(keeps({ not: { proto: ["ah"] } }, c)).toBe(false);
+		expect(keeps({ proto: ["ah"] }, V6_UDP)).toBe(false);
+	});
+
 	test("port-match matches UDP and TCP ports", () => {
 		expect(keeps({ portMatch: [22] }, SSH)).toBe(true);
 		expect(keeps({ portMatch: ["50000"] }, SSH)).toBe(true);
@@ -218,6 +234,34 @@ describe("createFilter: terms", () => {
 		expect(keeps({ sender: ["[fe80::1]:7"] }, v6)).toBe(true);
 		// The default label is the port.
 		expect(keeps({ sender: ["37008"] }, PING)).toBe(true);
+	});
+
+	test("a sender label matches exactly as spelled, even one that reads as an address", () => {
+		const c = capture(eth(0x0800, ipv4({ proto: 1, payload: "" })), {
+			label: "2001:0DB8::0001",
+			address: "127.0.0.1",
+		});
+		const f = createFilter({ sender: ["2001:0DB8::0001"] });
+		expect(f(c)).toBe(true);
+		// The spec it advertises makes the same decision.
+		expect(f.spec.sender).toEqual(["2001:0DB8::0001"]);
+		expect(createFilter(f.spec)(c)).toBe(true);
+		// Two spellings of one address are two labels: both kept.
+		const both = createFilter({ sender: ["2001:db8::1", "2001:0DB8::0001"] });
+		expect(both.spec.sender).toEqual(["2001:db8::1", "2001:0DB8::0001"]);
+		expect(both(c)).toBe(true);
+		// The library takes any label a listener can have.
+		const spaced = capture(eth(0x0800, ipv4({ proto: 1, payload: "" })), {
+			label: "router west",
+		});
+		expect(keeps({ sender: ["router west"] }, spaced)).toBe(true);
+		expect(keeps({ sender: ["router"] }, spaced)).toBe(false);
+		// Not trimmed either: the spelling is the label.
+		const padded = capture(eth(0x0800, ipv4({ proto: 1, payload: "" })), {
+			label: " edge",
+		});
+		expect(keeps({ sender: [" edge"] }, padded)).toBe(true);
+		expect(keeps({ sender: ["edge"] }, padded)).toBe(false);
 	});
 });
 
@@ -298,6 +342,9 @@ describe("createFilter: combining", () => {
 	});
 });
 
+const CYCLIC: Record<string, unknown> = {};
+CYCLIC.self = CYCLIC;
+
 describe("createFilter: the spec", () => {
 	test("canonical values, duplicates dropped, flags in registry order", () => {
 		const f = createFilter({
@@ -369,9 +416,13 @@ describe("createFilter: the spec", () => {
 			[{ mac: ["02:00-00:00:00:0a"] }, "--mac"],
 			[{ etherType: ["2048"] }, "--ether-type"],
 			[{ etherType: ["0x05dc"] }, "--ether-type"],
-			[{ sender: ["a b"] }, "--sender"],
-			[{ sender: ["10.0.2.2:70000"] }, "--sender"],
+			[{ sender: [""] }, "--sender"],
 			[{ sender: [7] }, "--sender"],
+			// Whatever a JavaScript caller passes, the error is still coded.
+			[{ sender: [1n] }, "--sender (a bigint)"],
+			[{ host: [Symbol("x")] }, "--host (a symbol)"],
+			[{ mac: [CYCLIC] }, "--mac (an object)"],
+			[{ proto: [null] }, "--proto (null)"],
 			[{ not: { host: ["x"] } }, "--not-host"],
 			["tcp", "object"],
 		];
@@ -394,20 +445,50 @@ describe("createFilter: the spec", () => {
 	});
 
 	test("matching never throws, whatever the bytes", () => {
-		const f = createFilter({
-			host: ["10.0.0.1"],
+		// One predicate per term and polarity, so a throw in any matcher shows.
+		const values: Record<string, (string | number)[]> = {
+			proto: ["tcp"],
+			host: ["10.0.2.15"],
+			srcHost: ["fe80::1"],
+			dstHost: ["192.0.2.7"],
 			net: ["10.0.0.0/8"],
-			portMatch: [1],
+			srcNet: ["2001:db8::/32"],
+			dstNet: ["0.0.0.0/0"],
+			portMatch: [22],
+			srcPortMatch: [50000],
+			dstPortMatch: [547],
 			mac: [MAC_A],
+			srcMac: [MAC_B],
+			dstMac: [MAC_B],
 			etherType: ["0x0800"],
-			sender: ["x"],
-		});
-		for (let n = 0; n < 64; n++) {
-			const hex = Array.from({ length: n }, (_, i) => h8((i * 37) & 0xff)).join(
-				"",
-			);
-			expect(() => f(capture(hex))).not.toThrow();
-			expect(() => f(capture(eth(0x0800, hex)))).not.toThrow();
+			sender: ["10.0.2.2:5000"],
+		};
+		const filters = FILTER_KEYS.flatMap((key) => [
+			createFilter({ [key]: values[key] }),
+			createFilter({ not: { [key]: values[key] } }),
+		]);
+		// Every prefix of frames whose headers decode in part (IPv4 and IPv6,
+		// TCP and UDP, ARP, VLAN), then the same with each byte flipped.
+		const frames = [SSH, DNS, ARP, V6_UDP, VLAN_GRE, LATER_FRAGMENT].map(
+			(c) => c.tzsp.payload as Uint8Array,
+		);
+		let calls = 0;
+		for (const frame of frames) {
+			for (let n = 0; n <= frame.length; n++) {
+				const cut = frame.slice(0, n);
+				for (const variant of [
+					cut,
+					cut.map((b, i) => (i === n - 1 ? b ^ 0xff : b)),
+				]) {
+					const hex = Array.from(variant, h8).join("");
+					const c = capture(hex, { address: "10.0.2.2", port: 5000 });
+					for (const f of filters) {
+						expect(() => f(c)).not.toThrow();
+						calls += 1;
+					}
+				}
+			}
 		}
+		expect(calls).toBeGreaterThan(5000);
 	});
 });

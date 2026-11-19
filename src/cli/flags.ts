@@ -159,7 +159,7 @@ export const FLAGS: readonly FlagSpec[] = [
 		name: "fields",
 		value: "<a,b,…>",
 		commands: ["listen"],
-		help: `Only these fields of each packet, record and summary, in this order; type, and a summary's status, always stay. Without --detail, the detail is the least that carries them. Fields: ${FIELD_NAMES.join(", ")}.`,
+		help: `Only these fields of each packet and record, and of the summary in jsonl or with --stats, in this order; type, and a summary's status, always stay. In text, the fields are key=value on the record's line, and layers, tags and datagram follow on lines of their own. Without --detail, the detail is the least that carries them. Fields: ${FIELD_NAMES.join(", ")}.`,
 	},
 	...filterFlags(false),
 	...filterFlags(true),
