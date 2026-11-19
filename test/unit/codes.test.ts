@@ -17,7 +17,7 @@ const sources = (readdirSync(SRC, { recursive: true }) as string[])
 	.map((f) => readFileSync(join(SRC, f), "utf8"));
 const used = new Set(
 	sources.flatMap((s) =>
-		[...s.matchAll(/"((?:listen|capture|cli|tip)\/[a-z-]+)"/g)].map(
+		[...s.matchAll(/"((?:listen|capture|cli|output|tip)\/[a-z-]+)"/g)].map(
 			(m) => m[1] as string,
 		),
 	),

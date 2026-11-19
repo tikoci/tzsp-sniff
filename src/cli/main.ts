@@ -54,6 +54,12 @@ export class OutputClosedError extends Error {
 }
 
 export const DEFAULT_DURATION_MS = 10_000;
+/**
+ * The most packet and record entries one `--format json` document holds.
+ * Its arrays live in memory until the end, and control or invalid records
+ * do not advance `--count`, so the capture stops here with a warning.
+ */
+export const JSON_MAX_RECORDS = 10_000;
 const FORMATS = ["text", "jsonl", "json"] as const;
 type Format = (typeof FORMATS)[number];
 
@@ -77,8 +83,10 @@ export function helpText(): string {
 		...flagLines,
 		"",
 		"Output: stdout is the result. In text format the start line, warnings, tips and",
-		"the summary go to stderr. Every JSONL stream starts with a header record and",
-		"ends with one summary record; a stream without a summary was cut off.",
+		"the summary go to stderr, except that with --stats the summary is the result.",
+		"Every JSONL stream starts with a header record and ends with one summary",
+		"record; a stream without a summary was cut off. --format json stops at",
+		`${JSON_MAX_RECORDS} entries.`,
 		"",
 		"Exit: 0 done (also when nothing arrived: a warning says why), 1 the capture",
 		"failed or --expect was not met, 2 a usage error.",
@@ -195,11 +203,12 @@ export function plan(args: ParsedArgs): Plan {
 	const has = (name: string) => args.flags.has(name);
 	const format = choice("format", one("format") ?? "text", FORMATS);
 	const detailText = one("detail");
-	const detail: Detail = detailText
-		? choice("detail", detailText, DETAILS)
-		: format === "text"
-			? "line"
-			: "summary";
+	const detail: Detail =
+		detailText !== undefined
+			? choice("detail", detailText, DETAILS)
+			: format === "text"
+				? "line"
+				: "summary";
 	const options: CaptureOptions = {
 		ports: ports(args.flags.get("port")),
 		detail,
@@ -262,6 +271,7 @@ export function plan(args: ParsedArgs): Plan {
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
 	}
+	if (format === "json") options.recordLimit = JSON_MAX_RECORDS;
 	return { options, format, tips };
 }
 
@@ -271,6 +281,11 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
 		return await run(argv, io);
 	} catch (error) {
 		if (error instanceof OutputClosedError) return 0;
+		// stdout failed or stalled: say so where it can still be read.
+		if (error instanceof TzspSniffError && error.code.startsWith("output/")) {
+			await io.stderr.write(errorText(error));
+			return 1;
+		}
 		throw error;
 	}
 }
@@ -367,5 +382,7 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 				break;
 		}
 	}
+	// Exit means released: the ports can be bound again once this returns.
+	await stream.listener.closed;
 	return exitCode;
 }

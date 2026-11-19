@@ -100,6 +100,14 @@ export interface Listener extends AsyncIterable<Capture> {
 	close(): void;
 }
 
+/**
+ * For tests only, not part of the package's API: a socket factory, so a
+ * test can inject a socket error at a chosen moment.
+ */
+export interface ListenInternals {
+	createSocket?: typeof createSocket;
+}
+
 interface Pending {
 	seq: number;
 	time: number;
@@ -163,16 +171,27 @@ function checkOptions(options: ListenOptions) {
 
 function bindOne(socket: Socket, port: number, address: string) {
 	return new Promise<void>((resolve, reject) => {
-		const onError = (error: Error) => {
+		const done = () => {
+			socket.off("error", onError);
 			socket.off("listening", onListening);
+			socket.off("close", onClose);
+		};
+		const onError = (error: Error) => {
+			done();
 			reject(error);
 		};
 		const onListening = () => {
-			socket.off("error", onError);
+			done();
 			resolve();
+		};
+		// Closed by the listener's own end while binding: no event follows.
+		const onClose = () => {
+			done();
+			reject(new Error("closed while binding"));
 		};
 		socket.once("error", onError);
 		socket.once("listening", onListening);
+		socket.once("close", onClose);
 		socket.bind({ port, address });
 	});
 }
@@ -197,7 +216,11 @@ const bindFix = (error: unknown) => {
  * `listen/bind-failed` naming the port. An already aborted `signal` opens
  * nothing and rejects with the signal's reason.
  */
-export async function listen(options: ListenOptions = {}): Promise<Listener> {
+export async function listen(
+	options: ListenOptions = {},
+	internals: ListenInternals = {},
+): Promise<Listener> {
+	const makeSocket = internals.createSocket ?? createSocket;
 	const { ports, bind, queue } = checkOptions(options);
 	const { signal } = options;
 	signal?.throwIfAborted();
@@ -213,7 +236,9 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 	let ended: ListenerEnd | undefined;
 	let failure: TzspSniffError | undefined;
 	let failureThrown = false;
-	let waiter: (() => void) | undefined;
+	// Every pending read waits here; a wake resolves them all and each one
+	// looks at the queue again, so no concurrent read is stranded.
+	const waiters: (() => void)[] = [];
 	const counters: ListenerCounters = {
 		received: 0,
 		dropped: 0,
@@ -223,9 +248,7 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 	const bound: BoundListener[] = [];
 
 	const wake = () => {
-		const w = waiter;
-		waiter = undefined;
-		w?.();
+		for (const resolve of waiters.splice(0)) resolve();
 	};
 	const closeSockets = () => {
 		for (const socket of sockets.splice(0)) socket.close();
@@ -244,7 +267,7 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 	};
 
 	const open = () => {
-		const socket = createSocket({ type });
+		const socket = makeSocket({ type });
 		sockets.push(socket);
 		closedPromises.push(
 			new Promise((resolve) => socket.once("close", () => resolve())),
@@ -252,20 +275,31 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 		return socket;
 	};
 
+	/** Close everything opened so far, then fail with `error`. */
+	const abandon = async (error: unknown): Promise<never> => {
+		closeSockets();
+		await Promise.all(closedPromises);
+		throw error;
+	};
+
 	for (const spec of ports) {
 		const socket = open();
 		try {
 			await bindOne(socket, spec.port, bind);
 		} catch (error) {
-			closeSockets();
-			await Promise.all(closedPromises);
-			throw new TzspSniffError(
-				"listen/bind-failed",
-				`Could not bind UDP ${bind}:${spec.port}: ${(error as Error).message}`,
-				bindFix(error),
-				{ cause: error },
+			// A socket bound earlier failed and ended the listener, closing this
+			// one mid-bind: that first failure is the one to report.
+			if (failure) return abandon(failure);
+			return abandon(
+				new TzspSniffError(
+					"listen/bind-failed",
+					`Could not bind UDP ${bind}:${spec.port}: ${(error as Error).message}`,
+					bindFix(error),
+					{ cause: error },
+				),
 			);
 		}
+		if (failure) return abandon(failure);
 		const port = socket.address().port;
 		const listener: BoundListener = {
 			address: bind,
@@ -318,10 +352,17 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 	}
 
 	// A signal that fired while the ports were binding opens nothing either.
-	if (signal?.aborted) {
-		closeSockets();
-		await Promise.all(closedPromises);
-		signal.throwIfAborted();
+	if (signal?.aborted) return abandon(signal.reason);
+	// Labels are checked again once bound: a default label is the bound port,
+	// which an explicit label on another port can repeat.
+	const labels = new Set(bound.map((l) => l.label));
+	if (labels.size < bound.length) {
+		return abandon(
+			invalid(
+				`Two listeners have the same label: ${bound.map((l) => `${l.port}=${l.label}`).join(", ")}.`,
+				"Give each port its own label; a port without one is named by its number.",
+			),
+		);
 	}
 	signal?.addEventListener("abort", onAbort, { once: true });
 	const boundAt = Date.now();
@@ -353,7 +394,7 @@ export async function listen(options: ListenOptions = {}): Promise<Listener> {
 					};
 				}
 				await new Promise<void>((resolve) => {
-					waiter = resolve;
+					waiters.push(resolve);
 				});
 			}
 		},

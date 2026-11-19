@@ -25,7 +25,8 @@ class Table<T extends object> {
 	readonly entries = new Map<string, T>();
 	foldedEntries = new Set<string>();
 	foldedCount = 0;
-	foldedOverflow = 0;
+	/** A folded key arrived after `foldedEntries` was full: distinct counts are a lower bound. */
+	foldedCapped = false;
 
 	private readonly track: number;
 	private readonly weight: (entry: T) => number;
@@ -44,9 +45,9 @@ class Table<T extends object> {
 			this.entries.set(key, entry);
 			return entry;
 		}
-		// Count distinct folded keys up to the same cap, then only how many more.
+		// Count distinct folded keys up to the same cap; past it, note only that there were more.
 		if (this.foldedEntries.size < this.track) this.foldedEntries.add(key);
-		else if (!this.foldedEntries.has(key)) this.foldedOverflow += 1;
+		else if (!this.foldedEntries.has(key)) this.foldedCapped = true;
 		this.foldedCount += amount;
 		return undefined;
 	}
@@ -58,7 +59,8 @@ class Table<T extends object> {
 		const rest = all.slice(top);
 		return {
 			top: all.slice(0, top),
-			otherEntries: rest.length + this.foldedEntries.size + this.foldedOverflow,
+			otherEntries: rest.length + this.foldedEntries.size,
+			otherEntriesCapped: this.foldedCapped,
 			otherCount:
 				rest.reduce((sum, e) => sum + this.weight(e), 0) + this.foldedCount,
 		};

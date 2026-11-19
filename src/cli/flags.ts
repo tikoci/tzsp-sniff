@@ -102,6 +102,10 @@ export const FLAGS: readonly FlagSpec[] = [
 
 const BY_NAME = new Map(FLAGS.map((f) => [f.name, f]));
 
+/** Own keys only: `constructor` or `__proto__` is not a command. */
+const isCommand = (name: string): name is CommandName =>
+	Object.hasOwn(COMMANDS, name);
+
 export interface ParsedArgs {
 	command: CommandName;
 	/** Flag name to its values, in order; a switch has one empty string. */
@@ -129,9 +133,7 @@ export function wantsHelp(
 		if (arg === "--") return undefined;
 		if (arg === "--help" || arg === "-h") {
 			const first = argv[0];
-			return first && first in COMMANDS
-				? { command: first as CommandName }
-				: {};
+			return first && isCommand(first) ? { command: first } : {};
 		}
 	}
 	return undefined;
@@ -142,14 +144,14 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 	let command: CommandName = "listen";
 	const first = argv[0];
 	if (first !== undefined && !first.startsWith("-")) {
-		if (!(first in COMMANDS)) {
+		if (!isCommand(first)) {
 			throw usage(
 				"cli/unknown-command",
 				`"${first}" is not a command.`,
 				`Commands: ${Object.keys(COMMANDS).join(", ")}; run tzsp-sniff --help.`,
 			);
 		}
-		command = first as CommandName;
+		command = first;
 		i = 1;
 	}
 	const flags = new Map<string, string[]>();

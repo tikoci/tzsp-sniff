@@ -21,6 +21,19 @@ export const CODES = {
 		kind: "error",
 		summary: "Fewer packets were reported than --expect asked for.",
 	},
+	"capture/reused": {
+		kind: "error",
+		summary: "A capture stream was iterated a second time; it is read once.",
+	},
+	"output/stalled": {
+		kind: "error",
+		summary:
+			"stdout took no data for too long; the capture ended rather than wait.",
+	},
+	"output/failed": {
+		kind: "error",
+		summary: "Writing to stdout failed (not a reader that went away).",
+	},
 	"cli/unknown-command": {
 		kind: "error",
 		summary: "The first argument is not a command.",
@@ -62,6 +75,14 @@ export const CODES = {
 	"capture/no-datagrams": {
 		kind: "warning",
 		summary: "Nothing arrived on any listener.",
+	},
+	"capture/record-limit": {
+		kind: "warning",
+		summary: "The capture stopped at the most entries the output format holds.",
+	},
+	"capture/unread": {
+		kind: "warning",
+		summary: "Datagrams arrived, but the capture stopped before reading any.",
 	},
 	"capture/no-frames": {
 		kind: "warning",

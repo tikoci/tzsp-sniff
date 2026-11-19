@@ -527,7 +527,7 @@ describe("dissect: IPv6", () => {
 		const cut = packet({ next: 58, payload: ns.slice(0, 20) });
 		expect(layer(cut, "icmpv6")).toMatchObject({
 			problem: "truncated",
-			reason: "target-address",
+			reason: "message",
 		});
 	});
 });
@@ -567,7 +567,7 @@ describe("dissect: ICMP, UDP, TCP", () => {
 		});
 		expect(layer(v4(1, "08000000b200"), "icmp")).toMatchObject({
 			problem: "truncated",
-			reason: "echo-header",
+			reason: "message",
 			fields: { typeName: "echo-request" },
 		});
 	});

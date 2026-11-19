@@ -5,42 +5,13 @@
  * `.env`, which Bun loads, changes nothing (DESIGN.md, "Decided: Node and
  * npx").
  */
-import { type Io, main, OutputClosedError, type Sink } from "./main.ts";
+import { type Io, main } from "./main.ts";
+import { streamSink } from "./sink.ts";
 
-/**
- * A sink over a process stream: one write in flight, resolved when the stream
- * has taken it, so a slow reader slows the loop and the capture's queue
- * absorbs the burst. Once the stream fails, `onClosed` runs and writes reject
- * (stdout) or are skipped (stderr: losing notices must not end the capture).
- */
-function streamSink(
-	stream: NodeJS.WriteStream,
-	onClosed: () => void,
-	required: boolean,
-): Sink {
-	let failed: Error | undefined;
-	stream.on("error", (error) => {
-		failed ??= error;
-		onClosed();
-	});
-	const fail = (error: Error) =>
-		required
-			? Promise.reject(new OutputClosedError({ cause: error }))
-			: Promise.resolve();
-	return {
-		write(text) {
-			if (failed) return fail(failed);
-			return new Promise<void>((resolve) => {
-				stream.write(text, (error) => {
-					if (error) {
-						failed ??= error;
-						resolve(fail(error));
-					} else resolve();
-				});
-			});
-		},
-	};
-}
+/** One write may take this long before stdout counts as stalled. */
+const STALL_MS = 30_000;
+/** The same after Ctrl-C: the summary gets this long to be read. */
+const GRACE_MS = 2_000;
 
 const interrupt = new AbortController();
 let interrupts = 0;
@@ -53,15 +24,30 @@ const onSignal = () => {
 process.on("SIGINT", onSignal);
 process.on("SIGTERM", onSignal);
 
-const io: Io = {
-	stdout: streamSink(process.stdout, () => interrupt.abort(), true),
-	stderr: streamSink(process.stderr, () => undefined, false),
+const stdout = streamSink(process.stdout, {
+	required: true,
+	stallMs: STALL_MS,
+	graceMs: GRACE_MS,
 	signal: interrupt.signal,
-};
+	// Stop the capture: there is nowhere left to put its result.
+	onFailed: () => interrupt.abort(),
+});
+const stderr = streamSink(process.stderr, {
+	required: false,
+	stallMs: STALL_MS,
+	graceMs: GRACE_MS,
+	signal: interrupt.signal,
+});
+const io: Io = { stdout, stderr, signal: interrupt.signal };
 
+let code = 1;
 try {
-	process.exitCode = await main(process.argv.slice(2), io);
+	code = await main(process.argv.slice(2), io);
 } finally {
 	process.off("SIGINT", onSignal);
 	process.off("SIGTERM", onSignal);
 }
+// A failed or stalled stream may never drain, and waiting on it would keep
+// the process alive; otherwise let pending output flush and exit naturally.
+if (stdout.failed || stderr.failed) process.exit(code);
+process.exitCode = code;

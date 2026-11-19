@@ -30,7 +30,10 @@ export interface VlanFields {
 	priority: number;
 	dei: boolean;
 	id: number;
-	etherType: string;
+	/** The inner EtherType, as in {@link EthernetFields}. */
+	etherType?: string;
+	/** An inner IEEE 802.3 length: LLC follows, not decoded here. */
+	length?: number;
 }
 
 export interface ArpFields {
@@ -233,6 +236,38 @@ export const ICMPV6_TYPES: Record<number, string> = {
 	143: "mldv2-report",
 };
 
+/**
+ * The shortest message of each ICMP type decoded here, in bytes: the 8-byte
+ * header of echo and the error messages, and the fixed fields of timestamps
+ * (RFC 792). Any other type needs the 4-byte common header only.
+ */
+const ICMP_MINIMUM: Record<number, number> = {
+	0: 8,
+	3: 8,
+	4: 8,
+	5: 8,
+	8: 8,
+	11: 8,
+	12: 8,
+	13: 20,
+	14: 20,
+};
+
+/** As {@link ICMP_MINIMUM}, for ICMPv6 (RFC 4443, and RFC 4861 for neighbor discovery). */
+const ICMPV6_MINIMUM: Record<number, number> = {
+	1: 8,
+	2: 8,
+	3: 8,
+	4: 8,
+	128: 8,
+	129: 8,
+	133: 8,
+	134: 16,
+	135: 24,
+	136: 24,
+	137: 40,
+};
+
 /** IPv6 extension headers walked (IANA "IPv6 Extension Header Types"). */
 const IPV6_EXTENSIONS: Record<number, string> = {
 	0: "hop-by-hop",
@@ -350,38 +385,48 @@ class Dissector {
 			});
 			return;
 		}
-		const dst = formatMac(b, start);
-		const src = formatMac(b, start + 6);
-		const type = u16(b, start + 12);
-		if (type <= 1500) {
-			this.layers.push({
-				protocol: "ethernet",
-				offset: start,
-				length: end - start,
-				fields: { dst, src, length: type },
-			});
-			this.data(start + 14, end);
-			return;
-		}
-		if (type < 0x0600) {
-			// 1501 to 1535 is neither a length nor an EtherType (IEEE 802.3, 3.2.6).
-			this.layers.push({
-				protocol: "ethernet",
-				offset: start,
-				length: end - start,
-				fields: { dst, src, etherType: hex16(type) },
-				problem: "malformed",
-				reason: "type-length",
-			});
-			return;
-		}
-		this.layers.push({
+		const layer: EthernetLayer = {
 			protocol: "ethernet",
 			offset: start,
 			length: end - start,
-			fields: { dst, src, etherType: hex16(type) },
-		});
-		this.etherPayload(start + 14, end, type, 0);
+			fields: { dst: formatMac(b, start), src: formatMac(b, start + 6) },
+		};
+		this.layers.push(layer);
+		this.typeLength(layer, u16(b, start + 12), start + 14, end, 0);
+	}
+
+	/**
+	 * What follows a type/length field, in Ethernet or a VLAN tag (IEEE 802.3,
+	 * 3.2.6): 0x0600 and up is an EtherType to dispatch on; 1500 and below is
+	 * the length of the LLC data that follows, which bounds it (padding after it
+	 * is not LLC's); 1501 to 1535 is neither.
+	 */
+	typeLength(
+		layer: EthernetLayer | VlanLayer,
+		value: number,
+		start: number,
+		end: number,
+		vlans: number,
+	) {
+		const fields = layer.fields as { etherType?: string; length?: number };
+		if (value <= 1500) {
+			fields.length = value;
+			if (start + value > end) {
+				layer.problem = "truncated";
+				layer.reason = "length";
+				this.data(start, end);
+			} else {
+				this.data(start, start + value);
+			}
+			return;
+		}
+		fields.etherType = hex16(value);
+		if (value < 0x0600) {
+			layer.problem = "malformed";
+			layer.reason = "type-length";
+			return;
+		}
+		this.etherPayload(start, end, value, vlans);
 	}
 
 	etherPayload(start: number, end: number, type: number, vlans: number) {
@@ -427,8 +472,7 @@ class Dissector {
 			return;
 		}
 		const tci = u16(this.b, start);
-		const inner = u16(this.b, start + 2);
-		this.layers.push({
+		const layer: VlanLayer = {
 			protocol: "vlan",
 			offset: start,
 			length: end - start,
@@ -436,10 +480,10 @@ class Dissector {
 				priority: tci >> 13,
 				dei: (tci & 0x1000) !== 0,
 				id: tci & 0x0fff,
-				etherType: hex16(inner),
 			},
-		});
-		this.etherPayload(start + 4, end, inner, vlans + 1);
+		};
+		this.layers.push(layer);
+		this.typeLength(layer, u16(this.b, start + 2), start + 4, end, vlans + 1);
 	}
 
 	// RFC 826. Addresses are decoded for Ethernet (1) and IPv4 (0x0800) only.
@@ -478,12 +522,7 @@ class Dissector {
 			});
 			return;
 		}
-		if (
-			hardwareType !== 1 ||
-			protocolType !== 0x0800 ||
-			hlen !== 6 ||
-			plen !== 4
-		) {
+		if (hardwareType !== 1 || protocolType !== 0x0800) {
 			this.layers.push({
 				protocol: "arp",
 				offset: start,
@@ -491,6 +530,18 @@ class Dissector {
 				fields,
 				problem: "unsupported",
 				reason: "address-type",
+			});
+			return;
+		}
+		if (hlen !== 6 || plen !== 4) {
+			// Ethernet and IPv4 addresses with any other length contradict the types.
+			this.layers.push({
+				protocol: "arp",
+				offset: start,
+				length,
+				fields,
+				problem: "malformed",
+				reason: "address-length",
 			});
 			return;
 		}
@@ -629,9 +680,19 @@ class Dissector {
 			}
 			const left = payloadEnd - offset;
 			let length = 8;
-			if (protocol === 51 && left >= 2) length = (u8(b, offset + 1) + 2) * 4;
-			else if (protocol !== 44 && left >= 2)
+			if (protocol === 51 && left >= 2) {
+				length = (u8(b, offset + 1) + 2) * 4;
+				// AH has 12 fixed bytes, and in IPv6 its length is a multiple of 8
+				// (RFC 4302, 2.2).
+				if (length < 12 || length % 8 !== 0) {
+					fields.protocol = protocol;
+					layer.problem = "malformed";
+					layer.reason = "ah-length";
+					return;
+				}
+			} else if (protocol !== 44 && left >= 2) {
 				length = (u8(b, offset + 1) + 1) * 8;
+			}
 			if (length > left) {
 				fields.protocol = protocol;
 				// A real cut beats a declared length that runs past the bytes there are.
@@ -648,6 +709,9 @@ class Dissector {
 			fields.extensions.push({ header: protocol, name, length });
 			protocol = u8(b, offset);
 			offset += length;
+			// After the fragment header of a later fragment, the bytes are that
+			// fragment's data, not further headers (RFC 8200, 4.5).
+			if ((fields.fragmentOffset ?? 0) > 0) break;
 		}
 		fields.protocol = protocol;
 		const protocolName = IP_PROTOCOLS[protocol];
@@ -700,25 +764,22 @@ class Dissector {
 		if (typeName) fields.typeName = typeName;
 		const layer: IcmpLayer = { protocol, offset: start, length, fields };
 		this.layers.push(layer);
+		const minimum =
+			(protocol === "icmp" ? ICMP_MINIMUM : ICMPV6_MINIMUM)[type] ?? 4;
+		if (length < minimum) {
+			layer.problem = "truncated";
+			layer.reason = "message";
+			return;
+		}
 		const echo =
 			protocol === "icmp"
 				? type === 0 || type === 8
 				: type === 128 || type === 129;
 		if (echo) {
-			if (length < 8) {
-				layer.problem = "truncated";
-				layer.reason = "echo-header";
-				return;
-			}
 			fields.id = u16(b, start + 4);
 			fields.sequence = u16(b, start + 6);
 		}
 		if (protocol === "icmpv6" && (type === 135 || type === 136)) {
-			if (length < 24) {
-				layer.problem = "truncated";
-				layer.reason = "target-address";
-				return;
-			}
 			fields.targetAddress = formatIpv6(b, start + 8);
 		}
 	}

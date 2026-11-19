@@ -205,10 +205,35 @@ export async function freePort(): Promise<number> {
 	return port;
 }
 
-/** Proves `port` is free now by binding it, then releases it again. */
+/**
+ * Proves `port` is free now by binding it, then releases it again.
+ *
+ * Diagnostic (Codex review on #20): the Windows leg failed this rebind right
+ * after the listener's `closed` resolved. On failure it keeps trying for up
+ * to 2 s only to measure how long the port stayed held, prints that, and
+ * still fails: the measurement decides the fix, the retry does not.
+ */
 export async function expectPortFree(port: number) {
-	const { socket } = await holdPort(port);
-	await closeSocket(socket);
+	try {
+		const { socket } = await holdPort(port);
+		await closeSocket(socket);
+	} catch (error) {
+		const started = Date.now();
+		let freedAfter: number | undefined;
+		while (Date.now() - started < 2000) {
+			await new Promise((r) => setTimeout(r, 10));
+			const held = await holdPort(port).catch(() => undefined);
+			if (held) {
+				await closeSocket(held.socket);
+				freedAfter = Date.now() - started;
+				break;
+			}
+		}
+		console.error(
+			`expectPortFree(${port}) on ${process.platform}: not free at first; ${freedAfter === undefined ? "still held after 2000 ms" : `free after ${freedAfter} ms`}`,
+		);
+		throw error;
+	}
 }
 
 /** Wait until `check()` holds, polling; fails after `timeoutMs`. */

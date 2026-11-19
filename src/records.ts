@@ -34,6 +34,8 @@ export interface HeaderRecord {
 		durationMs?: number;
 		idleMs?: number;
 		expect?: number;
+		/** The most packet and record entries (`--format json` sets one). */
+		records?: number;
 	};
 	queue: { datagrams: number; bytes: number };
 	detail: Detail;
@@ -48,6 +50,8 @@ export type RecordLayer =
 			offset: number;
 			length: number;
 			fields: {
+				/** The TZSP header and tags; the frame starts here. */
+				headerLength: number;
 				version: number;
 				type: string;
 				encapsulation: string;
@@ -137,6 +141,11 @@ export interface Ranked<T> {
 	top: T[];
 	/** How many more entries there were, folded into `otherCount`. */
 	otherEntries: number;
+	/**
+	 * True when distinct folded entries passed what is tracked: `otherEntries`
+	 * is then a lower bound ("1000 or more"), while `otherCount` stays exact.
+	 */
+	otherEntriesCapped: boolean;
 	/** Packets or datagrams in the folded entries. */
 	otherCount: number;
 }
@@ -157,7 +166,13 @@ export interface SummaryTables {
 }
 
 export type SummaryStatus = "complete" | "interrupted" | "incomplete" | "error";
-export type StopReason = "count" | "duration" | "idle" | "interrupt" | "error";
+export type StopReason =
+	| "count"
+	| "duration"
+	| "idle"
+	| "record-limit"
+	| "interrupt"
+	| "error";
 
 export interface SummaryRecord extends SummaryTables {
 	type: "summary";
@@ -220,7 +235,7 @@ export function viewPacket(d: Dissection): PacketView {
 				view.protocol = layer.fields.etherType ?? "llc";
 				break;
 			case "vlan":
-				view.protocol = layer.fields.etherType;
+				view.protocol = layer.fields.etherType ?? "llc";
 				break;
 			case "arp":
 				view.protocol = "arp";
@@ -343,8 +358,10 @@ function tzspLayer(capture: Capture): RecordLayer {
 	return {
 		protocol: "tzsp",
 		offset: 0,
-		length: t.datagram.length - t.payload.length,
+		// The whole datagram, so the frame's layers lie inside it.
+		length: t.datagram.length,
 		fields: {
+			headerLength: t.datagram.length - t.payload.length,
 			version: t.version,
 			type: t.typeName,
 			encapsulation: t.encapsulationName,

@@ -95,11 +95,17 @@ export function summaryText(s: SummaryRecord): string {
 	if (Object.keys(s.problems).length)
 		lines.push(`  problems: ${counts(s.problems)}`);
 	const other = (
-		r: { otherEntries: number; otherCount: number },
+		r: {
+			otherEntries: number;
+			otherEntriesCapped: boolean;
+			otherCount: number;
+		},
 		unit: string,
 	) =>
 		r.otherEntries
-			? [`    and ${r.otherEntries} more: ${r.otherCount} ${unit}`]
+			? [
+					`    and ${r.otherEntries}${r.otherEntriesCapped ? " or more" : ""} more: ${r.otherCount} ${unit}`,
+				]
 			: [];
 	if (s.conversations.top.length) {
 		lines.push("  conversations:");
