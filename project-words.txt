@@ -2,6 +2,9 @@
 # (checked by `bun run lint:words`). A word that is not obvious says what it is
 # after " # ".
 actionlint # GitHub Actions workflow linter
+backpressure
+BPF # Berkeley Packet Filter
+btest # MikroTik bandwidth test
 bunx # Bun's npx
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
 CHR # Cloud Hosted Router: RouterOS as a VM
@@ -9,26 +12,40 @@ CMR # MikroTik Centralized Management for RouterOS (/cmr)
 crossref # tikoci-crossref, the house map of repos
 datagram
 datagrams
+dgram # node:dgram, the UDP socket module
 dissector
 dissectors
 EtherType
 EtherTypes
+FFI # foreign function interface
+GRE
+hostfwd # QEMU user-mode host-to-guest port forward
+keepalive
 keepalives
+KVM
+LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
 MikroTik
 MNDP # MikroTik Neighbor Discovery Protocol
+OSPF
 pcapng
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
+restraml # RouterOS command schemas, https://github.com/tikoci/restraml
+REUSEPORT # as in SO_REUSEPORT, the socket option
 RoMON # MikroTik Router Management Overlay Network
 routeros
 shellcheck
 SLIRP # QEMU user-mode networking
+tcpdump
 tikoci
+TLV # type, length, value
+tsc
 TSHARK
 TZSP # TaZmen Sniffer Protocol
 UDP
+VRRP
 Wireshark
 Wireshark's
 zizmor # GitHub Actions security linter, https://github.com/zizmorcore/zizmor
