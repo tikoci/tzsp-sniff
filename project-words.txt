@@ -28,14 +28,18 @@ m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
 MikroTik
 MNDP # MikroTik Neighbor Discovery Protocol
+NIC # network interface card
 OSPF
 pcapng
+postrouting # RouterOS firewall chain
+prerouting # RouterOS firewall chain
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
 restraml # RouterOS command schemas, https://github.com/tikoci/restraml
 REUSEPORT # as in SO_REUSEPORT, the socket option
 RoMON # MikroTik Router Management Overlay Network
 routeros
+SCP # secure copy
 shellcheck
 SLIRP # QEMU user-mode networking
 tcpdump
