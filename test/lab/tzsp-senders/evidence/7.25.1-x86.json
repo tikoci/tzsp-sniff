@@ -3,19 +3,16 @@
 		"channel": "stable",
 		"arch": "x86"
 	},
-	"machine": "tzsp-lab-stable-x86-mwmxax7m",
-	"date": "2026-11-19T02:20:38.510Z",
-	"host": {
-		"os": "linux x64",
-		"accelerator": "kvm"
-	},
+	"machine": "tzsp-lab-stable-x86-fa274511",
+	"date": "2026-11-19T02:49:10.399Z",
+	"accelerator": "kvm",
 	"quickchr": "quickchr 0.5.2",
 	"experiments": [
 		{
 			"name": "sniffer-stream",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -27,7 +24,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=3",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 926us     \n    1 10.0.2.3                                   56 255 308us     \n    2 10.0.2.3                                   56 255 357us     \n    sent=3 received=3 packet-loss=0% min-rtt=308us avg-rtt=530us \n   max-rtt=926us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 416us     \n    1 10.0.2.3                                   56 255 244us     \n    2 10.0.2.3                                   56 255 257us     \n    sent=3 received=3 packet-loss=0% min-rtt=244us avg-rtt=305us \n   max-rtt=416us "
 				},
 				{
 					"command": "/tool/sniffer/stop",
@@ -37,52 +34,60 @@
 			],
 			"datagrams": [
 				{
-					"t": 25804,
-					"peer": "127.0.0.1:40859",
+					"t": 29,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b0640800450000383ccb0000ff0166e80a00020f0a00020308003154b200000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
+					"hex": "010000010152550a0002030282574d9a0108004500003861b40000ff0141ff0a00020f0a00020308003154b200000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
 				},
 				{
-					"t": 25804,
-					"peer": "127.0.0.1:40859",
+					"t": 29,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800310000ff01a3820a0002030a00020f00003954b200000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
+					"hex": "01000001010282574d9a0152550a00020208004500003800330000ff01a3800a0002030a00020f00003954b200000080abaaaad62c5655010483ab5706872e6f5e8db5caceeb42ec99ba2e"
 				},
 				{
-					"t": 26805,
-					"peer": "127.0.0.1:40859",
+					"t": 1028,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b0640800450000383cd40000ff0166df0a00020f0a0002030800ccdfb200010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
+					"hex": "010000010152550a0002030282574d9a0108004500003861cf0000ff0141e40a00020f0a0002030800ccdfb200010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
 				},
 				{
-					"t": 26805,
-					"peer": "127.0.0.1:40859",
+					"t": 1028,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800320000ff01a3810a0002030a00020f0000d4dfb200010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
+					"hex": "01000001010282574d9a0152550a00020208004500003800340000ff01a37f0a0002030a00020f0000d4dfb200010081acaaaad72e5755020786ac590a8d32736497bfd3d8fb56ffacd452"
 				},
 				{
-					"t": 27807,
-					"peer": "127.0.0.1:40859",
+					"t": 2030,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b0640800450000383cf90000ff0166ba0a00020f0a00020308007072b200020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
+					"hex": "010000010152550a0002030282574d9a0108004500003861f60000ff0141bd0a00020f0a00020308007072b200020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
 				},
 				{
-					"t": 27807,
-					"peer": "127.0.0.1:40859",
+					"t": 2030,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800330000ff01a3800a0002030a00020f00007872b200020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
+					"hex": "01000001010282574d9a0152550a00020208004500003800350000ff01a37e0a0002030a00020f00007872b200020082adaaaad8305855030a89ad5a0e93367669a1c9dbe00a6b11bdeb75"
 				}
 			],
 			"summary": {
 				"datagrams": 6,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 6,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 6
+				},
+				"icmp": {
+					"0": 3,
+					"8": 3
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
 			}
 		},
 		{
 			"name": "sniffer-only-headers",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -99,7 +104,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2 size=1000",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                 1000 255 206us     \n    1 10.0.2.3                                 1000 255 203us     \n    sent=2 received=2 packet-loss=0% min-rtt=203us avg-rtt=204us \n   max-rtt=206us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                 1000 255 145us     \n    1 10.0.2.3                                 1000 255 348us     \n    sent=2 received=2 packet-loss=0% min-rtt=145us avg-rtt=246us \n   max-rtt=348us "
 				},
 				{
 					"command": "/tool/sniffer/stop",
@@ -114,40 +119,50 @@
 			],
 			"datagrams": [
 				{
-					"t": 29319,
-					"peer": "127.0.0.1:55672",
+					"t": 11,
 					"length": 65,
-					"hex": "010000010152550a00020302327d81b0640800450003e83d620000ff0162a10a00020f0a00020308001cf1b200030083aeaaaad9325955040d8cae5c12993a7a6f"
+					"hex": "010000010152550a0002030282574d9a010800450003e862170000ff013dec0a00020f0a00020308001cf1b200030083aeaaaad9325955040d8cae5c12993a7a6f"
 				},
 				{
-					"t": 29320,
-					"peer": "127.0.0.1:55672",
+					"t": 11,
 					"length": 65,
-					"hex": "010000010102327d81b06452550a0002020800450003e8003e0000ff019fc50a0002030a00020f000024f1b200030083aeaaaad9325955040d8cae5c12993a7a6f"
+					"hex": "01000001010282574d9a0152550a0002020800450003e800420000ff019fc10a0002030a00020f000024f1b200030083aeaaaad9325955040d8cae5c12993a7a6f"
 				},
 				{
-					"t": 30321,
-					"peer": "127.0.0.1:55672",
+					"t": 1013,
 					"length": 65,
-					"hex": "010000010152550a00020302327d81b0640800450003e83da70000ff01625c0a00020f0a0002030800c953b200040084afaaaada345a5505108faf5d169f3e7d74"
+					"hex": "010000010152550a0002030282574d9a010800450003e862210000ff013de20a00020f0a0002030800c953b200040084afaaaada345a5505108faf5d169f3e7d74"
 				},
 				{
-					"t": 30321,
-					"peer": "127.0.0.1:55672",
+					"t": 1013,
 					"length": 65,
-					"hex": "010000010102327d81b06452550a0002020800450003e8003f0000ff019fc40a0002030a00020f0000d153b200040084afaaaada345a5505108faf5d169f3e7d74"
+					"hex": "01000001010282574d9a0152550a0002020800450003e800430000ff019fc00a0002030a00020f0000d153b200040084afaaaada345a5505108faf5d169f3e7d74"
 				}
 			],
 			"summary": {
 				"datagrams": 4,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 4,
+				"dropped": 0,
+				"maxLength": 65,
+				"maxNesting": 0,
+				"lengths": {
+					"65": 4
+				},
+				"icmp": {
+					"0": 2,
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
 			}
 		},
 		{
 			"name": "mangle-prerouting",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=prerouting protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=prerouting protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -159,7 +174,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 242us     \n    1 10.0.2.3                                   56 255 247us     \n    sent=2 received=2 packet-loss=0% min-rtt=242us avg-rtt=244us \n   max-rtt=247us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 253us     \n    1 10.0.2.3                                   56 255 261us     \n    sent=2 received=2 packet-loss=0% min-rtt=253us avg-rtt=257us \n   max-rtt=261us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -169,7 +184,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "0  ;;; tzsp-lab\n   chain=prerouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=50114 protocol=icmp src-address=10.0.2.3"
+					"output": "0  ;;; tzsp-lab\n   chain=prerouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=35333 protocol=icmp src-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -179,28 +194,41 @@
 			],
 			"datagrams": [
 				{
-					"t": 33841,
-					"peer": "127.0.0.1:37712",
+					"t": 2014,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a000202080045000038004a0000ff01a3690a0002030a00020f0000531cb200050085b0aaaadb365b55061392b05f1aa542817abfe7f5fc39a749f336e1"
+					"hex": "01000001010282574d9a0152550a000202080045000038004e0000ff01a3650a0002030a00020f0000531cb200050085b0aaaadb365b55061392b05f1aa542817abfe7f5fc39a749f336e1"
 				},
 				{
-					"t": 34842,
-					"peer": "127.0.0.1:37712",
+					"t": 3015,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a000202080045000038004b0000ff01a3680a0002030a00020f0000f7aeb200060086b1aaaadc385c55071695b1601eab46847fc9f1fd0449bb5b034e04"
+					"hex": "01000001010282574d9a0152550a000202080045000038004f0000ff01a3640a0002030a00020f0000f7aeb200060086b1aaaadc385c55071695b1601eab46847fc9f1fd0449bb5b034e04"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"0": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-input",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=input protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=input protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -212,7 +240,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 241us     \n    1 10.0.2.3                                   56 255 264us     \n    sent=2 received=2 packet-loss=0% min-rtt=241us avg-rtt=252us \n   max-rtt=264us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 214us     \n    1 10.0.2.3                                   56 255 357us     \n    sent=2 received=2 packet-loss=0% min-rtt=214us avg-rtt=285us \n   max-rtt=357us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -222,7 +250,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "1  ;;; tzsp-lab\n   chain=input action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=icmp src-address=10.0.2.3"
+					"output": "1  ;;; tzsp-lab\n   chain=input action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=icmp src-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -232,28 +260,41 @@
 			],
 			"datagrams": [
 				{
-					"t": 38603,
-					"peer": "127.0.0.1:37712",
+					"t": 2015,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800590000ff01a35a0a0002030a00020f0000933ab200070087b2aaaadd3a5d55081998b26222b14a8885d3fb060f59cf6e166828"
+					"hex": "01000001010282574d9a0152550a000202080045000038005f0000ff01a3540a0002030a00020f0000933ab200070087b2aaaadd3a5d55081998b26222b14a8885d3fb060f59cf6e166828"
 				},
 				{
-					"t": 39605,
-					"peer": "127.0.0.1:37712",
+					"t": 3017,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a000202080045000038005a0000ff01a3590a0002030a00020f0000384eb200080088b3aaaade3c5e55091c9bb36326b74e8b8add058e1668e300a67e4b"
+					"hex": "01000001010282574d9a0152550a00020208004500003800600000ff01a3530a0002030a00020f0000384eb200080088b3aaaade3c5e55091c9bb36326b74e8b8add058e1668e300a67e4b"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"0": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-output",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -265,7 +306,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 217us     \n    1 10.0.2.3                                   56 255 291us     \n    sent=2 received=2 packet-loss=0% min-rtt=217us avg-rtt=254us \n   max-rtt=291us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 202us     \n    1 10.0.2.3                                   56 255 292us     \n    sent=2 received=2 packet-loss=0% min-rtt=202us avg-rtt=247us \n   max-rtt=292us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -275,7 +316,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "2  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=icmp dst-address=10.0.2.3"
+					"output": "2  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=icmp dst-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -285,28 +326,41 @@
 			],
 			"datagrams": [
 				{
-					"t": 43355,
-					"peer": "127.0.0.1:37712",
+					"t": 2022,
 					"length": 75,
-					"hex": "01000001010000000000000000000000000800450000383eec0000ff0164c70a00020f0a0002030800cbd9b200090089b4aaaadf3e5f550a1f9eb4652abd528f90e70f972078f713b9986f"
+					"hex": "010000010100000000000000000000000008004500003864770000ff013f3c0a00020f0a0002030800cbd9b200090089b4aaaadf3e5f550a1f9eb4652abd528f90e70f972078f713b9986f"
 				},
 				{
-					"t": 44356,
-					"peer": "127.0.0.1:37712",
+					"t": 3023,
 					"length": 75,
-					"hex": "01000001010000000000000000000000000800450000383f490000ff01646a0a00020f0a0002030800f06cb2000a008ab5aaaae04060550b22a1b5662ec3569295f1199f28870ba5c8af92"
+					"hex": "010000010100000000000000000000000008004500003864b40000ff013eff0a00020f0a0002030800f06cb2000a008ab5aaaae04060550b22a1b5662ec3569295f1199f28870ba5c8af92"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-postrouting",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=postrouting protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=postrouting protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -318,7 +372,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 127us     \n    1 10.0.2.3                                   56 255 269us     \n    sent=2 received=2 packet-loss=0% min-rtt=127us avg-rtt=198us \n   max-rtt=269us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 242us     \n    1 10.0.2.3                                   56 255 323us     \n    sent=2 received=2 packet-loss=0% min-rtt=242us avg-rtt=282us \n   max-rtt=323us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -328,7 +382,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "3  ;;; tzsp-lab\n   chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=50114 protocol=icmp dst-address=10.0.2.3"
+					"output": "3  ;;; tzsp-lab\n   chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=35333 protocol=icmp dst-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -338,28 +392,41 @@
 			],
 			"datagrams": [
 				{
-					"t": 48113,
-					"peer": "127.0.0.1:37712",
+					"t": 2015,
 					"length": 75,
-					"hex": "01000001010000000000000000000000000800450000383f5c0000ff0164570a00020f0a00020308008bf8b2000b008bb6aaaae14261550c25a4b66832c95a969bfb23a832971fb8dbc9b6"
+					"hex": "0100000101000000000000000000000000080045000038661d0000ff013d960a00020f0a00020308008bf8b2000b008bb6aaaae14261550c25a4b66832c95a969bfb23a832971fb8dbc9b6"
 				},
 				{
-					"t": 49115,
-					"peer": "127.0.0.1:37712",
+					"t": 3017,
 					"length": 75,
-					"hex": "01000001010000000000000000000000000800450000383f860000ff01642d0a00020f0a00020308002d8ab2000c008cb7aaaae24462550d28a7b76936cf5e99a0052eb13aa633cbece0d9"
+					"hex": "010000010100000000000000000000000008004500003866310000ff013d820a00020f0a00020308002d8ab2000c008cb7aaaae24462550d28a7b76936cf5e99a0052eb13aa633cbece0d9"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-sniff-id",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab sniff-id=4660",
+					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab sniff-id=4660",
 					"status": 200,
 					"output": ""
 				},
@@ -371,7 +438,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 287us     \n    1 10.0.2.3                                   56 255 369us     \n    sent=2 received=2 packet-loss=0% min-rtt=287us avg-rtt=328us \n   max-rtt=369us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 222us     \n    1 10.0.2.3                                   56 255 231us     \n    sent=2 received=2 packet-loss=0% min-rtt=222us avg-rtt=226us \n   max-rtt=231us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -381,12 +448,12 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "4  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=icmp dst-address=10.0.2.3"
+					"output": "4  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=icmp dst-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/export where comment=tzsp-lab",
 					"status": 200,
-					"output": "/ip firewall mangle\nadd action=sniff-tzsp chain=output comment=tzsp-lab dst-address=10.0.2.3 \\\n    protocol=icmp sniff-target=10.0.2.2 sniff-target-port=50114"
+					"output": "/ip firewall mangle\nadd action=sniff-tzsp chain=output comment=tzsp-lab dst-address=10.0.2.3 \\\n    protocol=icmp sniff-target=10.0.2.2 sniff-target-port=35333"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -396,28 +463,57 @@
 			],
 			"datagrams": [
 				{
-					"t": 52876,
-					"peer": "127.0.0.1:37712",
+					"t": 2019,
 					"length": 75,
-					"hex": "010000010100000000000000000000000008004500003840470000ff01636c0a00020f0a0002030800c915b2000d008db8aaaae34663550e2baab86b3ad5629da60f38ba44b647defffafd"
+					"hex": "0100000101000000000000000000000000080045000038675f0000ff013c540a00020f0a0002030800c915b2000d008db8aaaae34663550e2baab86b3ad5629da60f38ba44b647defffafd"
 				},
 				{
-					"t": 53877,
-					"peer": "127.0.0.1:37712",
+					"t": 3021,
 					"length": 75,
-					"hex": "0100000101000000000000000000000000080045000038405b0000ff0163580a00020f0a00020308006da8b2000e008eb9aaaae44864550f2eadb96c3edb66a0ab1942c24cc55bf00f1221"
+					"hex": "010000010100000000000000000000000008004500003867a50000ff013c0e0a00020f0a00020308006da8b2000e008eb9aaaae44864550f2eadb96c3edb66a0ab1942c24cc55bf00f1221"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"restRecord": [
+					{
+						".id": "*5",
+						"action": "sniff-tzsp",
+						"bytes": "0",
+						"chain": "output",
+						"comment": "tzsp-lab",
+						"dst-address": "10.0.2.3",
+						"dynamic": "false",
+						"invalid": "false",
+						"packets": "0",
+						"protocol": "icmp",
+						"sniff-target": "10.0.2.2",
+						"sniff-target-port": "35333"
+					}
+				],
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-sniff-pc",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=50114 sniff-id=4660 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=35333 sniff-id=4660 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -429,7 +525,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 327us     \n    1 10.0.2.3                                   56 255 379us     \n    sent=2 received=2 packet-loss=0% min-rtt=327us avg-rtt=353us \n   max-rtt=379us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 241us     \n    1 10.0.2.3                                   56 255 249us     \n    sent=2 received=2 packet-loss=0% min-rtt=241us avg-rtt=245us \n   max-rtt=249us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -439,7 +535,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "5  ;;; tzsp-lab\n   chain=output action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=50114\n   sniff-id=4660 protocol=icmp dst-address=10.0.2.3"
+					"output": "5  ;;; tzsp-lab\n   chain=output action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=35333\n   sniff-id=4660 protocol=icmp dst-address=10.0.2.3"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -449,33 +545,61 @@
 			],
 			"datagrams": [
 				{
-					"t": 57644,
-					"peer": "127.0.0.1:37712",
+					"t": 2019,
 					"length": 82,
-					"hex": "00001234eea8dbaf464e26d14500003840cf0000ff0162e40a00020f0a00020308000934b2000f008fbaaaaae54a65551031b0ba6e42e16aa4b1234ccb56d56f03232c453d3534004445564e414d453d6170"
+					"hex": "00001234eea8e260226b93cb4500003868ee0000ff013ac50a00020f0a00020308000934b2000f008fbaaaaae54a65551031b0ba6e42e16aa4b1234ccb56d56f03232c453d3534004445564e414d453d6170"
 				},
 				{
-					"t": 58646,
-					"peer": "127.0.0.1:37712",
+					"t": 3021,
 					"length": 82,
-					"hex": "00001234eea8dbb046a4a8be4500003840d80000ff0162db0a00020f0a0002030800acc6b200100090bbaaaae64c66551134b3bb6f46e76ea7b62d56d35ee483153343683d3534004445564e414d453d6170"
+					"hex": "00001234eea8e26122d18d2445000038693d0000ff013a760a00020f0a0002030800acc6b200100090bbaaaae64c66551134b3bb6f46e76ea7b62d56d35ee483153343683d3534004445564e414d453d6170"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 0,
+				"dropped": 0,
+				"maxLength": 82,
+				"maxNesting": 0,
+				"lengths": {
+					"82": 2
+				},
+				"icmp": {},
+				"droppedKinds": {}
+			},
+			"state": {
+				"restRecord": [
+					{
+						".id": "*6",
+						"action": "sniff-pc",
+						"bytes": "0",
+						"chain": "output",
+						"comment": "tzsp-lab",
+						"dst-address": "10.0.2.3",
+						"dynamic": "false",
+						"invalid": "false",
+						"packets": "0",
+						"protocol": "icmp",
+						"sniff-id": "4660",
+						"sniff-target": "10.0.2.2",
+						"sniff-target-port": "35333"
+					}
+				],
+				"counters": [
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-self-output",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=output protocol=udp dst-address=10.0.2.2 dst-port=35333 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -487,7 +611,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 199us     \n    1 10.0.2.3                                   56 255 212us     \n    sent=2 received=2 packet-loss=0% min-rtt=199us avg-rtt=205us \n   max-rtt=212us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 230us     \n    1 10.0.2.3                                   56 255 306us     \n    sent=2 received=2 packet-loss=0% min-rtt=230us avg-rtt=268us \n   max-rtt=306us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -497,7 +621,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "6  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=icmp dst-address=10.0.2.3\n \n7  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=udp dst-address=10.0.2.2 dst-port=50114"
+					"output": "6  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=icmp dst-address=10.0.2.3\n \n7  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=udp dst-address=10.0.2.2 dst-port=35333"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -507,33 +631,47 @@
 			],
 			"datagrams": [
 				{
-					"t": 62405,
-					"peer": "127.0.0.1:37712",
+					"t": 2018,
 					"length": 75,
-					"hex": "0100000101000000000000000000000000080045000038412f0000ff0162840a00020f0a00020308004852b200110091bcaaaae74e67551237b6bc714aed72abbc3760dc68f49728465d8c"
+					"hex": "01000001010000000000000000000000000800450000386ab60000ff0138fd0a00020f0a00020308004852b200110091bcaaaae74e67551237b6bc714aed72abbc3760dc68f49728465d8c"
 				},
 				{
-					"t": 63407,
-					"peer": "127.0.0.1:37712",
+					"t": 3019,
 					"length": 75,
-					"hex": "010000010100000000000000000000000008004500003841750000ff01623e0a00020f0a0002030800eae4b200120092bdaaaae8506855133ab9bd724ef376aec1416ae47003ac3b5674af"
+					"hex": "01000001010000000000000000000000000800450000386afc0000ff0138b70a00020f0a0002030800eae4b200120092bdaaaae8506855133ab9bd724ef376aec1416ae47003ac3b5674af"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2,
+					0
+				]
 			}
 		},
 		{
 			"name": "mangle-self-postrouting",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
 				{
-					"command": "/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=35333 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -545,7 +683,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 242us     \n    1 10.0.2.3                                   56 255 394us     \n    sent=2 received=2 packet-loss=0% min-rtt=242us avg-rtt=318us \n   max-rtt=394us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 274us     \n    1 10.0.2.3                                   56 255 193us     \n    sent=2 received=2 packet-loss=0% min-rtt=193us avg-rtt=233us \n   max-rtt=274us "
 				},
 				{
 					"command": "/ip/firewall/mangle/print stats where comment=tzsp-lab",
@@ -555,7 +693,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "8  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114\n   protocol=icmp dst-address=10.0.2.3\n \n9  ;;; tzsp-lab\n   chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=50114 protocol=udp dst-address=10.0.2.2 dst-port=50114"
+					"output": "8  ;;; tzsp-lab\n   chain=output action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333\n   protocol=icmp dst-address=10.0.2.3\n \n9  ;;; tzsp-lab\n   chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n   sniff-target-port=35333 protocol=udp dst-address=10.0.2.2 dst-port=35333"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -565,28 +703,42 @@
 			],
 			"datagrams": [
 				{
-					"t": 66928,
-					"peer": "127.0.0.1:37712",
+					"t": 2007,
 					"length": 75,
-					"hex": "010000010100000000000000000000000008004500003841950000ff01621e0a00020f0a00020308008670b200130093beaaaae9526955143dbcbe7452f97ab2c74b74ed7a13c04e698ed3"
+					"hex": "01000001010000000000000000000000000800450000386b4a0000ff0138690a00020f0a00020308008670b200130093beaaaae9526955143dbcbe7452f97ab2c74b74ed7a13c04e698ed3"
 				},
 				{
-					"t": 67930,
-					"peer": "127.0.0.1:37712",
+					"t": 3008,
 					"length": 75,
-					"hex": "010000010100000000000000000000000008004500003841dc0000ff0161d70a00020f0a00020308002a03b200140094bfaaaaea546a551540bfbf7556ff7eb5cc557ef58222d46079a5f6"
+					"hex": "01000001010000000000000000000000000800450000386b920000ff0138210a00020f0a00020308002a03b200140094bfaaaaea546a551540bfbf7556ff7eb5cc557ef58222d46079a5f6"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"counters": [
+					2,
+					2
+				]
 			}
 		},
 		{
 			"name": "mangle-mirrors-sniffer",
 			"steps": [
 				{
-					"command": "/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
+					"command": "/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=35333 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=35333 comment=tzsp-lab",
 					"status": 200,
 					"output": ""
 				},
@@ -596,7 +748,7 @@
 					"output": ""
 				},
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -608,7 +760,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 84us      \n    1 10.0.2.3                                   56 255 221us     \n    sent=2 received=2 packet-loss=0% min-rtt=84us avg-rtt=152us max-rtt=221us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 120us     \n    1 10.0.2.3                                   56 255 307us     \n    sent=2 received=2 packet-loss=0% min-rtt=120us avg-rtt=213us \n   max-rtt=307us "
 				},
 				{
 					"command": "/tool/sniffer/stop",
@@ -623,7 +775,7 @@
 				{
 					"command": "/ip/firewall/mangle/print detail where comment=tzsp-lab",
 					"status": 200,
-					"output": "10  ;;; tzsp-lab\n    chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n    sniff-target-port=50114 protocol=udp dst-address=10.0.2.2 dst-port=50114"
+					"output": "10  ;;; tzsp-lab\n    chain=postrouting action=sniff-tzsp sniff-target=10.0.2.2\n    sniff-target-port=35333 protocol=udp dst-address=10.0.2.2 dst-port=35333"
 				},
 				{
 					"command": "/ip/firewall/mangle/remove [find comment=tzsp-lab]",
@@ -633,40 +785,53 @@
 			],
 			"datagrams": [
 				{
-					"t": 71447,
-					"peer": "127.0.0.1:52504",
+					"t": 2010,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b06408004500003842330000ff0161800a00020f0a0002030800c68eb200150095c0aaaaeb566b551643c2c0775a0583b9d25f88fe8c32e8738cbf1a"
+					"hex": "010000010152550a0002030282574d9a010800450000386bed0000ff0137c60a00020f0a0002030800c68eb200150095c0aaaaeb566b551643c2c0775a0583b9d25f88fe8c32e8738cbf1a"
 				},
 				{
-					"t": 71447,
-					"peer": "127.0.0.1:52504",
+					"t": 2010,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800c50000ff01a2ee0a0002030a00020f0000ce8eb200150095c0aaaaeb566b551643c2c0775a0583b9d25f88fe8c32e8738cbf1a"
+					"hex": "01000001010282574d9a0152550a00020208004500003800df0000ff01a2d40a0002030a00020f0000ce8eb200150095c0aaaaeb566b551643c2c0775a0583b9d25f88fe8c32e8738cbf1a"
 				},
 				{
-					"t": 72449,
-					"peer": "127.0.0.1:52504",
+					"t": 3011,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b06408004500003842470000ff01616c0a00020f0a00020308006a21b200160096c1aaaaec586c551746c5c1785e0b87bcd76992069541fc859cd63d"
+					"hex": "010000010152550a0002030282574d9a010800450000386c310000ff0137820a00020f0a00020308006a21b200160096c1aaaaec586c551746c5c1785e0b87bcd76992069541fc859cd63d"
 				},
 				{
-					"t": 72449,
-					"peer": "127.0.0.1:52504",
+					"t": 3012,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a00020208004500003800c60000ff01a2ed0a0002030a00020f00007221b200160096c1aaaaec586c551746c5c1785e0b87bcd76992069541fc859cd63d"
+					"hex": "01000001010282574d9a0152550a00020208004500003800e00000ff01a2d30a0002030a00020f00007221b200160096c1aaaaec586c551746c5c1785e0b87bcd76992069541fc859cd63d"
 				}
 			],
 			"summary": {
 				"datagrams": 4,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 4,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 4
+				},
+				"icmp": {
+					"0": 2,
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true",
+				"counters": [
+					4
+				]
 			}
 		},
 		{
 			"name": "sniffer-file",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -683,7 +848,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=3",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 143us     \n    1 10.0.2.3                                   56 255 257us     \n    2 10.0.2.3                                   56 255 282us     \n    sent=3 received=3 packet-loss=0% min-rtt=143us avg-rtt=227us \n   max-rtt=282us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 130us     \n    1 10.0.2.3                                   56 255 203us     \n    2 10.0.2.3                                   56 255 141us     \n    sent=3 received=3 packet-loss=0% min-rtt=130us avg-rtt=158us \n   max-rtt=203us "
 				},
 				{
 					"command": "/tool/sniffer/stop",
@@ -712,16 +877,28 @@
 				}
 			],
 			"datagrams": [],
+			"summary": {
+				"datagrams": 0,
+				"tzspHeaderNoTags": 0,
+				"dropped": 0,
+				"maxLength": 0,
+				"maxNesting": 0,
+				"lengths": {},
+				"icmp": {},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
+			},
 			"notes": [
-				"router file \"tzsp-lab-capture\"",
-				"copied to evidence/7.25.1-x86-sniffer-file.pcapng"
+				"router file \"tzsp-lab-capture\", copied over SCP"
 			]
 		},
 		{
 			"name": "sniffer-and-two-protocols",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -733,7 +910,7 @@
 				{
 					"command": "/ping 10.0.2.3 count=2",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 123us     \n    1 10.0.2.3                                   56 255 197us     \n    sent=2 received=2 packet-loss=0% min-rtt=123us avg-rtt=160us \n   max-rtt=197us "
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 105us     \n    1 10.0.2.3                                   56 255 283us     \n    sent=2 received=2 packet-loss=0% min-rtt=105us avg-rtt=194us \n   max-rtt=283us "
 				},
 				{
 					"command": "/tool/sniffer/stop",
@@ -741,13 +918,91 @@
 					"output": ""
 				}
 			],
-			"datagrams": []
+			"datagrams": [],
+			"summary": {
+				"datagrams": 0,
+				"tzspHeaderNoTags": 0,
+				"dropped": 0,
+				"maxLength": 0,
+				"maxNesting": 0,
+				"lengths": {},
+				"icmp": {},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
+			}
+		},
+		{
+			"name": "sniffer-or-two-protocols",
+			"steps": [
+				{
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=yes only-headers=no file-name=\"\"",
+					"status": 200,
+					"output": ""
+				},
+				{
+					"command": "/tool/sniffer/start",
+					"status": 200,
+					"output": ""
+				},
+				{
+					"command": "/ping 10.0.2.3 count=2",
+					"status": 200,
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 206us     \n    1 10.0.2.3                                   56 255 387us     \n    sent=2 received=2 packet-loss=0% min-rtt=206us avg-rtt=296us \n   max-rtt=387us "
+				},
+				{
+					"command": "/tool/sniffer/stop",
+					"status": 200,
+					"output": ""
+				}
+			],
+			"datagrams": [
+				{
+					"t": 6,
+					"length": 75,
+					"hex": "010000010152550a0002030282574d9a010800450000386dc80000ff0135eb0a00020f0a0002030800a97cb2001c009cc7aaaaf26472551d58d7c781762f9fd1f8a5ce39cb9e7474056a13"
+				},
+				{
+					"t": 6,
+					"length": 75,
+					"hex": "01000001010282574d9a0152550a000202080045000038013c0000ff01a2770a0002030a00020f0000b17cb2001c009cc7aaaaf26472551d58d7c781762f9fd1f8a5ce39cb9e7474056a13"
+				},
+				{
+					"t": 1007,
+					"length": 75,
+					"hex": "010000010152550a0002030282574d9a010800450000386e150000ff01359e0a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+				},
+				{
+					"t": 1008,
+					"length": 75,
+					"hex": "01000001010282574d9a0152550a000202080045000038013d0000ff01a2760a0002030a00020f00004d08b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+				}
+			],
+			"summary": {
+				"datagrams": 4,
+				"tzspHeaderNoTags": 4,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 4
+				},
+				"icmp": {
+					"0": 2,
+					"8": 2
+				},
+				"droppedKinds": {}
+			},
+			"state": {
+				"snifferRunningAfterStart": "true"
+			}
 		},
 		{
 			"name": "sniffer-filter-stream-yes",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=yes only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=yes only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -764,44 +1019,45 @@
 				{
 					"command": "/ping 10.0.2.3 count=1",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 134us     \n    sent=1 received=1 packet-loss=0% min-rtt=134us avg-rtt=134us \n   max-rtt=134us "
-				},
-				{
-					"command": "/tool/sniffer/print",
-					"status": 200,
-					"output": "                     only-headers: no            \n                     memory-limit: 100KiB        \n                    memory-scroll: yes           \n                        file-name:               \n                       file-limit: 100KiB        \n                streaming-enabled: yes           \n                 streaming-server: 10.0.2.2:50114\n                  max-packet-size: 2048          \n                    filter-stream: yes           \n                 filter-interface:               \n               filter-mac-address:               \n           filter-src-mac-address:               \n           filter-dst-mac-address:               \n              filter-mac-protocol:               \n                filter-ip-address:               \n            filter-src-ip-address:               \n            filter-dst-ip-address:               \n              filter-ipv6-address:               \n          filter-src-ipv6-address:               \n          filter-dst-ipv6-address:               \n               filter-ip-protocol: icmp          \n                                   udp           \n                      filter-port:               \n                  filter-src-port:               \n                  filter-dst-port:               \n                      filter-vlan:               \n                       filter-cpu:               \n                      filter-size:               \n                 filter-direction: any           \n  filter-operator-between-entries: or            \n                       quick-rows: 20            \n                 quick-show-frame: no            \n                          running: no            "
-				},
-				{
-					"command": "/tool/sniffer/stop",
-					"status": 200,
-					"output": ""
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 179us     \n    sent=1 received=1 packet-loss=0% min-rtt=179us avg-rtt=179us \n   max-rtt=179us "
 				}
 			],
 			"datagrams": [
 				{
-					"t": 80450,
-					"peer": "127.0.0.1:43140",
+					"t": 6,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b06408004500003843c00000ff015ff30a00020f0a0002030800a97cb2001c009cc7aaaaf26472551d58d7c781762f9fd1f8a5ce39cb9e7474056a13"
+					"hex": "010000010152550a0002030282574d9a010800450000386e700000ff0135430a00020f0a0002030800e89ab2001e009ec9aaaaf46874551f5eddc9847e3ba7d803bae24addbd9c99289b5a"
 				},
 				{
-					"t": 80450,
-					"peer": "127.0.0.1:43140",
+					"t": 6,
 					"length": 75,
-					"hex": "010000010102327d81b06452550a000202080045000038011b0000ff01a2980a0002030a00020f0000b17cb2001c009cc7aaaaf26472551d58d7c781762f9fd1f8a5ce39cb9e7474056a13"
+					"hex": "01000001010282574d9a0152550a000202080045000038014a0000ff01a2690a0002030a00020f0000f09ab2001e009ec9aaaaf46874551f5eddc9847e3ba7d803bae24addbd9c99289b5a"
 				}
 			],
 			"summary": {
 				"datagrams": 2,
-				"maxNesting": 0
+				"tzspHeaderNoTags": 2,
+				"dropped": 0,
+				"maxLength": 75,
+				"maxNesting": 0,
+				"lengths": {
+					"75": 2
+				},
+				"icmp": {
+					"0": 1,
+					"8": 1
+				},
+				"droppedKinds": {}
 			},
-			"notes": ["REST /system/resource after the run: status 200 in 1 ms"]
+			"state": {
+				"snifferRunningAfterStart": "true"
+			}
 		},
 		{
 			"name": "sniffer-filter-stream-no",
 			"steps": [
 				{
-					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=no only-headers=no file-name=\"\"",
+					"command": "/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:35333 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=no only-headers=no file-name=\"\"",
 					"status": 200,
 					"output": ""
 				},
@@ -818,217 +1074,205 @@
 				{
 					"command": "/ping 10.0.2.3 count=1",
 					"status": 200,
-					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 2ms906us  \n    sent=1 received=1 packet-loss=0% min-rtt=2ms906us avg-rtt=2ms906us \n   max-rtt=2ms906us "
-				},
-				{
-					"command": "/tool/sniffer/print",
-					"status": 200,
-					"output": "                     only-headers: no            \n                     memory-limit: 100KiB        \n                    memory-scroll: yes           \n                        file-name:               \n                       file-limit: 100KiB        \n                streaming-enabled: yes           \n                 streaming-server: 10.0.2.2:50114\n                  max-packet-size: 2048          \n                    filter-stream: no            \n                 filter-interface:               \n               filter-mac-address:               \n           filter-src-mac-address:               \n           filter-dst-mac-address:               \n              filter-mac-protocol:               \n                filter-ip-address:               \n            filter-src-ip-address:               \n            filter-dst-ip-address:               \n              filter-ipv6-address:               \n          filter-src-ipv6-address:               \n          filter-dst-ipv6-address:               \n               filter-ip-protocol: icmp          \n                                   udp           \n                      filter-port:               \n                  filter-src-port:               \n                  filter-dst-port:               \n                      filter-vlan:               \n                       filter-cpu:               \n                      filter-size:               \n                 filter-direction: any           \n  filter-operator-between-entries: or            \n                       quick-rows: 20            \n                 quick-show-frame: no            \n                          running: no            "
-				},
-				{
-					"command": "/tool/sniffer/stop",
-					"status": 200,
-					"output": ""
+					"output": "  SEQ HOST                                     SIZE TTL TIME       STATUS      \n    0 10.0.2.3                                   56 255 3ms417us  \n    sent=1 received=1 packet-loss=0% min-rtt=3ms417us avg-rtt=3ms417us \n   max-rtt=3ms417us "
 				}
 			],
 			"datagrams": [
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
 					"length": 75,
-					"hex": "010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
 					"length": 122,
-					"hex": "010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
 					"length": 169,
-					"hex": "010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002020282574d9a010800450000967a3c40004011a80a0a00020f0a000202c30a8a050082e486010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
 					"length": 216,
-					"hex": "010000010152550a00020202327d81b0640800450000c5a3c9400040117e4e0a00020f0a000202a5b4c3c200b1af85010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002020282574d9a010800450000c57a3d40004011a7da0a00020f0a000202c30a8a0500b11329010000010152550a0002020282574d9a010800450000967a3c40004011a80a0a00020f0a000202c30a8a050082e486010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
 					"length": 263,
-					"hex": "010000010152550a00020202327d81b0640800450000f4a3ca400040117e1e0a00020f0a000202a5b4c3c200e0de27010000010152550a00020202327d81b0640800450000c5a3c9400040117e4e0a00020f0a000202a5b4c3c200b1af85010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002020282574d9a010800450000f47a3e40004011a7aa0a00020f0a000202c30a8a0500e041cb010000010152550a0002020282574d9a010800450000c57a3d40004011a7da0a00020f0a000202c30a8a0500b11329010000010152550a0002020282574d9a010800450000967a3c40004011a80a0a00020f0a000202c30a8a050082e486010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
+					"t": 6,
+					"length": 75,
+					"hex": "01000001010282574d9a0152550a00020208004500003801530000ff01a2600a0002030a00020f00008c26b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
+				},
+				{
+					"t": 6,
 					"length": 310,
-					"hex": "010000010152550a00020202327d81b064080045000123a3cb400040117dee0a00020f0a000202a5b4c3c2010f0cca010000010152550a00020202327d81b0640800450000f4a3ca400040117e1e0a00020f0a000202a5b4c3c200e0de27010000010152550a00020202327d81b0640800450000c5a3c9400040117e4e0a00020f0a000202a5b4c3c200b1af85010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"hex": "010000010152550a0002020282574d9a010800450001237a3f40004011a77a0a00020f0a000202c30a8a05010f706d010000010152550a0002020282574d9a010800450000f47a3e40004011a7aa0a00020f0a000202c30a8a0500e041cb010000010152550a0002020282574d9a010800450000c57a3d40004011a7da0a00020f0a000202c30a8a0500b11329010000010152550a0002020282574d9a010800450000967a3c40004011a80a0a00020f0a000202c30a8a050082e486010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
-					"length": 357,
-					"hex": "010000010152550a00020202327d81b064080045000152a3cc400040117dbe0a00020f0a000202a5b4c3c2013e3b6c010000010152550a00020202327d81b064080045000123a3cb400040117dee0a00020f0a000202a5b4c3c2010f0cca010000010152550a00020202327d81b0640800450000f4a3ca400040117e1e0a00020f0a000202a5b4c3c200e0de27010000010152550a00020202327d81b0640800450000c5a3c9400040117e4e0a00020f0a000202a5b4c3c200b1af85010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"t": 6,
+					"length": 122,
+					"hex": "010000010152550a0002020282574d9a010800450000677a4040004011a8350a00020f0a000202c30a8a0500536fcc01000001010282574d9a0152550a00020208004500003801530000ff01a2600a0002030a00020f00008c26b2001f009fcaaaaaf56a75552061e0ca868241abdc09c4ec53e7cdb0ac3bb57e"
 				},
 				{
-					"t": 86460,
-					"peer": "127.0.0.1:44248",
-					"length": 404,
-					"hex": "010000010152550a00020202327d81b064080045000181a3cd400040117d8e0a00020f0a000202a5b4c3c2016d6a0e010000010152550a00020202327d81b064080045000152a3cc400040117dbe0a00020f0a000202a5b4c3c2013e3b6c010000010152550a00020202327d81b064080045000123a3cb400040117dee0a00020f0a000202a5b4c3c2010f0cca010000010152550a00020202327d81b0640800450000f4a3ca400040117e1e0a00020f0a000202a5b4c3c200e0de27010000010152550a00020202327d81b0640800450000c5a3c9400040117e4e0a00020f0a000202a5b4c3c200b1af85010000010152550a00020202327d81b064080045000096a3c8400040117e7e0a00020f0a000202a5b4c3c2008280e3010000010152550a00020202327d81b064080045000067a3c7400040117eae0a00020f0a000202a5b4c3c200530b29010000010152550a00020302327d81b06408004500003845fc0000ff015db70a00020f0a00020308004508b2001d009dc8aaaaf36673551e5bdac8837a35a3d5feafd842d5ae8887188437"
+					"t": 10,
+					"length": 1519,
+					"hex": "010000010152550a0002020282574d9a010800450005dc7a7320004011c28d0a00020f0a000202c30a8a0505d52ce6010000010152550a0002020282574d9a010800450005ba7a7140004011a2b10a00020f0a000202c30a8a0505a6fe43010000010152550a0002020282574d9a0108004500058b7a6f40004011a2e20a00020f0a000202c30a8a050577cfa1010000010152550a0002020282574d9a0108004500055c7a6d40004011a3130a00020f0a000202c30a8a050548a0ff010000010152550a0002020282574d9a0108004500052d7a6b40004011a3440a00020f0a000202c30a8a050519725d010000010152550a0002020282574d9a010800450004fe7a6940004011a3750a00020f0a000202c30a8a0504ea43bb010000010152550a0002020282574d9a010800450004cf7a6740004011a3a60a00020f0a000202c30a8a0504bb1519010000010152550a0002020282574d9a010800450004a07a6540004011a3d70a00020f0a000202c30a8a05048ce676010000010152550a0002020282574d9a010800450004717a6340004011a4080a00020f0a000202c30a8a05045db7d4010000010152550a0002020282574d9a010800450004427a6140004011a4390a00020f0a000202c30a8a05042e8932010000010152550a0002020282574d9a010800450004137a5f40004011a46a0a00020f0a000202c30a8a0503ff5a90010000010152550a0002020282574d9a010800450003e47a5d40004011a49b0a00020f0a000202c30a8a0503d02bee010000010152550a0002020282574d9a010800450003b57a5b40004011a4cc0a00020f0a000202c30a8a0503a1fd4b010000010152550a0002020282574d9a010800450003867a5940004011a4fd0a00020f0a000202c30a8a050372cea9010000010152550a0002020282574d9a010800450003577a5740004011a52e0a00020f0a000202c30a8a050343a007010000010152550a0002020282574d9a010800450003287a5540004011a55f0a00020f0a000202c30a8a0503147165010000010152550a0002020282574d9a010800450002f97a5340004011a5900a00020f0a000202c30a8a0502e542c3010000010152550a0002020282574d9a010800450002ca7a5140004011a5c10a00020f0a000202c30a8a0502b61421010000010152550a0002020282574d9a0108004500029b7a4f40004011a5f20a00020f0a000202c30a8a050287e57e010000010152550a0002020282574d9a0108004500026c7a4d40004011a6230a00020f0a000202c30a8a050258b6dc010000010152550a0002020282574d9a0108004500023d7a4b40004011a6540a00020f0a000202c30a8a050229883a010000010152550a0002020282574d9a0108004500020e7a4940004011a6850a00020f0a000202c30a8a0501fa5998010000010152550a0002020282574d9a010800450001df7a4740004011a6b60a00020f0a000202c30a8a0501cb2af6010000010152550a0002020282574d9a010800450001b07a4540004011a6e70a00020f0a000202c30a8a05019cfc53010000010152550a0002020282574d9a010800450001817a4340004011a7180a00020f0a000202c30a8a05016dcdb1010000010152550a0002020282574d9a010800450001527a4140004011a7490a00020f0a000202c30a8a05013e9f0f010000010152550a0002020282574d9a010800450001237a3f40004011a77a0a00020f0a000202c30a8a05010f706d010000010152550a0002020282574d9a010800450000f47a3e40004011a7aa0a00020f0a000202c30a8a0500e041cb010000010152550a0002020282574d9a010800450000c57a3d40004011a7da0a00020f0a000202c30a8a0500b11329010000010152550a0002020282574d9a010800450000967a3c40004011a80a0a00020f0a000202c30a8a050082e486010000010152550a0002020282574d9a010800450000677a3b40004011a83a0a00020f0a000202c30a8a0500536ecc010000010152550a0002030282574d9a0108004500003870f70000ff0132bc0a00020f0a00020308008426b2001f009fcaaaaaf56a75552061e0ca868241"
 				}
 			],
 			"summary": {
-				"datagrams": 892,
-				"keptFirst": 8,
-				"spanMs": 4076,
+				"datagrams": 801,
+				"tzspHeaderNoTags": 801,
+				"dropped": 737,
 				"maxLength": 1519,
-				"maxNesting": 32,
+				"maxNesting": 31,
 				"lengths": {
 					"40": 1,
 					"52": 2,
-					"63": 5,
+					"63": 1,
 					"75": 2,
-					"86": 46,
+					"86": 45,
 					"87": 1,
 					"99": 2,
-					"110": 5,
+					"110": 1,
 					"122": 2,
-					"133": 43,
+					"133": 40,
 					"134": 1,
 					"146": 2,
-					"157": 5,
+					"157": 1,
 					"169": 2,
 					"180": 39,
 					"181": 1,
 					"193": 2,
-					"204": 5,
+					"204": 1,
 					"216": 2,
-					"227": 35,
+					"227": 33,
 					"228": 1,
 					"240": 2,
-					"251": 5,
+					"251": 1,
 					"263": 2,
 					"274": 31,
 					"275": 1,
 					"287": 2,
-					"298": 5,
+					"298": 1,
 					"310": 2,
-					"321": 28,
+					"321": 27,
 					"322": 1,
-					"334": 2,
-					"345": 5,
+					"334": 1,
+					"345": 1,
 					"357": 2,
-					"368": 26,
+					"368": 25,
 					"369": 1,
-					"381": 2,
-					"392": 5,
+					"381": 1,
+					"392": 1,
 					"404": 2,
-					"415": 25,
+					"415": 23,
 					"416": 1,
-					"428": 2,
-					"439": 5,
+					"428": 1,
+					"439": 1,
 					"451": 2,
-					"462": 24,
+					"462": 22,
 					"463": 1,
-					"475": 2,
-					"486": 5,
+					"475": 1,
+					"486": 1,
 					"498": 2,
 					"509": 22,
 					"510": 1,
-					"522": 1,
-					"533": 5,
+					"522": 2,
+					"533": 1,
 					"545": 2,
-					"556": 22,
+					"556": 21,
 					"557": 1,
-					"569": 1,
-					"580": 4,
+					"580": 1,
 					"592": 2,
 					"603": 20,
 					"604": 1,
-					"616": 1,
-					"627": 3,
+					"627": 1,
 					"639": 2,
-					"650": 20,
+					"650": 21,
 					"651": 1,
-					"663": 1,
-					"674": 3,
+					"674": 1,
 					"686": 2,
-					"697": 20,
-					"698": 1,
+					"697": 21,
 					"710": 1,
-					"721": 3,
+					"721": 1,
 					"733": 2,
-					"744": 20,
-					"745": 1,
-					"757": 1,
-					"768": 2,
+					"744": 19,
+					"768": 1,
 					"780": 2,
-					"791": 20,
-					"792": 1,
-					"804": 1,
-					"815": 2,
+					"791": 19,
+					"815": 1,
 					"827": 2,
-					"838": 19,
-					"862": 2,
+					"838": 18,
+					"862": 1,
 					"874": 2,
-					"885": 19,
-					"909": 2,
+					"885": 17,
+					"909": 1,
 					"921": 2,
-					"932": 19,
-					"956": 2,
+					"932": 17,
+					"956": 1,
 					"968": 2,
-					"979": 18,
-					"1003": 2,
+					"979": 16,
+					"1003": 1,
 					"1015": 2,
-					"1026": 17,
-					"1050": 2,
+					"1026": 15,
+					"1050": 1,
 					"1062": 2,
-					"1073": 16,
-					"1097": 2,
+					"1073": 15,
+					"1097": 1,
 					"1109": 2,
 					"1120": 14,
-					"1144": 2,
+					"1144": 1,
 					"1156": 2,
-					"1167": 14,
-					"1191": 2,
+					"1167": 13,
+					"1191": 1,
 					"1203": 2,
-					"1214": 11,
-					"1238": 2,
+					"1214": 13,
+					"1238": 1,
 					"1250": 2,
-					"1261": 11,
+					"1261": 13,
 					"1285": 1,
 					"1297": 2,
-					"1308": 10,
+					"1308": 12,
 					"1332": 1,
 					"1344": 2,
-					"1355": 10,
+					"1355": 12,
 					"1379": 1,
 					"1391": 2,
-					"1402": 10,
+					"1402": 12,
 					"1426": 1,
 					"1438": 2,
-					"1449": 10,
+					"1449": 12,
 					"1473": 1,
 					"1485": 2,
-					"1496": 5,
+					"1496": 1,
 					"1519": 47
+				},
+				"icmp": {
+					"0": 1,
+					"8": 1
+				},
+				"droppedKinds": {
+					"ipv4 proto 17 fragment": 701,
+					"short frame": 36
 				}
 			},
-			"notes": ["REST /system/resource after the run: status 200 in 1 ms"]
+			"state": {
+				"snifferRunningAfterStart": "true"
+			}
 		}
 	],
-	"listenerPort": 50114,
-	"bootMs": 24765,
+	"listenerPort": 35333,
+	"bootMs": 24706,
 	"router": {
 		"version": "7.25.1",
 		"versionString": "7.25.1",
 		"architecture": "x86_64",
-		"board": "CHR QEMU Standard PC (i440FX + PIIX, 1996)",
-		"cpu": "Intel(R)"
+		"board": "CHR QEMU Standard PC (i440FX + PIIX, 1996)"
 	},
 	"snifferDefaults": {
 		"file-limit": "1000",
@@ -1063,5 +1307,10 @@
 		"running": "false",
 		"streaming-enabled": "false",
 		"streaming-server": "0.0.0.0:37008"
+	},
+	"pcapng": {
+		"file": "7.25.1-x86-sniffer-file.pcapng",
+		"sha256": "bff62ead64fa9d7ff1a761affd3f66d55f101965d1ed2769d273a20b50c8a044",
+		"bytes": 836
 	}
 }

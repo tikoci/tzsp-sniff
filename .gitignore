@@ -7,3 +7,5 @@ coverage/
 *.pcapng
 !test/fixtures/**/*.pcap
 !test/fixtures/**/*.pcapng
+# The lab's saved captures are evidence that fixtures.ts reads (test/lab/tzsp-senders).
+!test/lab/**/evidence/*.pcapng

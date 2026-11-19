@@ -5,37 +5,52 @@
  *
  *   bun test/lab/tzsp-senders/fixtures.ts
  *
- * Kept: the datagrams an experiment received, minus MNDP announcements (they
- * carry the CHR's software id and identity, and no experiment is about them).
- * The loop experiment keeps the lab's first few datagrams only.
+ * Reads only test/lab/tzsp-senders/evidence/, which is committed (JSON and
+ * pcapng), so it gives the same output on any checkout. The new set is
+ * built beside the old one and checked (every expected fixture present,
+ * every datagram the lab's own traffic, every pcapng matching the SHA-256
+ * its run recorded) before it replaces the old set; on any error the old
+ * set stays.
  */
+import { createHash } from "node:crypto";
 import {
-	copyFile,
 	mkdir,
 	readdir,
 	readFile,
+	rename,
 	rm,
 	writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { biomeFormat, nesting } from "./lab.ts";
+import { classify, type Evidence } from "./lab.ts";
 
 const EVIDENCE = join(import.meta.dir, "evidence");
-const OUT = join(import.meta.dir, "..", "..", "fixtures", "routeros");
+const FIXTURES = join(import.meta.dir, "..", "..", "fixtures");
+const OUT = join(FIXTURES, "routeros");
+const NEXT = join(FIXTURES, ".routeros-next");
+const OLD = join(FIXTURES, ".routeros-old");
 
-interface Evidence {
-	target: { channel: string; arch: string };
-	date: string;
-	host: { os: string; accelerator: string };
-	quickchr: string;
-	router?: { version: string; architecture: string };
-	listenerPort?: number;
-	experiments: {
-		name: string;
-		steps: { command: string }[];
-		datagrams: { hex: string }[];
-	}[];
-}
+/** Every fixture expected per architecture, after `<version>-<arch>-`. */
+const EXPECTED: Record<string, string[]> = {
+	x86: [
+		"sniffer-stream.hex",
+		"sniffer-only-headers.hex",
+		"mangle-prerouting.hex",
+		"mangle-input.hex",
+		"mangle-output.hex",
+		"mangle-postrouting.hex",
+		"mangle-sniff-id.hex",
+		"mangle-sniff-pc.hex",
+		"mangle-self-output.hex",
+		"mangle-self-postrouting.hex",
+		"mangle-mirrors-sniffer.hex",
+		"sniffer-file.pcapng",
+		"sniffer-or-two-protocols.hex",
+		"sniffer-filter-stream-yes.hex",
+		"sniffer-filter-stream-no.hex",
+	],
+	arm64: ["sniffer-stream.hex"],
+};
 
 export interface FixtureEntry {
 	file: string;
@@ -44,76 +59,83 @@ export interface FixtureEntry {
 	architecture: string;
 	channel: string;
 	accelerator: string;
+	/** UTC date of the run. */
 	date: string;
 	/** The host UDP port the router sent to: inner datagrams to it are the stream itself. */
 	listenerPort: number;
-	commands: string[];
+	/** The run's evidence, with every command and its output. */
 	evidence: string;
 }
 
-/** The innermost frame is UDP to or from port 5678 (MNDP). */
-function isMndp(hex: string, port: number): boolean {
-	let bytes = Buffer.from(hex, "hex");
-	for (let i = 0; i <= nesting(hex, port); i++) {
-		const eth = bytes.subarray(5);
-		if (eth.length < 14 + 20 + 8 || eth.readUInt16BE(12) !== 0x0800)
-			return false;
-		const ip = eth.subarray(14);
-		const udp = ip.subarray(((ip[0] ?? 0) & 0x0f) * 4);
-		if (ip[9] !== 17) return false;
-		if (udp.readUInt16BE(0) === 5678 || udp.readUInt16BE(2) === 5678)
-			return true;
-		bytes = udp.subarray(8);
-	}
-	return false;
-}
-
-if (import.meta.main) {
-	await rm(OUT, { recursive: true, force: true });
-	await mkdir(OUT, { recursive: true });
+async function build(): Promise<FixtureEntry[]> {
+	await rm(NEXT, { recursive: true, force: true });
+	await mkdir(NEXT, { recursive: true });
 	const index: FixtureEntry[] = [];
-	const files = (await readdir(EVIDENCE)).filter((f) => f.endsWith(".json"));
-	for (const name of files.sort()) {
+	const names = (await readdir(EVIDENCE)).filter((f) => f.endsWith(".json"));
+	for (const name of names.sort()) {
 		const ev = JSON.parse(
 			await readFile(join(EVIDENCE, name), "utf8"),
 		) as Evidence;
-		if (!ev.router || ev.listenerPort === undefined) continue;
+		if (!ev.router || ev.listenerPort === undefined || ev.failure)
+			throw new Error(`${name}: not a completed run`);
 		const port = ev.listenerPort;
+		const stem = `${ev.router.version}-${ev.target.arch}`;
 		const base = {
-			routeros: ev.router.version,
-			architecture: ev.router.architecture,
+			routeros: ev.router.version ?? "",
+			architecture: ev.router.architecture ?? "",
 			channel: ev.target.channel,
-			accelerator: ev.host.accelerator,
+			accelerator: ev.accelerator,
 			date: ev.date.slice(0, 10),
 			listenerPort: port,
 			evidence: `test/lab/tzsp-senders/evidence/${name}`,
 		};
-		const stem = `${ev.router.version}-${ev.target.arch}`;
 		for (const exp of ev.experiments) {
-			const lines = exp.datagrams
-				.map((d) => d.hex)
-				.filter((hex) => !isMndp(hex, port));
-			const commands = exp.steps.map((s) => s.command);
 			if (exp.name === "sniffer-file") {
-				const pcap = `${stem}-sniffer-file.pcapng`;
-				try {
-					await copyFile(join(EVIDENCE, pcap), join(OUT, pcap));
-					index.push({ file: pcap, experiment: exp.name, commands, ...base });
-				} catch {
-					// No file came back from the router; REPORT.md says why.
-				}
+				if (!ev.pcapng) throw new Error(`${name}: no pcapng recorded`);
+				const bytes = await readFile(join(EVIDENCE, ev.pcapng.file));
+				const sha = createHash("sha256").update(bytes).digest("hex");
+				if (sha !== ev.pcapng.sha256)
+					throw new Error(`${ev.pcapng.file}: not the file ${name} recorded`);
+				const file = `${stem}-sniffer-file.pcapng`;
+				await writeFile(join(NEXT, file), bytes);
+				index.push({ file, experiment: exp.name, ...base });
 				continue;
 			}
-			if (lines.length === 0) continue;
+			if (exp.datagrams.length === 0) continue;
+			for (const d of exp.datagrams)
+				if (classify(Buffer.from(d.hex, "hex"), port) === "other")
+					throw new Error(`${name} ${exp.name}: not lab traffic`);
 			const file = `${stem}-${exp.name}.hex`;
-			await writeFile(join(OUT, file), `${lines.join("\n")}\n`);
-			index.push({ file, experiment: exp.name, commands, ...base });
+			await writeFile(
+				join(NEXT, file),
+				`${exp.datagrams.map((d) => d.hex).join("\n")}\n`,
+			);
+			index.push({ file, experiment: exp.name, ...base });
 		}
+		for (const want of EXPECTED[ev.target.arch] ?? [])
+			if (!index.some((e) => e.file === `${stem}-${want}`))
+				throw new Error(`${name}: no ${want}`);
 	}
 	await writeFile(
-		join(OUT, "index.json"),
+		join(NEXT, "index.json"),
 		`${JSON.stringify(index, null, "\t")}\n`,
 	);
-	await biomeFormat(join(OUT, "index.json"));
-	console.log(`${index.length} fixtures in ${OUT}`);
+	return index;
+}
+
+if (import.meta.main) {
+	try {
+		const index = await build();
+		await rm(OLD, { recursive: true, force: true });
+		await rename(OUT, OLD).catch(() => {});
+		await rename(NEXT, OUT);
+		await rm(OLD, { recursive: true, force: true });
+		console.log(`${index.length} fixtures in ${OUT}`);
+	} catch (e) {
+		await rm(NEXT, { recursive: true, force: true });
+		console.error(
+			`fixtures not changed: ${e instanceof Error ? e.message : String(e)}`,
+		);
+		process.exit(1);
+	}
 }

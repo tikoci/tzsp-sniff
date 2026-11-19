@@ -2,564 +2,342 @@
 	{
 		"file": "7.24.6-x86-sniffer-stream.hex",
 		"experiment": "sniffer-stream",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=3",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-sniffer-only-headers.hex",
 		"experiment": "sniffer-only-headers",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/set only-headers=yes",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=2 size=1000",
-			"/tool/sniffer/stop",
-			"/tool/sniffer/set only-headers=no"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-prerouting.hex",
 		"experiment": "mangle-prerouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=prerouting protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-input.hex",
 		"experiment": "mangle-input",
-		"commands": [
-			"/ip/firewall/mangle/add chain=input protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-output.hex",
 		"experiment": "mangle-output",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-postrouting.hex",
 		"experiment": "mangle-postrouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=postrouting protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-sniff-id.hex",
 		"experiment": "mangle-sniff-id",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab sniff-id=4660",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/export where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-sniff-pc.hex",
 		"experiment": "mangle-sniff-pc",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=45075 sniff-id=4660 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-self-output.hex",
 		"experiment": "mangle-self-output",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			"/ip/firewall/mangle/add chain=output protocol=udp dst-address=10.0.2.2 dst-port=45075 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-self-postrouting.hex",
 		"experiment": "mangle-self-postrouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			"/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=45075 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-mangle-mirrors-sniffer.hex",
 		"experiment": "mangle-mirrors-sniffer",
-		"commands": [
-			"/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=45075 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=45075 comment=tzsp-lab",
-			":delay 2s",
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=2",
-			"/tool/sniffer/stop",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-sniffer-file.pcapng",
 		"experiment": "sniffer-file",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/set streaming-enabled=no file-name=tzsp-lab-capture file-limit=100",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=3",
-			"/tool/sniffer/stop",
-			":put [/file/get [find name~\"tzsp-lab\"] name]",
-			"/file/print proplist=name,type,size where name~\"tzsp-lab\"",
-			"/file/remove [find name~\"tzsp-lab\"]",
-			"/tool/sniffer/set file-name=\"\""
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
+		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-sniffer-or-two-protocols.hex",
+		"experiment": "sniffer-or-two-protocols",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-19",
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-sniffer-filter-stream-yes.hex",
 		"experiment": "sniffer-filter-stream-yes",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=yes only-headers=no file-name=\"\"",
-			":execute script=\"{:delay 4s; /tool/sniffer/stop}\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=1",
-			"/tool/sniffer/print",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.24.6-x86-sniffer-filter-stream-no.hex",
 		"experiment": "sniffer-filter-stream-no",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:45075 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=no only-headers=no file-name=\"\"",
-			":execute script=\"{:delay 4s; /tool/sniffer/stop}\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=1",
-			"/tool/sniffer/print",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.24.6",
 		"architecture": "x86_64",
 		"channel": "long-term",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 45075,
+		"listenerPort": 33221,
 		"evidence": "test/lab/tzsp-senders/evidence/7.24.6-x86.json"
 	},
 	{
 		"file": "7.25.1-arm64-sniffer-stream.hex",
 		"experiment": "sniffer-stream",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:48318 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=3",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.25.1",
 		"architecture": "arm64",
 		"channel": "stable",
 		"accelerator": "tcg,tb-size=256",
 		"date": "2026-11-19",
-		"listenerPort": 48318,
+		"listenerPort": 40194,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-arm64.json"
 	},
 	{
 		"file": "7.25.1-x86-sniffer-stream.hex",
 		"experiment": "sniffer-stream",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=3",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-sniffer-only-headers.hex",
 		"experiment": "sniffer-only-headers",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/set only-headers=yes",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=2 size=1000",
-			"/tool/sniffer/stop",
-			"/tool/sniffer/set only-headers=no"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-prerouting.hex",
 		"experiment": "mangle-prerouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=prerouting protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-input.hex",
 		"experiment": "mangle-input",
-		"commands": [
-			"/ip/firewall/mangle/add chain=input protocol=icmp src-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-output.hex",
 		"experiment": "mangle-output",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-postrouting.hex",
 		"experiment": "mangle-postrouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=postrouting protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-sniff-id.hex",
 		"experiment": "mangle-sniff-id",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab sniff-id=4660",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/export where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-sniff-pc.hex",
 		"experiment": "mangle-sniff-pc",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-pc sniff-target=10.0.2.2 sniff-target-port=50114 sniff-id=4660 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-self-output.hex",
 		"experiment": "mangle-self-output",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			"/ip/firewall/mangle/add chain=output protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-self-postrouting.hex",
 		"experiment": "mangle-self-postrouting",
-		"commands": [
-			"/ip/firewall/mangle/add chain=output protocol=icmp dst-address=10.0.2.3 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			"/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/ping 10.0.2.3 count=2",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-mangle-mirrors-sniffer.hex",
 		"experiment": "mangle-mirrors-sniffer",
-		"commands": [
-			"/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=10.0.2.2 dst-port=50114 action=sniff-tzsp sniff-target=10.0.2.2 sniff-target-port=50114 comment=tzsp-lab",
-			":delay 2s",
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=2",
-			"/tool/sniffer/stop",
-			"/ip/firewall/mangle/print stats where comment=tzsp-lab",
-			"/ip/firewall/mangle/print detail where comment=tzsp-lab",
-			"/ip/firewall/mangle/remove [find comment=tzsp-lab]"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-sniffer-file.pcapng",
 		"experiment": "sniffer-file",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=10.0.2.3/32 filter-ip-protocol=icmp filter-operator-between-entries=and filter-stream=yes only-headers=no file-name=\"\"",
-			"/tool/sniffer/set streaming-enabled=no file-name=tzsp-lab-capture file-limit=100",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=3",
-			"/tool/sniffer/stop",
-			":put [/file/get [find name~\"tzsp-lab\"] name]",
-			"/file/print proplist=name,type,size where name~\"tzsp-lab\"",
-			"/file/remove [find name~\"tzsp-lab\"]",
-			"/tool/sniffer/set file-name=\"\""
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
+		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-sniffer-or-two-protocols.hex",
+		"experiment": "sniffer-or-two-protocols",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-19",
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-sniffer-filter-stream-yes.hex",
 		"experiment": "sniffer-filter-stream-yes",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=yes only-headers=no file-name=\"\"",
-			":execute script=\"{:delay 4s; /tool/sniffer/stop}\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=1",
-			"/tool/sniffer/print",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	},
 	{
 		"file": "7.25.1-x86-sniffer-filter-stream-no.hex",
 		"experiment": "sniffer-filter-stream-no",
-		"commands": [
-			"/tool/sniffer/set streaming-enabled=yes streaming-server=10.0.2.2:50114 filter-ip-address=\"\" filter-ip-protocol=icmp,udp filter-operator-between-entries=or filter-stream=no only-headers=no file-name=\"\"",
-			":execute script=\"{:delay 4s; /tool/sniffer/stop}\"",
-			"/tool/sniffer/start",
-			"/ping 10.0.2.3 count=1",
-			"/tool/sniffer/print",
-			"/tool/sniffer/stop"
-		],
 		"routeros": "7.25.1",
 		"architecture": "x86_64",
 		"channel": "stable",
 		"accelerator": "kvm",
 		"date": "2026-11-19",
-		"listenerPort": 50114,
+		"listenerPort": 35333,
 		"evidence": "test/lab/tzsp-senders/evidence/7.25.1-x86.json"
 	}
 ]
