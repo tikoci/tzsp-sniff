@@ -44,7 +44,7 @@
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.8",
 		"@types/bun": "1.4.4",
-		"@types/node": "^22",
+		"@types/node": "^26",
 		"cspell": "^10.5.1",
 		"markdownlint-cli2": "^0.24.1",
 		"typescript": "^7.0.2"
