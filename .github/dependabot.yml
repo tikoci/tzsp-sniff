@@ -27,3 +27,9 @@ updates:
     ignore:
       # Moves with the Bun pin in packageManager (tikoci-toolchain).
       - dependency-name: "@types/bun"
+      # Stays on the engines.node major (22), so src/ is not typed with APIs
+      # from later Node majors; raised together with engines.node. Within
+      # 22.x the types still include APIs added after 22.0 (e.g.
+      # process.getBuiltinModule, 22.3), which this does not catch.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]

@@ -10,7 +10,12 @@
  * and when to drop it (tikoci-linting, suppressions).
  */
 const IGNORE: string[] = [
-	// "GHSA-xxxx-xxxx-xxxx", // reached only by <dev tool>; drop when <fix ships>
+	// KaTeX prototype pollution (low). Reached only by markdownlint-cli2, a dev
+	// tool: markdownlint imports micromark-extension-math's syntax, and KaTeX
+	// is used only by that package's HTML renderer, which markdownlint never
+	// loads. No fixed KaTeX (>=0.18.2) is in its ^0.16 range. Drop when
+	// micromark-extension-math allows a fixed KaTeX.
+	"GHSA-238p-pmpm-9mq7",
 ];
 
 const ignoreArgs = IGNORE.map((id) => `--ignore=${id}`);
