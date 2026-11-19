@@ -26,3 +26,7 @@ Small items, one or two sentences each, deleted when done or declined
   also make a quiet `--follow | head` notice the closed pipe.
 - Consider a larger socket receive buffer (`recvBufferSize`) once a busy
   capture shows kernel drops; check Bun supports the option first.
+- Filters select frames only (DESIGN.md, "Decided, filters"): consider
+  letting `--sender` also select control, unsupported and invalid records,
+  which would need its own counter so the counters still add up.
+- `--port-match` ranges (`8000-8100`), if a lab asks for one.

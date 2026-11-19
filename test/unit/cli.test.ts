@@ -21,7 +21,8 @@ import {
 	until,
 } from "./helpers.ts";
 
-const REQUEST = fixture("7.25.1-x86-sniffer-stream")[0] as string;
+const STREAM = fixture("7.25.1-x86-sniffer-stream");
+const REQUEST = STREAM[0] as string;
 
 const codeOf = (fn: () => unknown): string | undefined => {
 	try {
@@ -85,6 +86,14 @@ describe("flags and help", () => {
 	test("help lists every flag with its value and every command, from the registry", () => {
 		const help = helpText();
 		for (const flag of FLAGS) {
+			// The --not- forms are listed together, by name.
+			if (flag.negated) {
+				expect(help).toMatch(new RegExp(` --${flag.name}[,.]`));
+				expect(flag.value).toBe(
+					FLAGS.find((f) => f.name === flag.name.slice(4))?.value,
+				);
+				continue;
+			}
 			expect(help).toContain(
 				`  --${flag.name}${flag.value ? ` ${flag.value}` : ""}\n`,
 			);
@@ -271,6 +280,101 @@ describe("plan: flags to capture options", () => {
 		}
 	});
 
+	test("filter flags make the spec: comma lists and repeats OR, --not- excludes", () => {
+		expect(planOf([]).options.filter).toBeUndefined();
+		expect(
+			planOf([
+				"--proto",
+				"tcp,udp",
+				"--proto=icmp",
+				"--src-port-match",
+				"22",
+				"--not-host",
+				"10.0.0.1",
+				"--sender",
+				"router-a",
+			]).options.filter,
+		).toEqual({
+			proto: ["tcp", "udp", "icmp"],
+			srcPortMatch: ["22"],
+			sender: ["router-a"],
+			not: { host: ["10.0.0.1"] },
+		});
+		// The listen port and a port filter are different flags.
+		expect(planOf(["--port", "0", "--port-match", "53"]).options).toMatchObject(
+			{ ports: [{ port: 0 }], filter: { portMatch: ["53"] } },
+		);
+	});
+
+	test("a filter value it cannot read is a usage error naming the flag", () => {
+		for (const argv of [
+			["--host", "router"],
+			["--not-net", "10.0.0.0/40"],
+			["--proto", "tcp,"],
+			["--ether-type", "0800"],
+		]) {
+			let caught: unknown;
+			try {
+				planOf(argv);
+			} catch (error) {
+				caught = error;
+			}
+			expect({ argv, caught }).toMatchObject({
+				argv,
+				caught: {
+					code: "filter/invalid-value",
+					message: expect.stringContaining(argv[0] as string),
+				},
+			});
+		}
+	});
+
+	test("--fields: the detail is the least that carries them, unless --detail is given", () => {
+		const p = (argv: string[]) => planOf(argv);
+		expect(p(["--fields", "seq,line"]).options.detail).toBe("line");
+		expect(p(["--fields", "src,dst"]).options.detail).toBe("summary");
+		expect(p(["--fields", "seq, layers"]).options.detail).toBe("layers");
+		expect(p(["--fields", "datagram,seq"]).options.detail).toBe("full");
+		// jsonl already carries summary fields; more is raised, less is kept.
+		expect(p(["--format", "jsonl", "--fields", "seq"]).options.detail).toBe(
+			"summary",
+		);
+		expect(p(["--fields", "src,src,dst"]).fields).toEqual(["src", "dst"]);
+		expect(p(["--detail", "full", "--fields", "src"]).options.detail).toBe(
+			"full",
+		);
+		expect(codeOf(() => p(["--detail", "summary", "--fields", "layers"]))).toBe(
+			"cli/flag-conflict",
+		);
+		expect(codeOf(() => p(["--stats", "--fields", "counters,status"]))).toBe(
+			undefined,
+		);
+	});
+
+	test("--fields refuses a field the output never has", () => {
+		for (const argv of [
+			["--fields", "src,nope"],
+			["--fields", ""],
+			["--fields", ","],
+			// --stats prints only the summary: packet fields never appear.
+			["--stats", "--fields", "src"],
+		]) {
+			let caught: unknown;
+			try {
+				planOf(argv);
+			} catch (error) {
+				caught = error;
+			}
+			expect({ argv, caught }).toMatchObject({
+				argv,
+				caught: {
+					code: "cli/invalid-value",
+					fix: expect.stringContaining("Fields"),
+				},
+			});
+		}
+	});
+
 	test("refusals", () => {
 		expect(codeOf(() => planOf(["--count", "2", "--expect", "3"]))).toBe(
 			"cli/flag-conflict",
@@ -420,6 +524,117 @@ describe("main", () => {
 		).toBe(0);
 		expect(m.stdout()).toMatch(/^summary: complete, stopped by duration/);
 		expect(m.stderr()).toContain("warning capture/no-datagrams");
+	});
+
+	test("jsonl --fields: packets and the summary shaped, the header whole with its filters", async () => {
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--format",
+				"jsonl",
+				"--idle",
+				"200ms",
+				"--proto",
+				"icmp",
+				"--not-dst-host",
+				"10.0.2.15",
+				"--fields",
+				"dst,seq,counters",
+			],
+			m.io,
+		);
+		await until(() => m.out.length > 0);
+		await send(boundPort(m.stdout()), [...STREAM.slice(0, 2), "01040000"]);
+		expect(await run).toBe(0);
+		const records = m
+			.stdout()
+			.trimEnd()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		expect(records[0]).toMatchObject({
+			type: "header",
+			filters: { proto: ["icmp"], not: { dstHost: ["10.0.2.15"] } },
+			detail: "summary",
+		});
+		// The reply to 10.0.2.15 is filtered; the keepalive is a record.
+		expect(records.slice(1, -1)).toEqual([
+			{ type: "packet", dst: "10.0.2.3", seq: 1 },
+			{ type: "record", seq: 3 },
+		]);
+		const summary = records.at(-1);
+		expect(Object.keys(summary)).toEqual(["type", "status", "counters"]);
+		expect(summary.counters).toMatchObject({ packets: 1, filtered: 1 });
+	});
+
+	test("text --fields: key=value lines; the start line names the filters", async () => {
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--count",
+				"1",
+				"--host",
+				"10.0.2.3",
+				"--fields",
+				"src,dst,protocols",
+			],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		expect(m.stdout()).toBe(
+			"src=10.0.2.15 dst=10.0.2.3 protocols=ethernet,ipv4,icmp\n",
+		);
+		expect(m.stderr()).toMatch(
+			/^listening on UDP 0\.0\.0\.0:\d+, until 1 packets, keeping --host 10\.0\.2\.3\n/,
+		);
+	});
+
+	test("text --stats --fields: the chosen summary fields are the result", async () => {
+		const m = memoryIo();
+		expect(
+			await main(
+				[
+					"--port",
+					"0",
+					"--duration",
+					"50ms",
+					"--stats",
+					"--fields",
+					"stoppedBy",
+				],
+				m.io,
+			),
+		).toBe(0);
+		expect(m.stdout()).toBe("summary status=complete stoppedBy=duration\n");
+	});
+
+	test("text: all filtered is a warning naming the filters; the summary counts them", async () => {
+		const m = memoryIo();
+		const run = main(
+			["--port", "0", "--idle", "200ms", "--port-match", "53"],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		expect(m.stdout()).toBe("");
+		expect(m.stderr()).toContain(
+			"warning capture/all-filtered: 1 frames arrived on",
+		);
+		expect(m.stderr()).toContain("--port-match 53");
+		expect(m.stderr()).toContain("packets 0, filtered 1,");
+	});
+
+	test("a filter value it cannot read: exit 2, nothing bound", async () => {
+		const m = memoryIo();
+		expect(await main(["--not-mac", "nope"], m.io)).toBe(2);
+		expect(m.stdout()).toBe("");
+		expect(m.stderr()).toContain("error filter/invalid-value: --not-mac");
 	});
 
 	test("--expect unmet: exit 1 and the error on stderr, also after an interrupt", async () => {

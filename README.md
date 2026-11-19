@@ -13,8 +13,8 @@ work, including CHRs under [quickchr](https://github.com/tikoci/quickchr),
 rather than as a general sniffer.
 
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
-> command) receives and decodes Ethernet, VLAN, ARP, IPv4, IPv6, ICMP, UDP
-> and TCP. Filters, `--write`, `decode` and `setup` are designed
+> command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
+> ICMP, UDP and TCP. `--write`, `decode` and `setup` are designed
 > ([DESIGN.md](DESIGN.md)) and not built yet.
 
 ## Use
@@ -35,6 +35,8 @@ tzsp-sniff --count 10                     # ten packets, one line each
 tzsp-sniff --duration 30s --stats         # only the summary
 tzsp-sniff --format jsonl --follow        # a JSON record per line until Ctrl-C
 tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
+tzsp-sniff --proto tcp --not-port-match 22 --count 20   # filters
+tzsp-sniff --format jsonl --host 10.0.2.15 --fields seq,src,dst,protocols
 ```
 
 ```text
@@ -52,8 +54,20 @@ how much each packet carries, cheapest first. A JSONL stream starts with a
 summary was cut off. `jq` reads the stream as it is, and `jq -s .` turns it
 into one array; there is no `--format json`, since a capture is a stream.
 An empty capture exits 0 with a warning saying which
-case it was (`capture/no-datagrams`, `capture/no-frames`); `--expect <n>`
-makes too few packets exit 1. To take the first few packets, use
+case it was (`capture/no-datagrams`, `capture/no-frames`,
+`capture/all-filtered`); `--expect <n>` makes too few packets exit 1.
+
+Filters keep packets: `--proto`, `--host`, `--net`, `--port-match` (not
+`--port`, which is the port to listen on), `--mac`, `--ether-type` and
+`--sender` (the listener label or the UDP peer, never a field in the
+packet). Host, net, mac and port-match have `--src-` and `--dst-` forms,
+and every filter has a `--not-` form. Repeating a flag, or a comma list,
+ORs its values; different flags AND. A packet without the field (no ports
+on ARP, a later IP fragment) matches no filter and is not removed by a
+`--not-` one. Filters apply to frames, not to TZSP control records; the
+summary counts what they removed as `filtered`, and `--count` counts what
+they kept. `--fields a,b,c` prints only those fields of each packet and of
+the summary, raising `--detail` as far as they need. To take the first few packets, use
 `--count <n>` rather than `| head`: a closed pipe is noticed only at the next
 write, so a quiet `--follow | head` waits for the next datagram.
 `tzsp-sniff --help` has every flag.
@@ -71,6 +85,18 @@ for await (const record of capture) {
   // header, then packet / record / warning, then summary
   if (record.type === "packet") console.log(record.line, record.src, record.dst);
 }
+```
+
+`openCapture({ filter })` takes the filters as a spec whose keys mirror
+the flags (`srcPortMatch` is `--src-port-match`), and `createFilter(spec)`
+makes the same filter for your own loop:
+
+```typescript
+import { createFilter } from "@tikoci/tzsp-sniff";
+
+const keep = createFilter({ proto: ["tcp"], not: { portMatch: [22] } });
+keep.flags; // ["--proto tcp", "--not-port-match 22"]
+// for await (const capture of listener) if (keep(capture)) { … }
 ```
 
 `listen()` is the layer below: the sockets and a bounded queue, yielding

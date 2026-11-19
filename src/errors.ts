@@ -29,6 +29,10 @@ export const CODES = {
 		kind: "error",
 		summary: "A capture stream was iterated a second time; it is read once.",
 	},
+	"filter/invalid-value": {
+		kind: "error",
+		summary: "A filter term is unknown, or a value is not one it accepts.",
+	},
 	"output/stalled": {
 		kind: "error",
 		summary:
@@ -83,6 +87,10 @@ export const CODES = {
 		kind: "warning",
 		summary:
 			"Only control, unsupported or invalid TZSP records arrived; no frames.",
+	},
+	"capture/all-filtered": {
+		kind: "warning",
+		summary: "Frames arrived, and the filters removed every one of them.",
 	},
 	"tip/default-duration": {
 		kind: "tip",

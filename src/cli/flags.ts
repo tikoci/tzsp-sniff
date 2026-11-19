@@ -5,6 +5,8 @@
  * step.
  */
 import { TzspSniffError } from "../errors.ts";
+import { FILTER_KEYS, type FilterKey, filterFlag } from "../filter.ts";
+import { ENTRY_FIELDS, SUMMARY_FIELDS } from "../records.ts";
 
 export const COMMANDS = {
 	listen:
@@ -20,7 +22,72 @@ export interface FlagSpec {
 	commands: readonly CommandName[];
 	conflicts?: readonly string[];
 	help: string;
+	/** A filter flag: the spec term it sets. */
+	filter?: FilterKey;
+	/** A `--not-` filter flag: help lists these together. */
+	negated?: boolean;
 }
+
+/** What each filter flag keeps; `--src-` and `--dst-` forms fix the direction. */
+const FILTER_HELP: Record<FilterKey, { value: string; help: string }> = {
+	proto: {
+		value: "<name>",
+		help: "Keep packets with this protocol in their chain, or named by their IP header: tcp, udp, icmp, icmpv6, arp, ipv4, ipv6, vlan, gre, ospf, vrrp …",
+	},
+	host: {
+		value: "<address>",
+		help: "Keep packets to or from this IPv4 or IPv6 address (in the IP header, or ARP's sender and target).",
+	},
+	srcHost: { value: "<address>", help: "As --host, the source only." },
+	dstHost: { value: "<address>", help: "As --host, the destination only." },
+	net: {
+		value: "<prefix>",
+		help: "Keep packets to or from an address in this prefix, such as 10.0.0.0/8 or 2001:db8::/32.",
+	},
+	srcNet: { value: "<prefix>", help: "As --net, the source only." },
+	dstNet: { value: "<prefix>", help: "As --net, the destination only." },
+	portMatch: {
+		value: "<port>",
+		help: "Keep packets to or from this UDP or TCP port (--port is the port to listen on).",
+	},
+	srcPortMatch: { value: "<port>", help: "As --port-match, the source only." },
+	dstPortMatch: {
+		value: "<port>",
+		help: "As --port-match, the destination only.",
+	},
+	mac: {
+		value: "<mac>",
+		help: "Keep frames to or from this Ethernet address, such as 02:00:00:00:00:0a.",
+	},
+	srcMac: { value: "<mac>", help: "As --mac, the source only." },
+	dstMac: { value: "<mac>", help: "As --mac, the destination only." },
+	etherType: {
+		value: "<0xNNNN>",
+		help: "Keep frames with this EtherType in the Ethernet header or a VLAN tag, such as 0x0800 or 0x88cc.",
+	},
+	sender: {
+		value: "<label|address[:port]>",
+		help: "Keep packets from this sender: a listener label from --port, or the UDP peer's address, or address:port. Never a field inside the packet.",
+	},
+};
+
+const filterFlags = (negated: boolean): FlagSpec[] =>
+	FILTER_KEYS.map((key) => ({
+		name: `${negated ? "not-" : ""}${filterFlag(key)}`,
+		value: FILTER_HELP[key].value,
+		repeatable: true,
+		commands: ["listen"],
+		help: negated
+			? `Remove the packets --${filterFlag(key)} would keep.`
+			: FILTER_HELP[key].help,
+		filter: key,
+		...(negated ? { negated } : {}),
+	}));
+
+/** Every field --fields can name, packets and records first, then the summary's. */
+export const FIELD_NAMES: readonly string[] = [
+	...new Set([...Object.keys(ENTRY_FIELDS), ...SUMMARY_FIELDS]),
+];
 
 export const FLAGS: readonly FlagSpec[] = [
 	{
@@ -88,6 +155,14 @@ export const FLAGS: readonly FlagSpec[] = [
 		conflicts: ["detail"],
 		help: "Print only the summary, to stdout: counters, protocols, senders and conversations.",
 	},
+	{
+		name: "fields",
+		value: "<a,b,…>",
+		commands: ["listen"],
+		help: `Only these fields of each packet, record and summary, in this order; type, and a summary's status, always stay. Without --detail, the detail is the least that carries them. Fields: ${FIELD_NAMES.join(", ")}.`,
+	},
+	...filterFlags(false),
+	...filterFlags(true),
 	{
 		name: "help",
 		commands: ["listen"],

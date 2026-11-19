@@ -2,7 +2,9 @@
  * Text rendering of stream records, for people on a terminal. Plain text
  * only: no color, so nothing changes when stdout is not a terminal.
  */
+import { filterFlags } from "../filter.ts";
 import type { RecordLayer } from "../records.ts";
+import type { TzspTag } from "../tzsp.ts";
 import type {
 	DatagramRecord,
 	HeaderRecord,
@@ -30,7 +32,9 @@ export function headerText(h: HeaderRecord): string {
 	const limit = until.length
 		? `until ${until.join(" or ")}`
 		: "until interrupted";
-	return `listening on UDP ${where}, ${limit}\n`;
+	const flags = filterFlags(h.filters);
+	const keeping = flags.length ? `, keeping ${flags.join(" ")}` : "";
+	return `listening on UDP ${where}, ${limit}${keeping}\n`;
 }
 
 const value = (v: unknown): string => {
@@ -95,6 +99,30 @@ export function entryText(
 	return text;
 }
 
+/** Fields shown on lines of their own, after the `key=value` line. */
+const BLOCK_FIELDS = new Set(["type", "layers", "tags", "datagram"]);
+
+/**
+ * A record shaped by `--fields`: its fields as `key=value` on one line, in
+ * order, then layers, tags and the datagram on lines of their own. A packet
+ * or record with none of the fields prints nothing.
+ */
+export function fieldsText(r: Record<string, unknown>): string {
+	const pairs = Object.entries(r)
+		.filter(([k]) => !BLOCK_FIELDS.has(k))
+		.map(([k, v]) => `${k}=${value(v)}`);
+	let text = "";
+	if (Array.isArray(r.layers))
+		text += (r.layers as RecordLayer[]).map(layerText).join("");
+	if (Array.isArray(r.tags)) {
+		text += `  tags ${(r.tags as TzspTag[]).map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;
+	}
+	if (typeof r.datagram === "string") text += `  datagram ${r.datagram}\n`;
+	const lead = r.type === "packet" ? [] : [String(r.type)];
+	if (r.type !== "summary" && !pairs.length && !text) return "";
+	return `${[...lead, ...pairs].join(" ")}\n${text}`;
+}
+
 export function noticeText(r: WarningRecord | TipRecord): string {
 	if (r.type === "tip") return `tip ${r.code}: ${r.message}\n`;
 	return `warning ${r.code}: ${r.message}\n${r.fix ? `  fix: ${r.fix}\n` : ""}`;
@@ -112,7 +140,7 @@ export function summaryText(s: SummaryRecord): string {
 	const c = s.counters;
 	const lines = [
 		`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
-		`  datagrams ${c.datagrams}: packets ${c.packets}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
+		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
 	];
 	const counts = (o: Record<string, number>) =>
 		Object.entries(o)
