@@ -4,11 +4,16 @@
  *
  * Safety. Each machine is one this process creates and owns: a random name
  * with a fixed prefix, checked absent, then created with `QuickCHR.add`,
- * which refuses an existing name (`MACHINE_EXISTS`). Only owned machines are
- * configured or removed, and removal is verified (`teardown`). A signal
- * stops the running children and REST calls (`stopping`); the caller then
- * removes its machines. A quickchr call already running in this process is
- * not interrupted: `remove` waits for its machine lock instead.
+ * which refuses a name in use. Ownership is the name and the `createdAt`
+ * that `add` returned, so a machine of the same name made by someone else
+ * is never started or removed. A failed `add` owns nothing: quickchr
+ * removes what it made itself (0.6.0, `QuickCHR.add`'s catch), and a
+ * failure before its claim (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made
+ * nothing of this process's. Removal is verified (`teardown`).
+ *
+ * A signal stops the running children and REST calls (`stopping`), and no
+ * new `add` or boot begins after it. A quickchr call already running in
+ * this process cannot be interrupted, so `cleanupAll` waits for it first.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -26,13 +31,6 @@ import {
 export const ROOT = join(import.meta.dir, "..", "..");
 
 /**
- * quickchr waits for a machine's lock before `remove`, up to its boot budget
- * (`lifecycleLockWaitMs`, quickchr 0.6.0), then stops QEMU. The integration
- * tier's `afterAll` lets setup settle first, so this covers the stop.
- */
-export const TEARDOWN_MS = 180_000;
-
-/**
  * What to boot: a channel or an exact version, and the guest architecture.
  * The architecture is always given, so quickchr's own default (its
  * `default-arch` setting or QUICKCHR_DEFAULT_ARCH) cannot turn a boot into
@@ -47,16 +45,47 @@ export interface Target {
 export const hostArch = (): Target["arch"] =>
 	process.arch === "arm64" ? "arm64" : "x86";
 
+/* ---------------------------------------------------------------- budgets */
+
+/*
+ * What quickchr 0.6.0 itself waits for, so a caller's deadline outlives it
+ * and a slow step fails inside quickchr with its evidence (tikoci-testing,
+ * "Timeouts"). Only the boot budget is exported by quickchr; the others
+ * are quoted from its source, by file.
+ */
+
+/** The image download in `add`: DOWNLOAD_MAX_ATTEMPTS (3) transfers of at most DOWNLOAD_NO_LENGTH_BUDGET_MS (15 min) each, with 2 s and 4 s between them (download.ts). Free when the image is cached. */
+const DOWNLOAD_MS = 3 * 15 * 60_000 + 6_000;
+/** The port allocator's lock, which `add` waits for (ALLOCATION_LOCK_WAIT_MS, quickchr.ts). */
+const ALLOCATION_LOCK_MS = 60_000;
+/**
+ * After a boot times out, quickchr collects a failure report and stops
+ * QEMU (`captureBootFailure`, `cleanupAfterBootFailure`, quickchr.ts): a
+ * few monitor queries of 3 s each and a 5 s stop. An allowance from
+ * reading the source, not a quickchr constant.
+ */
+const BOOT_FAILURE_MS = 60_000;
+/** `stopQemu` (qemu.ts): SIGTERM, 5 s, then SIGKILL; plus deleting the machine directory. */
+const STOP_MS = 30_000;
+
 /**
  * quickchr's boot budget for `arch`, in ms: `defaultBootTimeout` at its
- * slowest (TCG) accelerator, plus QUICKCHR_TIMEOUT_EXTRA (seconds, as the
- * quickchr CLI reads it), which `start` passes on as `timeoutExtra`.
+ * slowest accelerator (TCG). `start` passes no `timeoutExtra`: quickchr
+ * 0.6.0 does not apply it when it boots a machine `add` created.
  */
 export const bootBudget = (arch: Target["arch"]): number =>
-	defaultBootTimeout(arch, false, "tcg") + timeoutExtra();
+	defaultBootTimeout(arch, false, "tcg");
 
-const timeoutExtra = (): number =>
-	Number(process.env.QUICKCHR_TIMEOUT_EXTRA ?? 0) * 1000 || 0;
+/** The most `create` then `start` can take inside quickchr, a failed boot included. */
+export const provisionBudget = (arch: Target["arch"]): number =>
+	ALLOCATION_LOCK_MS + DOWNLOAD_MS + bootBudget(arch) + BOOT_FAILURE_MS;
+
+/**
+ * The most `teardown` can take: `remove` waits for the machine's lock up to
+ * the boot budget (`lifecycleLockWaitMs`, quickchr.ts), then stops QEMU.
+ */
+export const teardownBudget = (arch: Target["arch"]): number =>
+	bootBudget(arch) + STOP_MS;
 
 /** quickchr's progress lines, which it prints to stdout unless given a callback. */
 const onProgress = (message: string) => console.error(`quickchr: ${message}`);
@@ -131,35 +160,80 @@ export function run(
 
 /* ------------------------------------------------- ownership and cleanup */
 
-/** Machines this process created, by name. Nothing else is configured or removed. */
-export const owned = new Set<string>();
+/**
+ * Machines this process created: the name, and the `createdAt` quickchr
+ * recorded for it. Nothing else is started or removed.
+ */
+export const owned = new Map<string, string>();
 /** Temporary directories to remove on exit (the lab's askpass helper). */
 export const tempDirs = new Set<string>();
+/** Removals in progress, so two callers share one; a finished one is dropped, so a later call tries again. */
 const removals = new Map<string, Promise<boolean>>();
-/** `create` calls still running, so cleanup waits for a machine mid-`add`. */
-const provisioning = new Set<Promise<unknown>>();
+/** quickchr calls still running (`add`, `start`), which cleanup waits for. */
+const inFlight = new Set<Promise<unknown>>();
 /** Handles from `start`, by machine name. */
 const instances = new Map<string, ChrInstance>();
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+function track<T>(p: Promise<T>): Promise<T> {
+	inFlight.add(p);
+	p.finally(() => inFlight.delete(p)).catch(() => {});
+	return p;
+}
 
 /** quickchr knows nothing by this name: no machine, and no half-made directory. */
 const absent = (name: string) =>
 	QuickCHR.get(name) === null && !QuickCHR.listOrphans().includes(name);
 
 /**
+ * The owned machine by this name, or why it cannot be touched: gone, its
+ * state unreadable (QEMU may still run), or another machine of that name.
+ */
+function ownedMachine(
+	name: string,
+): { machine: ChrInstance } | { gone: true } | { refused: string } {
+	const createdAt = owned.get(name);
+	if (createdAt === undefined)
+		return { refused: `${name} is not a machine this run created` };
+	let machine: ChrInstance | null;
+	try {
+		machine = QuickCHR.get(name);
+	} catch (e) {
+		return { refused: `quickchr cannot read ${name}'s state (${message(e)})` };
+	}
+	if (machine === null)
+		return QuickCHR.listOrphans().includes(name)
+			? { refused: `${name} has a directory with no readable state` }
+			: { gone: true };
+	if (machine.state.createdAt !== createdAt)
+		return {
+			refused: `${name} is another machine than the one this run created`,
+		};
+	return { machine };
+}
+
+/**
  * Remove one owned machine and confirm quickchr no longer knows it. A
- * directory an interrupted `add` left without its state (quickchr's
- * `listOrphans`) is removed too.
+ * machine whose state quickchr cannot read is left alone and reported: its
+ * QEMU may still be running, and only `quickchr remove <name>` should
+ * decide that.
  */
 export function teardown(name: string): Promise<boolean> {
 	const pending = removals.get(name);
 	if (pending) return pending;
 	const p = (async () => {
-		try {
-			const machine = QuickCHR.get(name);
-			if (machine) await machine.remove();
-			else QuickCHR.removeOrphan(name);
-		} catch (e) {
-			console.error(`quickchr remove ${name}: ${message(e)}`);
+		const found = ownedMachine(name);
+		if ("refused" in found) {
+			console.error(`not removing: ${found.refused}`);
+			return false;
+		}
+		if ("machine" in found) {
+			try {
+				await found.machine.remove();
+			} catch (e) {
+				console.error(`quickchr remove ${name}: ${message(e)}`);
+			}
 		}
 		let gone = false;
 		try {
@@ -172,15 +246,16 @@ export function teardown(name: string): Promise<boolean> {
 		return gone;
 	})();
 	removals.set(name, p);
+	p.finally(() => removals.delete(name)).catch(() => {});
 	return p;
 }
 
 /** Remove every owned machine and temp dir; return the machines still present. */
 export async function cleanupAll(): Promise<string[]> {
-	// A machine whose `add` is still running joins `owned` before `add`
-	// starts; waiting lets `add` finish or roll back before removal.
-	await Promise.allSettled([...provisioning]);
-	const names = [...owned];
+	// An `add` or a boot still running cannot be stopped from here; once it
+	// settles, a machine it made is in `owned`.
+	while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+	const names = [...owned.keys()];
 	const results = await Promise.all(names.map((n) => teardown(n)));
 	for (const dir of tempDirs) {
 		await rm(dir, { recursive: true, force: true });
@@ -192,7 +267,8 @@ export async function cleanupAll(): Promise<string[]> {
 /**
  * A signal stops work; the caller then removes machines and exits, so
  * removal never races a step still using a machine. `stop` kills the
- * running children and aborts `stopping`, which REST calls listen to.
+ * running children and aborts `stopping`, which REST calls listen to and
+ * `create` and `start` check before calling quickchr.
  */
 export const stopping = new AbortController();
 export function stop(): void {
@@ -202,14 +278,13 @@ export function stop(): void {
 
 /* ------------------------------------------------------------- machines */
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** Create a machine this process owns, named `<prefix>-<random>`, or throw having touched nothing. */
+/**
+ * Create a machine this process owns, named `<prefix>-<random>`, or throw
+ * having removed nothing. The name goes to stderr before `add`, so a run
+ * killed during it says what to look for (`quickchr list <name>`).
+ */
 export function create(prefix: string, target: Target): Promise<string> {
-	const p = provision(prefix, target);
-	provisioning.add(p);
-	p.finally(() => provisioning.delete(p)).catch(() => {});
-	return p;
+	return track(provision(prefix, target));
 }
 
 async function provision(prefix: string, target: Target): Promise<string> {
@@ -222,28 +297,50 @@ async function provision(prefix: string, target: Target): Promise<string> {
 	)
 		? { channel: target.routeros as Channel }
 		: { version: target.routeros };
-	// Owned from here: the name was absent and is random, and `add` refuses
-	// an existing name, so what `add` leaves behind is this process's. `add`
-	// downloads the image under quickchr's own download budget.
-	owned.add(name);
+	console.error(`machine: ${name}`);
 	try {
-		await QuickCHR.add({ name, arch: target.arch, ...which, onProgress });
+		const state = await QuickCHR.add({
+			name,
+			arch: target.arch,
+			...which,
+			// Stated, not left to quickchr's defaults: the factory admin login
+			// (no managed account, whatever the user's quickchr settings say),
+			// and the qcow2 boot disk the quickchr CLI makes and the lab's
+			// evidence was taken on.
+			secureLogin: false,
+			bootDiskFormat: "qcow2",
+			onProgress,
+		});
+		owned.set(name, state.createdAt);
 	} catch (e) {
-		if ((e as { code?: string }).code === "MACHINE_EXISTS") owned.delete(name);
-		throw new Error(`quickchr add ${name}: ${message(e)}`);
+		let left = true;
+		try {
+			left = !absent(name);
+		} catch {}
+		throw new Error(
+			`quickchr add ${name}: ${message(e)}` +
+				(left ? `; ${name} is still there and was not removed` : ""),
+		);
 	}
 	return name;
 }
 
 /** Boot an owned machine with quickchr's own boot budget; returns the boot time in ms. */
-export async function start(name: string): Promise<number> {
-	if (!owned.has(name)) throw new Error(`${name} is not this run's machine`);
+export function start(name: string): Promise<number> {
+	return track(boot(name));
+}
+
+async function boot(name: string): Promise<number> {
+	if (stopping.signal.aborted)
+		throw new Error(`interrupted; not booting ${name}`);
+	const found = ownedMachine(name);
+	if (!("machine" in found))
+		throw new Error(
+			"refused" in found ? found.refused : `${name} is gone; not booting it`,
+		);
 	const t0 = Date.now();
 	try {
-		instances.set(
-			name,
-			await QuickCHR.start({ name, timeoutExtra: timeoutExtra(), onProgress }),
-		);
+		instances.set(name, await QuickCHR.start({ name, onProgress }));
 	} catch (e) {
 		throw new Error(`quickchr start ${name}: ${message(e)}`);
 	}
@@ -289,8 +386,9 @@ export async function services(name: string): Promise<Services> {
  * Returns the files written; a log that is not there is skipped.
  */
 export async function saveLogs(name: string, dir: string): Promise<string[]> {
-	const machineDir = QuickCHR.get(name)?.state.machineDir;
-	if (!machineDir) return [];
+	const found = ownedMachine(name);
+	if (!("machine" in found)) return [];
+	const { machineDir } = found.machine.state;
 	const saved: string[] = [];
 	for (const log of ["qemu.log", "serial.log"]) {
 		const to = join(dir, `${name}.${log}`);
@@ -304,7 +402,8 @@ export async function saveLogs(name: string, dir: string): Promise<string[]> {
 
 /** The accelerator quickchr booted the machine with (`kvm`, `hvf`, `tcg`). */
 export function accelerator(name: string): string {
-	return QuickCHR.get(name)?.state.lastAccel ?? "unknown";
+	const found = ownedMachine(name);
+	return ("machine" in found && found.machine.state.lastAccel) || "unknown";
 }
 
 /** The quickchr version, as `quickchr 0.6.0`. */

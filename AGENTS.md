@@ -17,7 +17,7 @@ README.md is the user overview.
 - `bun run lint:fix`: Biome format and safe fixes.
 - `bun run test`: unit tier only.
 - `bun run test:integration`: the integration tier on a CHR booted by
-  quickchr (needs QEMU, and KVM or HVF to be quick);
+  quickchr (needs QEMU with `qemu-img`, and KVM or HVF to be quick);
   `TZSP_SNIFF_ROUTEROS=<channel or version>` picks the router, default
   `stable`. Not part of `check`; CI runs it.
 - `git config core.hooksPath .githooks` enables the pre-commit (Biome) and

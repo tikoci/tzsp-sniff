@@ -720,8 +720,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   version asked for, when one was pinned). The guest architecture is always
   the host's own, given to quickchr explicitly, so its `default-arch`
   setting cannot turn the boot into cross-architecture emulation; the setup
-  hook's timeout is derived from quickchr's download and boot budgets, and
-  `afterAll` waits for the setup to settle before it removes the machine. In CI,
+  and cleanup hooks' timeouts are derived from what quickchr itself may wait
+  for, and `afterAll` waits for the setup to settle before it removes the machine. In CI,
   `.github/workflows/integration.yml` owns the QEMU setup: CI's `smoke` job
   calls it with `stable` for any diff that is not docs-only, after lint and
   unit pass, and `sweep.yml` calls it nightly, once per version the active
@@ -738,22 +738,48 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   imported it, so the first cut drove its CLI (tikoci/quickchr#285).
   quickchr 0.6.0 checks its source under the house tsconfig (its
   `lint:consumer`) and exports its boot budget (`defaultBootTimeout`), so
-  `test/chr/quickchr.ts` calls the library: a random `tzsp-it-` or
-  `tzsp-lab-` name checked absent with `QuickCHR.get` and `listOrphans`,
-  `QuickCHR.add` (which refuses an existing name), `start`, and removal
-  verified the same way, a half-made directory included. The setup hook's
-  timeout is derived from `defaultBootTimeout` rather than copied. The lab
-  and the integration tier share that module, and `scripts/sweep-plan.ts`
-  imports quickchr's version helpers directly.
+  `test/chr/quickchr.ts` calls the library. The lab and the integration
+  tier share that module, and `scripts/sweep-plan.ts` imports quickchr's
+  version helpers directly. The module's rules, which later tests inherit
+  (cross-review of ec42e8c, each seen failing against it):
+
+  - **Ownership is the name and `createdAt`.** A random `tzsp-it-` or
+    `tzsp-lab-` name is checked absent (`QuickCHR.get`, `listOrphans`),
+    and `QuickCHR.add`'s returned `createdAt` is recorded. `start`,
+    `teardown` and the log copy act only on a machine of that name with
+    that `createdAt`, so one made by another process under the same name
+    is never booted or removed.
+  - **A failed `add` owns nothing.** quickchr 0.6.0 removes what a failed
+    `add` made after its claim, and a failure before the claim
+    (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made nothing of this process's. A
+    leftover is reported, never removed.
+  - **Unreadable state is reported, not removed**: its QEMU may still run,
+    and only `quickchr remove <name>` should decide. A failed removal is
+    not remembered, so a later `cleanupAll` tries again.
+  - **After a signal, nothing new starts.** `create` and `start` check
+    `stopping`; a quickchr call already running cannot be interrupted, so
+    `cleanupAll` waits for every `add` and `start` in flight first.
+  - **Stated, not inherited, options**: the factory admin login
+    (`secureLogin: false`, whatever the user's quickchr settings say) and a
+    qcow2 boot disk, as the quickchr CLI makes and the lab's evidence was
+    taken on (the library's default is raw).
+  - **Budgets** (`provisionBudget`, `teardownBudget`): the allocator lock
+    (60 s), three download attempts of up to 15 min each, the boot budget
+    from quickchr's exported `defaultBootTimeout` at its TCG factor, and an
+    allowance for the boot-failure report; teardown waits up to the boot
+    budget for the machine lock, then stops QEMU. Only the boot budget is
+    exported; the rest are quoted from quickchr's source by file.
+    `QUICKCHR_TIMEOUT_EXTRA` is not supported: quickchr 0.6.0 does not
+    apply `timeoutExtra` when it boots a machine `add` created (BACKLOG).
 
   **A local run uses the developer's quickchr data directory.** quickchr
   keeps its image cache inside it and has no separate cache setting, so an
   isolated `QUICKCHR_DATA_DIR` would download the image on every run. The
   tier only touches machines it created, under the `tzsp-it-` prefix, and
-  removes them in `afterAll`. A run killed before then prints the name
-  first (`machine: tzsp-it-…`), and `quickchr remove <name>` clears it;
-  `quickchr list` shows it, as a leftover directory when the kill came
-  during `add` (0.6.0). CI sets
+  removes them in `afterAll`. The name goes to stderr before `add`
+  (`machine: tzsp-it-…`), so a run killed later says what it left;
+  `quickchr list <name>` reports it, as a leftover directory when the kill
+  came during `add` (0.6.0), and `quickchr remove <name>` clears it. CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.

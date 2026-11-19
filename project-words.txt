@@ -49,6 +49,7 @@ plen # ARP protocol address length
 postrouting # RouterOS firewall chain
 prerouting # RouterOS firewall chain
 psh # TCP push flag
+qcow # QEMU disk format (qcow2)
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
 restraml # RouterOS command schemas, https://github.com/tikoci/restraml

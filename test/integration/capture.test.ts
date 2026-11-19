@@ -29,16 +29,16 @@ import type {
 } from "../../src/records.ts";
 import {
 	accelerator,
-	bootBudget,
 	childEnv,
 	cleanupAll,
 	create,
 	hostArch,
+	provisionBudget,
 	ROOT,
 	saveLogs,
 	services,
 	start,
-	TEARDOWN_MS,
+	teardownBudget,
 	version,
 } from "../chr/quickchr.ts";
 import {
@@ -57,22 +57,14 @@ const RESULTS = process.env.TZSP_SNIFF_INTEGRATION_RESULTS;
 const BIN = join(ROOT, "src", "cli", "bin.ts");
 
 /**
- * The setup hook's timeout outlives each budget quickchr enforces itself,
- * so a slow step fails inside quickchr with its evidence rather than being
- * cut off here (tikoci-testing, "Timeouts"). From quickchr 0.6.0:
- * - the image download in `add`: at most DOWNLOAD_NO_LENGTH_BUDGET_MS,
- *   15 min, when the server sends no length; with a length it is 30 s plus
- *   the size at 120 kB/s, about 6.5 min for a 43 MB image (download.ts).
- *   Free when the image is cached, as CI prefetches it;
- * - the boot: quickchr's exported `defaultBootTimeout` for the host's own
- *   architecture, which `hostArch` pins, at the TCG factor, plus
- *   QUICKCHR_TIMEOUT_EXTRA (`bootBudget`);
- * - the REST reads after boot, under REST_BASE_MS each.
+ * The setup hook's timeout outlives what quickchr itself may take to create
+ * and boot the machine (`provisionBudget`, test/chr/quickchr.ts), plus the
+ * REST reads after the boot, so a slow step fails inside quickchr with its
+ * evidence rather than being cut off here (tikoci-testing, "Timeouts").
  */
-const DOWNLOAD_BUDGET_MS = 15 * 60_000;
-const SETUP_MS = DOWNLOAD_BUDGET_MS + bootBudget(hostArch()) + 4 * REST_BASE_MS;
+const SETUP_MS = provisionBudget(hostArch()) + 4 * REST_BASE_MS;
 /** `afterAll` may wait out a setup still running, then removes the machine. */
-const CLEANUP_MS = SETUP_MS + TEARDOWN_MS;
+const CLEANUP_MS = SETUP_MS + teardownBudget(hostArch());
 /** Each test: REST commands with their own budgets (router.ts), and a 3-packet ping. */
 const TEST_MS = 120_000;
 /** A capture that sees fewer packets than it waits for ends here, well inside TEST_MS. */
@@ -182,8 +174,6 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 				routeros: TARGET,
 				arch: hostArch(),
 			});
-			// Named before the boot, so a run killed later says what to remove.
-			console.log(`machine: ${results.machine}`);
 			results.bootMs = await start(results.machine);
 			results.accelerator = accelerator(results.machine);
 			const rest = await services(results.machine);

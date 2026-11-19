@@ -347,7 +347,7 @@ export function checkPcapng(file: Pcapng): string | undefined {
 let interrupted: "SIGINT" | "SIGTERM" | undefined;
 function onSignal(signal: "SIGINT" | "SIGTERM"): void {
 	if (interrupted) {
-		for (const n of owned) console.error(`NOT REMOVED: ${n}`);
+		for (const n of owned.keys()) console.error(`NOT REMOVED: ${n}`);
 		process.exit(signal === "SIGINT" ? 130 : 143);
 	}
 	interrupted = signal;

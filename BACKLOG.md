@@ -29,9 +29,16 @@ Small items, one or two sentences each, deleted when done or declined
 - Filters select frames only (DESIGN.md, "Decided, filters"): consider
   letting `--sender` also select control, unsupported and invalid records,
   which would need its own counter so the counters still add up.
-- quickchr (upstream): `QuickCHR.add` prints "Using cached image" to
-  stdout although `onProgress` is given (0.6.0: `ensureCachedImage` gets
-  no logger); route it through the callback.
+- quickchr (upstream): `QuickCHR.add` prints its image lines ("Using
+  cached image", "Downloading CHR") to stdout although `onProgress` is
+  given (0.6.0: `ensureCachedImage` gets no logger); route them through
+  the callback.
+- quickchr (upstream): `QuickCHR.start({ name, timeoutExtra })` of a
+  machine `add` created ignores `timeoutExtra` (0.6.0, `_launchExisting`);
+  once it applies it, `test/chr/` can honor `QUICKCHR_TIMEOUT_EXTRA`.
+- quickchr (upstream): export its download budget (attempts and per-transfer
+  budget, download.ts) and allocator lock wait, as it does the boot budget,
+  so `test/chr/` derives them instead of quoting them.
 - Sweep: skip a night when neither `main` nor any resolved channel version
   changed since the last green sweep (centrs fingerprints both), once the
   nightly boots cost more than they tell.
