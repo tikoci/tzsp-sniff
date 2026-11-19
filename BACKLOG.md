@@ -29,4 +29,15 @@ Small items, one or two sentences each, deleted when done or declined
 - Filters select frames only (DESIGN.md, "Decided, filters"): consider
   letting `--sender` also select control, unsupported and invalid records,
   which would need its own counter so the counters still add up.
+- quickchr: ship types a consumer's strict `tsc` accepts
+  (`exactOptionalPropertyTypes` rejects its source today, 0.5.6), so tests
+  could use its library instead of the CLI (DESIGN.md, "Decided: quickchr
+  through its CLI").
+- Sweep: skip a night when neither `main` nor any resolved channel version
+  changed since the last green sweep (centrs fingerprints both), once the
+  nightly boots cost more than they tell.
+- Integration: reap `tzsp-it-` machines a killed run left behind, once it
+  can tell them from a run still in progress (quickchr has no owner field).
+- CI smoke waits for the whole unit matrix; split the Linux unit leg out
+  (centrs `unit-linux`) if macOS or Windows make it wait noticeably.
 - `--port-match` ranges (`8000-8100`), if a lab asks for one.

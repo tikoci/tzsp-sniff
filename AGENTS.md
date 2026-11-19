@@ -16,6 +16,10 @@ README.md is the user overview.
   the same scripts.
 - `bun run lint:fix`: Biome format and safe fixes.
 - `bun run test`: unit tier only.
+- `bun run test:integration`: the integration tier on a CHR booted by
+  quickchr (needs QEMU, and KVM or HVF to be quick);
+  `TZSP_SNIFF_ROUTEROS=<channel or version>` picks the router, default
+  `stable`. Not part of `check`; CI runs it.
 - `git config core.hooksPath .githooks` enables the pre-commit (Biome) and
   pre-push (lint) hooks.
 
@@ -25,7 +29,10 @@ README.md is the user overview.
 - `test/unit/`: `bun:test`, loopback sockets only: no external network and
   no VM. `test/smoke/`: the Node check
   against `dist/`. `test/node/`: `bun:test` cases that run the built CLI
-  under Node (after `bun run build`).
+  under Node (after `bun run build`). `test/integration/`: a real CHR,
+  behind `TZSP_SNIFF_INTEGRATION`. `test/lab/`: experiments run by hand,
+  with a `REPORT.md`. `test/chr/`: the quickchr machine handling and
+  router REST calls those two share.
 - `scripts/`: repo tooling run by Bun.
 - `.scratch/`: gitignored temporary work.
 

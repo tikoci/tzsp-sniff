@@ -40,6 +40,7 @@
 		"lint:fix": "biome check --write .",
 		"test": "bun test test/unit",
 		"test:coverage": "bun test --coverage test/unit",
+		"test:integration": "TZSP_SNIFF_INTEGRATION=1 bun test test/integration",
 		"build": "rm -rf dist && bun build src/index.ts src/cli/bin.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
 		"test:node": "node test/smoke/node-smoke.mjs",
 		"test:node-terminal": "bun test test/node",
@@ -47,6 +48,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.8",
+		"@tikoci/quickchr": "0.5.6",
 		"@types/bun": "1.4.4",
 		"@types/node": "^22",
 		"cspell": "^10.5.1",

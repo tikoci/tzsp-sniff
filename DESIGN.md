@@ -699,6 +699,46 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   mangle on code PRs (a CI job behind lint and unit), and a sweep of the
   active channels nightly and before a release. quickchr is a
   devDependency only.
+
+  What it checks (`test/integration/capture.test.ts`, one CHR for the
+  file): `/tool/sniffer` streaming ICMP read through `openCapture()`, 3
+  echo requests and 3 replies as `ethernet`, `ipv4`, `icmp` packets under a
+  TZSP v1 `received` Ethernet layer; a mangle `sniff-tzsp` rule on the
+  output chain, 2 requests and the rule's counter at 2; and the sniffer
+  again through the CLI (`--proto icmp --format jsonl`), exit 0 and the
+  same 6 packets. Each capture stops on `count`, so its summary is
+  `complete`. Passed on RouterOS 7.25.1 (`stable`) and 7.24.6
+  (`long-term`), x86_64 under KVM, quickchr 0.5.6, Linux, 2026-11-19, in
+  about 35 s with a 24 s boot; each check was also seen failing once with
+  its expectation swapped.
+
+  `TZSP_SNIFF_ROUTEROS` (a channel or a version, default `stable`) picks
+  the router, and `TZSP_SNIFF_INTEGRATION_RESULTS` names a JSON file for
+  the results; both are test knobs, which shipped code never reads. In CI,
+  `.github/workflows/integration.yml` owns the QEMU setup: CI's `smoke` job
+  calls it with `stable` for any diff that is not docs-only, after lint and
+  unit pass, and `sweep.yml` calls it nightly, once per version the active
+  channels resolve to (`scripts/sweep-plan.ts`, quickchr's
+  `selectActiveChannels`), every leg must-pass. The release workflow (#17)
+  calls `sweep.yml` before it publishes.
+
+  **Decided: quickchr through its CLI** (slice 3, 2026-11-19), the
+  devDependency's `node_modules/.bin/quickchr`, not its library. quickchr
+  0.5.6 ships TypeScript source, and this repo's `exactOptionalPropertyTypes`
+  makes `tsc` reject it once a test imports it; the lab already drove the
+  CLI. `test/chr/` holds that machine handling (a random `tzsp-it-` or
+  `tzsp-lab-` name checked absent, `quickchr add`, removal verified with
+  `quickchr list`) and the router's REST calls, for the lab and the
+  integration tier both. `scripts/sweep-plan.ts` imports quickchr's
+  version helpers by a name `tsc` does not resolve.
+
+  **A local run uses the developer's quickchr data directory.** quickchr
+  keeps its image cache inside it and has no separate cache setting, so an
+  isolated `QUICKCHR_DATA_DIR` would download the image on every run. The
+  tier only touches machines it created, under the `tzsp-it-` prefix, and
+  removes them in `afterAll`; a run killed before then leaves one that
+  `quickchr list` shows and `quickchr remove` clears. CI sets
+  `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.
 

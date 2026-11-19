@@ -13,10 +13,12 @@ bun test/lab/tzsp-senders/fixtures.ts  # rebuild test/fixtures/routeros/ from ev
 bun test test/unit/routeros-fixtures.test.ts
 ```
 
-`--only x86:stable,x86:long-term,arm64:stable` picks routers. It needs
-`quickchr` (0.5.2 here) and `scp` on `PATH`, and Linux to read the QEMU
-accelerator from `/proc/<pid>/cmdline`. It is not a test tier and never
-gates CI.
+`--only x86:stable,x86:long-term,arm64:stable` picks routers. It runs the
+quickchr devDependency (`bun install`; the results below were taken with
+quickchr 0.5.2 on `PATH`, before the lab moved to it), needs `scp` on
+`PATH`, and Linux to read the QEMU accelerator from `/proc/<pid>/cmdline`.
+It is not a test tier and never gates CI. Its machine handling and REST
+calls are in `test/chr/`, shared with the integration tier.
 
 The script creates its own machines (a random name, checked absent,
 created with `quickchr add`, which refuses an existing name) and removes

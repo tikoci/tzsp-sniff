@@ -143,6 +143,13 @@ skips a missing one with a message, and CI installs both:
 | [shellcheck](https://www.shellcheck.net) | `brew install shellcheck` | `apt install shellcheck` | `winget install koalaman.shellcheck` |
 | [actionlint](https://github.com/rhysd/actionlint) | `brew install actionlint` | release binary | release binary |
 
+`bun run test:integration` boots a RouterOS CHR with
+[quickchr](https://github.com/tikoci/quickchr) (a devDependency), has it
+stream TZSP to the tests, and removes it; it needs QEMU, and KVM or HVF to
+take under a minute. `TZSP_SNIFF_ROUTEROS` picks a channel or a version
+(default `stable`). CI runs it on `stable` for every code change and on
+every active channel nightly.
+
 Agent instructions are in [AGENTS.md](AGENTS.md).
 
 ## License

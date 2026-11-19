@@ -26,6 +26,7 @@ FFI # foreign function interface
 GRE
 hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward
+HVF # Hypervisor.framework, the macOS QEMU accelerator
 ICMPV # as in ICMPV6_TYPES
 igmp # Internet Group Management Protocol
 ipip # IP-in-IP
