@@ -55,14 +55,30 @@ host     listener (node:dgram, one unconnected socket per port)
 
 What is known about RouterOS's side, and from where:
 
-- **One capture so far**: `/tool/sniffer` streaming on RouterOS 7.26beta5,
-  x86 CHR on Linux/KVM, sends version 1, type 0 (received), encapsulation 1
-  (Ethernet) and the end tag alone: no timestamp, sensor or interface tag
-  (quickchr `examples/cmr/FINDINGS.md`, "Wire"; the bytes are in
-  `test/unit/tzsp.test.ts`).
-- **Unverified**: mangle `sniff-tzsp`, `sniff-id`, `only-headers`, other
-  versions and arm64, and whether any sender ever adds a tag. #5 captures
-  each on a CHR.
+- **Both senders, seen on CHRs** (#5, 2026-11-18;
+  `test/lab/tzsp-senders/REPORT.md`, fixtures in `test/fixtures/routeros/`):
+  `/tool/sniffer` streaming and mangle `sniff-tzsp` on RouterOS 7.25.1
+  (stable) and 7.24.6 (long-term) x86_64 under KVM, and the sniffer on
+  7.25.1 arm64 under TCG, send version 1, type 0 (received), encapsulation 1
+  (Ethernet) and the end tag alone: no timestamp, sensor, interface or
+  original-length tag. The first capture, 7.26beta5 x86 (quickchr
+  `examples/cmr/FINDINGS.md`, "Wire"; bytes in `test/unit/tzsp.test.ts`),
+  agrees.
+  - Mangle in `output` and `postrouting` sends the IP packet behind an
+    Ethernet header whose MACs are all zero; `prerouting` and `input` keep
+    the received frame's MACs. An all-zero MAC is not an endpoint.
+  - `only-headers=yes` cuts the frame to its first 60 bytes, with no tag
+    giving the original length; only the IPv4 total length shows the cut.
+  - `sniff-id` adds no tag: a `sniff-tzsp` rule does not keep it. It
+    belongs to `action=sniff-pc`, which sends its own format, not TZSP (the
+    id in the first 4 bytes, then the IP packet).
+  - `filter-stream` defaults to `no`, and with `no` and a filter that
+    matches UDP the sniffer captures its own stream, nesting one more
+    TZSP layer per pass (32 layers, about 900 datagrams in 4 s, from one
+    ping).
+- **Unverified**: physical routers, wireless encapsulations, VLAN tags,
+  IPv6, mangle `forward`, other channels, and mangle or `only-headers` on
+  arm64.
 - **Decided: dispatch on record type and encapsulation.** Only type 0 with
   encapsulation 1 goes to Ethernet dissection. Keepalive (4) and
   port-opener (5) records carry no tag list (Wireshark `packet-tzsp.c`,
@@ -72,10 +88,11 @@ What is known about RouterOS's side, and from where:
 
 Attribution:
 
-- **Decided: time is host arrival time.** No sender seen so far includes a
-  timestamp tag. A tag 82 (`time-stamp`), if one appears, stays in the
-  record's tags as raw hex until #5 shows its format; arrival time is used
-  either way.
+- **Decided: time is host arrival time.** No sender includes a timestamp
+  tag: none was seen from either sender on 7.24.6 or 7.25.1, x86_64 or
+  arm64 (#5). A tag 82 (`time-stamp`), if one ever appears, stays in the
+  record's tags as raw hex until a capture shows its format; arrival time
+  is used either way.
 - **Decided: a sender is observed UDP metadata, not an identity.** Each
   record carries the peer address and port as received and the label of the
   listener that received it. Neither authenticates a router. Under QEMU
@@ -319,10 +336,15 @@ file RouterOS saved, which has no TZSP peer or listener label: those fields
 are absent, not invented), and IP or Ethernet captures of UDP to the TZSP
 port are unwrapped to the datagram. Other link types are refused with a
 code. Input size is bounded before allocation: a hex line and a declared
-block length over the limit are errors, not allocations. MikroTik's
+block length over the limit are errors, not allocations. A file saved
+by `/tool/sniffer` (`file-name=`) on 7.24.6 and 7.25.1 x86_64 is pcapng,
+whatever its name: little-endian, two Ethernet interfaces named
+`ether1 rx` and `ether1 tx` (one per direction), nanosecond timestamps,
+and a `cpu:0 fp:0` comment on each packet (#5; fixtures in
+`test/fixtures/routeros/`). MikroTik's
 [Packet Sniffer](https://help.mikrotik.com/docs/spaces/ROS/pages/8323088/Packet%20Sniffer)
-page says RouterOS saves pcapng since 7.20; that is the vendor's statement
-until a saved file is a fixture (#5).
+page dates pcapng from 7.20. Unlike TZSP, such a file does carry an
+interface, a direction and the router's time.
 
 ### Filters
 
@@ -358,9 +380,16 @@ with `--chain`).
   application protocols, negations and OR lists that would need several
   overlapping mangle rules (which could mirror a packet twice) are refused
   with a code that says to filter on the host instead. Which flags translate
-  is decided by CHR tests of both senders (#5), not by matching names.
+  is decided by CHR tests of both senders, not by matching names. #5 did not
+  test translation; it saw that `filter-operator-between-entries` defaults
+  to `or`, and that with `and`, `filter-ip-protocol=icmp,udp` streamed
+  nothing.
 - A broad mangle rule must not match its own TZSP output; `setup` adds the
-  exclusion, and #5 checks that it holds.
+  exclusion. In #5 (7.24.6 and 7.25.1 x86_64) no rule mirrored TZSP back:
+  an `output` rule matching the TZSP datagrams a `sniff-tzsp` rule sent to
+  its target never matched them, and a `postrouting` rule matched them, and
+  the sniffer's stream, but no copy reached the listener. Only a rule whose
+  target was that same address and port was tested.
 
 ## Dissectors
 
