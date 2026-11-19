@@ -11,6 +11,7 @@ import {
 	plan,
 } from "../../src/cli/main.ts";
 import { TzspSniffError } from "../../src/errors.ts";
+import { filterFlags } from "../../src/filter.ts";
 import { VERSION } from "../../src/version.ts";
 import {
 	closeSocket,
@@ -392,6 +393,21 @@ describe("plan: flags to capture options", () => {
 				code: "filter/invalid-value",
 			});
 		}
+	});
+
+	test("a printed filter flag parses back to its value, also one that looks like a flag", () => {
+		for (const label of ["router-a", "--help", "-x", "10.0.2.2:5000"]) {
+			const flag = filterFlags({ sender: [label] })[0] as string;
+			// These are safe shell words: one argument when joined with `=`,
+			// else the flag and the value.
+			const argv = flag.startsWith("--sender=") ? [flag] : flag.split(" ");
+			expect({ label, help: wantsHelp(argv) }).toEqual({
+				label,
+				help: undefined,
+			});
+			expect(planOf(argv).options.filter?.sender).toEqual([label]);
+		}
+		expect(filterFlags({ sender: ["--help"] })).toEqual(["--sender=--help"]);
 	});
 
 	test("--fields refuses a field the output never has", () => {

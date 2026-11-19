@@ -432,11 +432,24 @@ describe("createFilter: the spec", () => {
 	test.skipIf(process.platform === "win32")(
 		"a POSIX shell reads each quoted flag back as the flag and the value, whole",
 		() => {
-			const labels = ["router west", "it's", "[::1]:5", "*", ""];
+			const labels = [
+				"router west",
+				"it's",
+				"[::1]:5",
+				"*",
+				"",
+				"--help",
+				"-x y",
+			];
 			for (const label of labels) {
 				const [flag] = filterFlags({ sender: [label] });
 				const out = Bun.spawnSync(["sh", "-c", `printf '%s\\n' ${flag}`]);
-				expect(out.stdout.toString()).toBe(`--sender\n${label}\n`);
+				// A value starting with "-" is joined: one word, flag=value.
+				expect(out.stdout.toString()).toBe(
+					label.startsWith("-")
+						? `--sender=${label}\n`
+						: `--sender\n${label}\n`,
+				);
 			}
 		},
 	);

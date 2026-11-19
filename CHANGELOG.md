@@ -17,9 +17,11 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   `capture/all-filtered` warning names them. The header lists the filters
   in effect, and `--count` and `--expect` count after them. A value that
   does not parse is `filter/invalid-value` (exit 2).
-- `--fields a,b,c`: only the named fields of each packet, record and
-  summary, in that order; `type`, and a summary's `status`, always stay.
-  Without `--detail`, the detail is raised to carry the fields.
+- `--fields a,b,c`: only the named fields of each packet and record, in
+  that order, and of the summary in JSONL or, in text, with `--stats` (a
+  text summary field without `--stats` is refused); `type`, and a
+  summary's `status`, always stay. Without `--detail`, the detail is
+  raised to carry the fields.
 - `createFilter(spec)`: the filters as a library function, with
   `filterFlags()` and `FILTER_KEYS`; `selectFields()`, `ENTRY_FIELDS` and
   `SUMMARY_FIELDS` for `--fields`. `openCapture()` takes `filter`.

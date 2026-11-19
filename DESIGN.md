@@ -484,7 +484,8 @@ interface, a direction and the router's time.
   spec (`{}` for none), and the text start line lists it as flags
   (`keeping --proto tcp --not-host 10.0.0.1`), each value one POSIX shell
   word, quoted when it is not one (a library label such as `'router west'`),
-  so a flag pastes back.
+  and joined with `=` when it starts with `-` (`--sender=--help`, which
+  `--help` dispatch does not see), so a flag pastes back.
 - **A comma list is the same as repeating the flag** (`--proto tcp,udp`),
   since agents try both.
 - **`--sender` takes a label, an address or `address:port`.** A peer

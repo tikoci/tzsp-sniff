@@ -128,8 +128,8 @@ const shellWord = (value: string | number) => {
 
 /**
  * The spec as CLI flags, positives first, in {@link FILTER_KEYS} order, each
- * value one shell word (quoted when it needs to be), so a flag can be
- * pasted back. A label with a comma cannot be: the CLI splits on commas.
+ * value one shell word (quoted when it needs to be) and joined with `=` when
+ * it starts with `-`, so a flag can be pasted back. A label with a comma cannot be: the CLI splits on commas.
  */
 export function filterFlags(spec: FilterSpec): string[] {
 	const out: string[] = [];
@@ -139,7 +139,11 @@ export function filterFlags(spec: FilterSpec): string[] {
 	] as const) {
 		for (const key of FILTER_KEYS) {
 			for (const value of terms[key] ?? [])
-				out.push(`--${prefix}${filterFlag(key)} ${shellWord(value)}`);
+				out.push(
+					// A value that looks like a flag (a label such as `--help`) is
+					// joined with `=`, which the CLI reads as the value.
+					`--${prefix}${filterFlag(key)}${String(value).startsWith("-") ? "=" : " "}${shellWord(value)}`,
+				);
 		}
 	}
 	return out;
