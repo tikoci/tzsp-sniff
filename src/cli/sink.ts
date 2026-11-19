@@ -86,7 +86,7 @@ export function streamSink(
 							finish(
 								new TzspSniffError(
 									"output/stalled",
-									`stdout took no output for ${ms / 1000}s: its reader stopped reading.`,
+									`stdout accepted nothing for ${ms / 1000}s: its reader stopped reading.`,
 									"Read the output as it comes (a pipe to a program that reads), or write it to a file.",
 								),
 							),

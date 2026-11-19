@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createSocket, type Socket, type SocketOptions } from "node:dgram";
 import { TzspSniffError } from "../../src/errors.ts";
 import { type Listener, listen } from "../../src/listen.ts";
 import {
@@ -233,5 +234,83 @@ describe("listen", () => {
 		for (const options of cases) {
 			await expectCode(listen(options), "listen/invalid-option");
 		}
+	});
+});
+
+describe("listen: cross-review cases (#20)", () => {
+	/** A socket factory that keeps every socket it made, so a test can fault one. */
+	const recording = () => {
+		const sockets: Socket[] = [];
+		return {
+			sockets,
+			createSocket: ((options: SocketOptions) => {
+				const socket = createSocket(options);
+				sockets.push(socket);
+				return socket;
+			}) as typeof createSocket,
+		};
+	};
+
+	test("two pending reads both end on close()", async () => {
+		const listener = await listen({ ports: [{ port: 0 }] });
+		const it = listener[Symbol.asyncIterator]();
+		const first = it.next();
+		const second = it.next();
+		listener.close();
+		expect((await first).done).toBe(true);
+		expect((await second).done).toBe(true);
+		await listener.closed;
+	});
+
+	test("a socket error while a read is pending: the read rejects with listen/socket-error, every port is freed", async () => {
+		const factory = recording();
+		const listener = await listen(
+			{ ports: [{ port: 0 }, { port: 0 }] },
+			factory,
+		);
+		const pending = listener[Symbol.asyncIterator]().next();
+		factory.sockets[1]?.emit("error", new Error("injected"));
+		const error = await expectCode(pending, "listen/socket-error");
+		expect(error.message).toContain(`:${portOf(listener, 1)}`);
+		expect(listener.ended).toBe("error");
+		await listener.closed;
+		await expectPortFree(portOf(listener, 0));
+		await expectPortFree(portOf(listener, 1));
+	});
+
+	test("a socket error during a later bind is the error reported, and nothing stays open", async () => {
+		const factory = recording();
+		const first = await freePort();
+		const create = factory.createSocket;
+		factory.createSocket = ((options: SocketOptions) => {
+			const socket = create(options);
+			// The second socket is about to bind: fault the first one now.
+			if (factory.sockets.length === 2)
+				queueMicrotask(() =>
+					factory.sockets[0]?.emit("error", new Error("injected")),
+				);
+			return socket;
+		}) as typeof createSocket;
+		const error = await expectCode(
+			listen({ ports: [{ port: first }, { port: 0 }] }, factory),
+			"listen/socket-error",
+		);
+		expect(error.message).toContain(`:${first}`);
+		await expectPortFree(first);
+	});
+
+	test("a label that repeats another port's default label is refused after binding", async () => {
+		const a = await holdPort();
+		const b = await holdPort();
+		await closeSocket(a.socket);
+		await closeSocket(b.socket);
+		await expectCode(
+			listen({
+				ports: [{ port: a.port, label: String(b.port) }, { port: b.port }],
+			}),
+			"listen/invalid-option",
+		);
+		await expectPortFree(a.port);
+		await expectPortFree(b.port);
 	});
 });

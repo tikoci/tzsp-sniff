@@ -77,7 +77,8 @@ child.stdout.on("data", (chunk) => {
 	if (first && out.includes("\n"))
 		sendTo(JSON.parse(out.split("\n")[0]).listeners[0].port);
 });
-const [code] = await once(child, "exit");
+// "close", not "exit": stdio is fully read by then.
+const [code] = await once(child, "close");
 assert.equal(code, 0);
 const records = out
 	.trimEnd()

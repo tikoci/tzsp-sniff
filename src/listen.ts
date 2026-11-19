@@ -91,7 +91,11 @@ export interface Listener extends AsyncIterable<Capture> {
 	/** When the last datagram arrived, dropped or not. */
 	readonly lastArrival: number | undefined;
 	readonly ended: ListenerEnd | undefined;
-	/** Resolves once every socket has closed, so its port can be bound again. */
+	/**
+	 * Resolves once every socket has closed. Its port can then be bound
+	 * again, except that Windows frees it a few milliseconds later (about
+	 * 10 ms measured on windows-latest under Bun 1.4.4).
+	 */
 	readonly closed: Promise<void>;
 	/**
 	 * Stop intake and close every socket. Datagrams still queued are not

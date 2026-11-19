@@ -188,7 +188,10 @@ releases all of them on every way a capture can end:
 
 Tests for each: fail the second bind, cancel an idle capture, break the
 iteration, close the pipe, then bind the same port again to prove it was
-released.
+released. On Windows the OS frees a UDP port a few milliseconds after the
+socket's `close` event (about 10 ms on windows-latest under Bun 1.4.4, CI
+run 44521692931), so there the rebind is retried for up to 500 ms; on Linux
+and macOS it must succeed at once.
 
 ### Limits
 

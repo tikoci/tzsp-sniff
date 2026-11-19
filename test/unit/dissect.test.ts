@@ -14,6 +14,7 @@ import {
 	eth,
 	ext8,
 	fixture,
+	fixtureIndex,
 	fixtureInfo,
 	h8,
 	h16,
@@ -74,9 +75,10 @@ describe("dissect: RouterOS captures", () => {
 				dontFragment: false,
 			},
 		});
-		// The sequence field reads 0, 256, 512 … big-endian in these captures:
-		// RouterOS's ping counts in the low byte. The dissector reports the
-		// field as the RFC defines it (network byte order).
+		// On the wire, successive requests carry sequence bytes 00 00, 01 00,
+		// 02 00: RouterOS's ping writes its counter little-endian. The field
+		// is read in network byte order, as RFC 792 defines it, so it reads 0,
+		// 256, 512.
 		expect(layer(d, "icmp")).toMatchObject({
 			offset: 34,
 			length: 36,
@@ -87,31 +89,30 @@ describe("dissect: RouterOS captures", () => {
 		expect(layer(back, "ipv4").fields?.src).toBe("10.0.2.3");
 	});
 
-	test("every datagram of every RouterOS fixture dissects without a problem, except only-headers", () => {
-		for (const name of [
-			"sniffer-stream",
-			"sniffer-or-two-protocols",
-			"sniffer-filter-stream-yes",
-			"sniffer-filter-stream-no",
-			"mangle-prerouting",
-			"mangle-input",
-			"mangle-output",
-			"mangle-postrouting",
-			"mangle-sniff-id",
-			"mangle-self-output",
-			"mangle-self-postrouting",
-			"mangle-mirrors-sniffer",
-		]) {
-			for (const version of ["7.24.6", "7.25.1"]) {
-				for (const hex of fixture(`${version}-x86-${name}`)) {
-					const d = dissect(frameOf(hex));
-					expect({ name, problem: d.problem }).toEqual({
-						name,
-						problem: undefined,
-					});
-					expect(d.protocols[0]).toBe("ethernet");
-					expectSpansInside(d);
-				}
+	test("every TZSP datagram of every RouterOS fixture dissects without a problem, except only-headers", () => {
+		// The inventory comes from the fixture index, so a new capture is
+		// covered without editing this list. Not TZSP, so not here: the saved
+		// pcapng files (decode, #14) and sniff-pc's own format.
+		const names = fixtureIndex()
+			.map((e) => e.file)
+			.filter(
+				(f) =>
+					f.endsWith(".hex") &&
+					!f.includes("sniff-pc") &&
+					!f.includes("only-headers"),
+			)
+			.map((f) => f.replace(/\.hex$/, ""));
+		expect(names).toContain("7.25.1-arm64-sniffer-stream");
+		expect(names.length).toBeGreaterThan(20);
+		for (const name of names) {
+			for (const hex of fixture(name)) {
+				const d = dissect(frameOf(hex));
+				expect({ name, problem: d.problem }).toEqual({
+					name,
+					problem: undefined,
+				});
+				expect(d.protocols[0]).toBe("ethernet");
+				expectSpansInside(d);
 			}
 		}
 	});
@@ -526,6 +527,97 @@ describe("dissect: IPv6", () => {
 		});
 		const cut = packet({ next: 58, payload: ns.slice(0, 20) });
 		expect(layer(cut, "icmpv6")).toMatchObject({
+			problem: "truncated",
+			reason: "message",
+		});
+	});
+});
+
+describe("dissect: cross-review vectors (#20)", () => {
+	test("an 802.3 length bounds the LLC data: padding is not LLC's, a short frame is truncated", () => {
+		const padded = dissect(bytes(eth(2, "4242aaaaaaaa")));
+		expect(layer(padded, "data").length).toBe(2);
+		expect(padded.problem).toBeUndefined();
+		const cut = dissect(bytes(eth(9, "4242aaaaaaaa")));
+		expect(layer(cut, "ethernet")).toMatchObject({
+			problem: "truncated",
+			reason: "length",
+			fields: { length: 9 },
+		});
+		expect(layer(cut, "data").length).toBe(6);
+	});
+
+	test("a VLAN tag's inner type/length follows the same rules", () => {
+		const llc = dissect(bytes(eth(0x8100, "000a0003424203aaaa")));
+		expect(layer(llc, "vlan").fields).toEqual({
+			priority: 0,
+			dei: false,
+			id: 10,
+			length: 3,
+		});
+		expect(layer(llc, "data").length).toBe(3);
+		const odd = dissect(bytes(eth(0x8100, "000a05dd00")));
+		expect(layer(odd, "vlan")).toMatchObject({
+			problem: "malformed",
+			reason: "type-length",
+		});
+	});
+
+	test("ARP with Ethernet and IPv4 types but other address lengths is malformed", () => {
+		const d = dissect(bytes(eth(0x0806, "0001080000000001")));
+		expect(layer(d, "arp")).toMatchObject({
+			problem: "malformed",
+			reason: "address-length",
+		});
+	});
+
+	test("an AH header too short for its fixed fields is malformed", () => {
+		const ah = `1100${"00".repeat(6)}`; // next header UDP, payload length 0: 8 bytes
+		const d = dissect(
+			bytes(
+				eth(0x86dd, ipv6({ next: 51, extensions: ah, payload: udp(1, 2, "") })),
+			),
+		);
+		expect(layer(d, "ipv6")).toMatchObject({
+			problem: "malformed",
+			reason: "ah-length",
+		});
+		expect(d.protocols).toEqual(["ethernet", "ipv6"]);
+	});
+
+	test("after a later fragment's header, a next header that names an extension is still data", () => {
+		// Next header 60 (destination options), offset 16: the 8 bytes after are fragment data.
+		const fragment = "3c0000100000abcd";
+		const d = dissect(
+			bytes(
+				eth(
+					0x86dd,
+					ipv6({ next: 44, extensions: fragment, payload: "0001020304050607" }),
+				),
+			),
+		);
+		expect(layer(d, "ipv6").fields?.extensions.map((e) => e.name)).toEqual([
+			"fragment",
+		]);
+		expect(layer(d, "ipv6").problem).toBeUndefined();
+		expect(layer(d, "data").length).toBe(8);
+	});
+
+	test("an ICMP error shorter than its fixed fields is truncated", () => {
+		const d = dissect(
+			bytes(eth(0x86dd, ipv6({ next: 58, payload: "02000000" }))),
+		);
+		expect(layer(d, "icmpv6")).toMatchObject({
+			problem: "truncated",
+			reason: "message",
+			fields: { typeName: "packet-too-big" },
+		});
+		const v4 = dissect(
+			bytes(
+				eth(0x0800, ipv4({ proto: 1, payload: "0d000000" + "00".repeat(12) })),
+			),
+		);
+		expect(layer(v4, "icmp")).toMatchObject({
 			problem: "truncated",
 			reason: "message",
 		});

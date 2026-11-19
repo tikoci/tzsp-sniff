@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
 import {
 	DEFAULT_DURATION_MS,
+	JSON_MAX_RECORDS,
 	helpText,
 	type Io,
 	main,
@@ -162,6 +163,9 @@ describe("flags and help", () => {
 			[["stray"], "cli/unknown-command"],
 			[["listen", "stray"], "cli/unexpected-argument"],
 			[["--", "stray"], "cli/unexpected-argument"],
+			// Own registry keys only, not inherited names.
+			[["constructor"], "cli/unknown-command"],
+			[["__proto__"], "cli/unknown-command"],
 		];
 		for (const [argv, code] of cases) {
 			expect({ argv, code: codeOf(() => parseArgs(argv)) }).toEqual({
@@ -199,6 +203,13 @@ describe("plan: flags to capture options", () => {
 			expect(p.tips).toEqual([]);
 		}
 		expect(planOf(["--follow"]).options.durationMs).toBeUndefined();
+	});
+
+	test("json bounds its document; other formats do not", () => {
+		expect(
+			planOf(["--format", "json", "--count", "1"]).options.recordLimit,
+		).toBe(JSON_MAX_RECORDS);
+		expect(planOf(["--format", "jsonl"]).options.recordLimit).toBeUndefined();
 	});
 
 	test("jsonl and json default to summary detail", () => {
@@ -266,6 +277,7 @@ describe("plan: flags to capture options", () => {
 		);
 		expect(codeOf(() => planOf(["--format", "csv"]))).toBe("cli/invalid-value");
 		expect(codeOf(() => planOf(["--detail", "all"]))).toBe("cli/invalid-value");
+		expect(codeOf(() => planOf(["--detail="]))).toBe("cli/invalid-value");
 		expect(codeOf(() => planOf(["--count", "0"]))).toBe("cli/invalid-value");
 	});
 });
@@ -408,6 +420,26 @@ describe("main", () => {
 		await until(() => n.err.length > 0);
 		controller.abort();
 		expect(await run).toBe(1);
+	});
+
+	test("a stdout that fails for real: exit 1 with the code on stderr", async () => {
+		const m = memoryIo();
+		m.io.stdout = {
+			async write() {
+				throw new TzspSniffError(
+					"output/failed",
+					"Writing to stdout failed: ENOSPC",
+					"Check where stdout goes.",
+				);
+			},
+		};
+		expect(
+			await main(
+				["--port", "0", "--format", "jsonl", "--duration", "20ms"],
+				m.io,
+			),
+		).toBe(1);
+		expect(m.stderr()).toContain("error output/failed");
 	});
 
 	test("a closed stdout stops the capture quietly and frees the port", async () => {

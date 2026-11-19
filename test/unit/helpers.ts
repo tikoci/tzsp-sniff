@@ -132,15 +132,17 @@ export const fixture = (name: string) =>
 		.trim()
 		.split("\n");
 
-/** Provenance of a fixture, from index.json. */
-export const fixtureInfo = (name: string) => {
-	const index = JSON.parse(
-		readFileSync(join(FIXTURES, "index.json"), "utf8"),
-	) as {
+/** Every fixture's provenance, from index.json. */
+export const fixtureIndex = () =>
+	JSON.parse(readFileSync(join(FIXTURES, "index.json"), "utf8")) as {
 		file: string;
 		listenerPort: number;
 		routeros: string;
 	}[];
+
+/** Provenance of a fixture, from index.json. */
+export const fixtureInfo = (name: string) => {
+	const index = fixtureIndex();
 	const entry = index.find((e) => e.file === `${name}.hex`);
 	if (!entry) throw new Error(`no index.json entry for ${name}`);
 	return entry;
@@ -206,33 +208,26 @@ export async function freePort(): Promise<number> {
 }
 
 /**
- * Proves `port` is free now by binding it, then releases it again.
+ * Proves `port` is free by binding it, then releases it again.
  *
- * Diagnostic (Codex review on #20): the Windows leg failed this rebind right
- * after the listener's `closed` resolved. On failure it keeps trying for up
- * to 2 s only to measure how long the port stayed held, prints that, and
- * still fails: the measurement decides the fix, the retry does not.
+ * Windows frees a UDP port a few milliseconds after the socket's `close`
+ * event: on windows-latest with Bun 1.4.4, 3 of 3 rebinds right after
+ * `closed` resolved failed with EADDRINUSE, and each succeeded at the first
+ * retry 10 ms later (CI run 44521692931, the Codex review on #20). So on
+ * Windows only, the bind is retried for up to 500 ms; elsewhere the port
+ * must be free at once.
  */
 export async function expectPortFree(port: number) {
-	try {
-		const { socket } = await holdPort(port);
-		await closeSocket(socket);
-	} catch (error) {
-		const started = Date.now();
-		let freedAfter: number | undefined;
-		while (Date.now() - started < 2000) {
+	const deadline = Date.now() + (process.platform === "win32" ? 500 : 0);
+	for (;;) {
+		try {
+			const { socket } = await holdPort(port);
+			await closeSocket(socket);
+			return;
+		} catch (error) {
+			if (Date.now() >= deadline) throw error;
 			await new Promise((r) => setTimeout(r, 10));
-			const held = await holdPort(port).catch(() => undefined);
-			if (held) {
-				await closeSocket(held.socket);
-				freedAfter = Date.now() - started;
-				break;
-			}
 		}
-		console.error(
-			`expectPortFree(${port}) on ${process.platform}: not free at first; ${freedAfter === undefined ? "still held after 2000 ms" : `free after ${freedAfter} ms`}`,
-		);
-		throw error;
 	}
 }
 

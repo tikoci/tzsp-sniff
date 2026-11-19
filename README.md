@@ -42,7 +42,8 @@ tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
 
 With no limit, it stops after 10 seconds and says so, so a guessed command
 never hangs. stdout is the result; in text format the start line, warnings,
-tips and the summary go to stderr. `--detail line|summary|layers|full` sets
+tips and the summary go to stderr, except that with `--stats` the summary
+is the result, on stdout. `--detail line|summary|layers|full` sets
 how much each packet carries, cheapest first. A JSONL stream starts with a
 `header` record and ends with one `summary` (`complete`, `interrupted`,
 `incomplete` when datagrams were dropped, or `error`); a stream without a

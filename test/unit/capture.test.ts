@@ -147,14 +147,20 @@ describe("openCapture", () => {
 		]);
 	});
 
-	test("--idle counts from the last datagram", async () => {
-		const started = Date.now();
-		const { summary } = await readAll({ idleMs: 150 }, async (s) => {
-			await new Promise((r) => setTimeout(r, 100));
-			await send(portOf(s), [REQUEST]);
+	test("--idle counts from the last datagram, not from the bind", async () => {
+		let sentAt = 0;
+		const { stream, summary } = await readAll({ idleMs: 150 }, async (s) => {
+			// Sent while the next read is pending, 100 ms after the bind: idle
+			// must move to 150 ms after this arrival, not stop at 150 ms.
+			setTimeout(() => {
+				sentAt = Date.now();
+				send(portOf(s), [REQUEST]);
+			}, 100);
 		});
 		expect(summary).toMatchObject({ status: "complete", stoppedBy: "idle" });
-		expect(Date.now() - started).toBeGreaterThanOrEqual(240);
+		expect(summary.counters.packets).toBe(1);
+		const stoppedAt = stream.listener.boundAt + summary.durationMs;
+		expect(stoppedAt - sentAt).toBeGreaterThanOrEqual(140);
 	});
 
 	test("--expect unmet: status error, the code, and the empty case", async () => {
@@ -253,12 +259,17 @@ describe("openCapture", () => {
 			if (detail === "full") expect(packet.datagram).toBe(REQUEST);
 			if (detail === "layers") {
 				// Offsets index the datagram: the TZSP header is 5 bytes.
-				expect(packet.layers?.map((l) => [l.protocol, l.offset])).toEqual([
-					["tzsp", 0],
-					["ethernet", 5],
-					["ipv4", 19],
-					["icmp", 39],
+				// The TZSP layer spans the whole datagram, so the frame's layers
+				// lie inside it.
+				expect(
+					packet.layers?.map((l) => [l.protocol, l.offset, l.length]),
+				).toEqual([
+					["tzsp", 0, 75],
+					["ethernet", 5, 70],
+					["ipv4", 19, 56],
+					["icmp", 39, 36],
 				]);
+				expect(packet.layers?.[0]?.fields).toMatchObject({ headerLength: 5 });
 			}
 		}
 		expect(shapes.line).toEqual(["type", "seq", "time", "listener", "line"]);
@@ -295,5 +306,124 @@ describe("openCapture", () => {
 			expect(error).toBeInstanceOf(TzspSniffError);
 			expect((error as TzspSniffError).code).toBe("listen/invalid-option");
 		}
+	});
+
+	test("return() while a read is pending ends it and frees the port; so does return() before the first read", async () => {
+		const pendingStream = await openCapture({ ports: [{ port: 0 }] });
+		const it = pendingStream[Symbol.asyncIterator]();
+		expect((await it.next()).value?.type).toBe("header");
+		const pending = it.next();
+		const returned = it.return?.();
+		// The pending read gets the end of the stream; nothing is left waiting.
+		await pending;
+		await returned;
+		await pendingStream.listener.closed;
+		await expectPortFree(portOf(pendingStream));
+
+		const unread = await openCapture({ ports: [{ port: 0 }] });
+		await unread[Symbol.asyncIterator]().return?.();
+		await unread.listener.closed;
+		await expectPortFree(portOf(unread));
+	});
+
+	test("a capture is read once: a second iterator is refused", async () => {
+		const stream = await openCapture({ ports: [{ port: 0 }] });
+		stream[Symbol.asyncIterator]();
+		expect(() => stream[Symbol.asyncIterator]()).toThrow(
+			expect.objectContaining({ code: "capture/reused" }),
+		);
+		stream.listener.close();
+		await stream.listener.closed;
+	});
+
+	test("a met count stops intake before the entry is handed over, and an abort after it does not change why", async () => {
+		const controller = new AbortController();
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			count: 1,
+			signal: controller.signal,
+		});
+		const it = stream[Symbol.asyncIterator]();
+		await it.next(); // header
+		await send(portOf(stream), [REQUEST]);
+		expect((await it.next()).value?.type).toBe("packet");
+		// Holding the entry: the listener is already closed.
+		expect(stream.listener.ended).toBe("closed");
+		await send(portOf(stream), [REQUEST]).catch(() => {});
+		controller.abort();
+		const rest: StreamRecord[] = [];
+		for (let r = await it.next(); !r.done; r = await it.next())
+			rest.push(r.value);
+		const summary = rest.at(-1) as SummaryRecord;
+		expect(summary).toMatchObject({ status: "complete", stoppedBy: "count" });
+		expect(summary.counters.datagrams).toBe(1);
+	});
+
+	test("limits run from the bind: an unread stream still stops on time", async () => {
+		const stream = await openCapture({ ports: [{ port: 0 }], durationMs: 25 });
+		await stream.listener.closed;
+		expect(stream.listener.ended).toBe("closed");
+		await expectPortFree(portOf(stream));
+		const records: StreamRecord[] = [];
+		for await (const r of stream) records.push(r);
+		expect(records.at(-1)).toMatchObject({
+			type: "summary",
+			stoppedBy: "duration",
+		});
+	});
+
+	test("durations past the timer ceiling are refused", async () => {
+		for (const options of [{ durationMs: 2 ** 31 }, { idleMs: 2 ** 31 }]) {
+			const error = await openCapture(options).catch((e: unknown) => e);
+			expect((error as TzspSniffError).code).toBe("listen/invalid-option");
+		}
+	});
+
+	test("only dropped datagrams: --expect names capture/dropped as the case", async () => {
+		const { records, summary } = await readAll(
+			{ queue: { bytes: 1 }, idleMs: 80, expect: 1 },
+			(s) => send(portOf(s), [REQUEST]),
+		);
+		expect(ofType(records, "warning").map((w) => w.code)).toEqual([
+			"capture/dropped",
+		]);
+		expect(summary.error).toMatchObject({
+			code: "capture/expect-unmet",
+			case: "capture/dropped",
+		});
+	});
+
+	test("datagrams that arrived but were never read: capture/unread", async () => {
+		const stream = await openCapture({ ports: [{ port: 0 }], durationMs: 60 });
+		const it = stream[Symbol.asyncIterator]();
+		await it.next(); // header, then hold the stream while the limit passes
+		await send(portOf(stream), [REQUEST]);
+		await stream.listener.closed;
+		const rest: StreamRecord[] = [];
+		for (let r = await it.next(); !r.done; r = await it.next())
+			rest.push(r.value);
+		expect(ofType(rest, "warning").map((w) => w.code)).toEqual([
+			"capture/unread",
+		]);
+		expect((rest.at(-1) as SummaryRecord).counters).toMatchObject({
+			datagrams: 1,
+			unread: 1,
+		});
+	});
+
+	test("recordLimit stops at that many entries of any kind, as incomplete", async () => {
+		const { records, summary } = await readAll(
+			{ recordLimit: 2, durationMs: 5000 },
+			(s) => send(portOf(s), [KEEPALIVE, KEEPALIVE, KEEPALIVE]),
+		);
+		expect(ofType(records, "record")).toHaveLength(2);
+		expect(ofType(records, "warning").map((w) => w.code)).toContain(
+			"capture/record-limit",
+		);
+		expect(summary).toMatchObject({
+			status: "incomplete",
+			stoppedBy: "record-limit",
+		});
+		expect(sumOf(summary.counters)).toBe(summary.counters.datagrams);
 	});
 });
