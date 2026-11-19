@@ -76,7 +76,11 @@ const CLEANUP_MS = SETUP_MS + teardownBudget(hostArch());
 const TEST_MS = 120_000;
 /** A capture that sees fewer packets than it waits for ends here, well inside TEST_MS. */
 const CAPTURE_MS = 60_000;
-/** Mangle rules this file adds carry this comment, and only those are removed. */
+/**
+ * Mangle rules this file adds carry this comment, and only those are
+ * removed. The router is this run's own (`create`, removed in `afterAll`),
+ * so no other run's rule can be on it.
+ */
 const COMMENT = "tzsp-it";
 
 interface Results {
