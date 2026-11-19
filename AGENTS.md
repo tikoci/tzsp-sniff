@@ -48,6 +48,36 @@ README.md is the user overview.
   Wireshark dissectors ("Decided: no embedded Lua or Wireshark"), or `Bun.*`
   in shipped code ("Decided: Node and `npx`").
 
+## Workflow
+
+Work toward 0.1.0 is planned in #18: ordered slices, one sub-issue each,
+with its scope, a "Done when" checklist and what it leaves out.
+
+- **The next slice is the first open sub-issue of #18.** Asked to continue,
+  work it; do not re-derive the plan from DESIGN.md.
+- **A slice runs without asking for permission**, through tikoci-pr-flow:
+  branch from `main`, build to the issue's "Done when", run `bun run
+  check`, commit, push, open a draft PR with `Closes #N`, get the
+  cross-review, and hand back with the PR link. The maintainer merges. A
+  slice too big for one PR is split into issues first, each with its own
+  "Done when", and each PR says `Part of #N`.
+- **Done, for every slice:**
+  - every "Done when" item is met, or moved to a follow-up issue linked
+    from the PR; none is dropped silently;
+  - every behavior change has a test that was seen failing once;
+  - `bun run check` passes, and the PR names any check that could not run
+    locally and the CI job that runs it;
+  - CHANGELOG has a bullet for each user-visible change, README matches,
+    and DESIGN.md records each decision made and each **Unverified** claim
+    settled;
+  - small leftovers are in BACKLOG.md;
+  - #18's **Next** line names the following slice.
+- **Stop and ask** only to change something DESIGN.md marks **Decided**, to
+  narrow or reorder a slice, or when a slice waits on an open grounding
+  issue (#8, #9).
+- When a plan is done, the next one is a new planning issue of the same
+  shape, and this section points to it.
+
 ## House skills
 
 - tikoci-toolchain (copied)
@@ -55,9 +85,9 @@ README.md is the user overview.
 - tikoci-testing (copied)
 - tikoci-grounding (copied)
 - tikoci-linting (copied)
+- tikoci-pr-flow (copied): every slice goes through it.
 - tikoci-house, tikoci-crossref, tikoci-docs, tikoci-ci, tikoci-dependencies,
-  tikoci-release, tikoci-github, tikoci-pr-flow, tikoci-data-contracts
-  (referenced): read `https://tikoci.dev/house/skills/<name>/SKILL.md` when
+  tikoci-release, tikoci-github, tikoci-data-contracts (referenced): read `https://tikoci.dev/house/skills/<name>/SKILL.md` when
   the task matches its "Use when".
 - tikoci-home (referenced, not adopted): the tool keeps no files outside the
   checkout. Its environment variables follow the `<TOOL>_<KEY>` naming
