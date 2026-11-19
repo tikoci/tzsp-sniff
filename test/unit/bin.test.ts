@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { expectPortFree, fixture, send } from "./helpers.ts";
+import {
+	childEnv,
+	expectPortFree,
+	fixture,
+	send,
+	stalledTerminal,
+} from "./helpers.ts";
 
 /**
  * The real executable, spawned: process streams, exit codes and signals,
@@ -12,18 +18,7 @@ const REQUEST = fixture("7.25.1-x86-sniffer-stream")[0] as string;
 /** Each child must be done well inside this; a stuck one is killed. */
 const CHILD_MS = 8000;
 
-/**
- * An explicit environment, not a copy of this one (tikoci-testing,
- * "Hermetic"). Windows sockets need SystemRoot, so it is kept when set.
- */
-const env: Record<string, string> = {
-	PATH: process.env.PATH ?? "",
-	NO_COLOR: "1",
-};
-for (const key of ["SystemRoot", "SYSTEMROOT", "TEMP", "TMP"]) {
-	const value = process.env[key];
-	if (value !== undefined) env[key] = value;
-}
+const env = childEnv();
 
 const spawn = (args: string[]) =>
 	Bun.spawn([process.execPath, "--no-env-file", BIN, ...args], {
@@ -124,6 +119,25 @@ describe("tzsp-sniff executable", () => {
 			});
 			await expectPortFree(port);
 		},
+	);
+
+	// A terminal nobody reads (Ctrl-S): the event loop must stay free, so
+	// SIGINT ends the capture with output/stalled after the grace (2 s).
+	// libc pseudo-terminals: Linux and macOS.
+	test.skipIf(process.platform === "win32")(
+		"stdout on a terminal nobody reads: SIGINT ends it with output/stalled, port freed",
+		async () => {
+			const result = await stalledTerminal(
+				[process.execPath, "--no-env-file", BIN],
+				CHILD_MS,
+			);
+			expect(result.runningBeforeInterrupt).toBe(true);
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("error output/stalled");
+			expect(result.ms).toBeLessThan(CHILD_MS);
+			await expectPortFree(result.port);
+		},
+		CHILD_MS * 2,
 	);
 
 	test("a reader that closes the pipe ends --follow quietly, exit 0, port freed", async () => {

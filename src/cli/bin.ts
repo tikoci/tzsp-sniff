@@ -6,7 +6,7 @@
  * npx").
  */
 import { type Io, main } from "./main.ts";
-import { streamSink, unblockTerminal } from "./sink.ts";
+import { streamSink, terminalStream } from "./sink.ts";
 
 /** One write may take this long before stdout counts as stalled. */
 const STALL_MS = 30_000;
@@ -25,10 +25,8 @@ process.on("SIGINT", onSignal);
 process.on("SIGTERM", onSignal);
 
 // A terminal that stops reading must not block the event loop that times
-// the write out (see unblockTerminal).
-unblockTerminal(process.stdout);
-unblockTerminal(process.stderr);
-const stdout = streamSink(process.stdout, {
+// the write out (see terminalStream).
+const stdout = streamSink(terminalStream(process.stdout, 1), {
 	required: true,
 	stallMs: STALL_MS,
 	graceMs: GRACE_MS,
@@ -36,7 +34,7 @@ const stdout = streamSink(process.stdout, {
 	// Stop the capture: there is nowhere left to put its result.
 	onFailed: () => interrupt.abort(),
 });
-const stderr = streamSink(process.stderr, {
+const stderr = streamSink(terminalStream(process.stderr, 2), {
 	required: false,
 	stallMs: STALL_MS,
 	graceMs: GRACE_MS,

@@ -170,6 +170,10 @@ jobs:
           bun run test:node | tee "$RUNNER_TEMP/node.txt"
           grep -q '^node-smoke: ok' "$RUNNER_TEMP/node.txt"
           echo "- $(tail -n 1 "$RUNNER_TEMP/node.txt")" >> "$GITHUB_STEP_SUMMARY"
+      # The built CLI under Node with stdout on a terminal nobody reads; Bun
+      # drives it (test/node/terminal.test.ts).
+      - name: Node terminal
+        run: bun run test:node-terminal
 
   # bun audit (tikoci-ci, "Dependency audit"). Never on an ordinary PR: a PR
   # or push audits only when it changes bun.lock or any package.json, and the

@@ -190,11 +190,17 @@ A closed stdout pipe is seen at the next write: a pipe gives no sign that
 its reader left while nothing is written (on Linux, a zero-byte write to a
 pipe returns before it checks for a reader), so a quiet `--follow | head`
 ends at the next datagram, a limit or Ctrl-C. `--count` stops on its own.
-A terminal that stops reading (Ctrl-S) would block the event loop under
-Node's blocking TTY writes; the CLI makes its terminal streams non-blocking
-so `output/stalled` fires as it does for a pipe (`unblockTerminal` in
-`src/cli/sink.ts`). Bun offers no such switch, so there the hang remains
-(BACKLOG.md).
+A terminal that stops reading (Ctrl-S, an unread pane) must not hang the
+capture. Node and Bun both write to a TTY with blocking `write()` calls on
+the main thread, so a full terminal stops every timer and the SIGINT
+handler, and the port stays bound (Node 26.12.1, Bun 1.4.4 and 1.4.5,
+Linux x86_64). The CLI writes its terminal streams so the main thread
+never blocks (`terminalStream` in `src/cli/sink.ts`): on Node by turning
+off the handle's blocking mode, on Bun, which has no handle on a TTY
+stream, through `fs.write` on the thread pool. `output/stalled` then
+fires as it does for a pipe. Tests put stdout on a libc pseudo-terminal
+that nobody reads, for Bun (`test/unit/bin.test.ts`) and for the built CLI
+under Node (`test/node/`); Windows consoles are not covered.
 
 Tests for each: fail the second bind, cancel an idle capture, break the
 iteration, close the pipe, then bind the same port again to prove it was

@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import {
+	closeSync,
+	mkdtempSync,
+	openSync,
+	readFileSync,
+	rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import { OutputClosedError } from "../../src/cli/main.ts";
-import { streamSink, unblockTerminal } from "../../src/cli/sink.ts";
+import { fdStream, streamSink, terminalStream } from "../../src/cli/sink.ts";
 import { TzspSniffError } from "../../src/errors.ts";
 
 /** A stream whose writes never complete: a reader that stopped reading. */
@@ -65,42 +74,65 @@ describe("streamSink", () => {
 	});
 });
 
-describe("unblockTerminal", () => {
+describe("terminalStream", () => {
 	const fake = (isTTY: boolean, withHandle = true) => {
 		const calls: boolean[] = [];
-		const stream = {
-			isTTY,
-			_handle: withHandle
-				? {
-						setBlocking(b: boolean) {
-							calls.push(b);
-						},
-					}
-				: undefined,
-		};
+		const stream = Object.assign(
+			new Writable({ write: (_c, _e, cb) => cb() }),
+			{
+				isTTY,
+				_handle: withHandle
+					? {
+							setBlocking(b: boolean) {
+								calls.push(b);
+							},
+						}
+					: undefined,
+			},
+		);
 		return { stream, calls };
 	};
 
-	test("a terminal with a handle (Node) is made non-blocking", () => {
+	test("a terminal with a handle (Node): the same stream, made non-blocking", () => {
 		const { stream, calls } = fake(true);
-		expect(unblockTerminal(stream, "linux")).toBe(true);
+		expect(terminalStream(stream, 1, "linux")).toBe(stream);
 		expect(calls).toEqual([false]);
 	});
 
-	test("not a terminal, no handle (Bun), or Windows: left alone", () => {
-		for (const [tty, handle, platform] of [
-			[false, true, "linux"],
-			[true, false, "linux"],
-			[true, true, "win32"],
+	test("a terminal without a handle (Bun): a stream over the descriptor", () => {
+		const { stream } = fake(true, false);
+		const out = terminalStream(stream, 1, "darwin");
+		expect(out).not.toBe(stream);
+		expect(out).toBeInstanceOf(Writable);
+	});
+
+	test("not a terminal, or Windows: the stream as it is", () => {
+		for (const [tty, platform] of [
+			[false, "linux"],
+			[true, "win32"],
 		] as const) {
-			const { stream, calls } = fake(tty, handle);
-			expect({
-				tty,
-				handle,
-				platform,
-				done: unblockTerminal(stream, platform),
-			}).toEqual({ tty, handle, platform, done: false });
+			const { stream, calls } = fake(tty);
+			expect(terminalStream(stream, 1, platform)).toBe(stream);
 			expect(calls).toEqual([]);
+		}
+	});
+
+	test("fdStream writes every byte, in order, through the descriptor", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-"));
+		const path = join(dir, "out.txt");
+		const fd = openSync(path, "w");
+		try {
+			const out = fdStream(fd);
+			const big = "x".repeat(300_000);
+			for (const text of ["one\n", big, "two\n"]) {
+				await new Promise<void>((resolve, reject) =>
+					out.write(text, (e) => (e ? reject(e) : resolve())),
+				);
+			}
+			expect(readFileSync(path, "utf8")).toBe(`one\n${big}two\n`);
+		} finally {
+			closeSync(fd);
+			rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

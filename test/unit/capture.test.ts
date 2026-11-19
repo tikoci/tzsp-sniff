@@ -14,7 +14,7 @@ import type {
 	SummaryRecord,
 	WarningRecord,
 } from "../../src/records.ts";
-import { expectPortFree, fixture, send, until } from "./helpers.ts";
+import { childEnv, expectPortFree, fixture, send, until } from "./helpers.ts";
 
 /**
  * The capture core (DESIGN.md, "Counters and --expect", "Stream
@@ -465,6 +465,7 @@ describe("openCapture", () => {
 			await stream.listener.closed;
 		`;
 		const child = Bun.spawn([process.execPath, "--no-env-file", "-e", script], {
+			env: childEnv(),
 			stdout: "ignore",
 			stderr: "pipe",
 		});

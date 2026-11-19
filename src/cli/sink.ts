@@ -9,7 +9,8 @@
  * error instead of hanging (DESIGN.md, "Limits": a sink that stalls past a
  * timeout ends the capture with a coded error).
  */
-import type { Writable } from "node:stream";
+import { write } from "node:fs";
+import { Writable } from "node:stream";
 import { TzspSniffError } from "../errors.ts";
 import { OutputClosedError, type Sink } from "./main.ts";
 
@@ -37,27 +38,53 @@ const isClosed = (error: Error) => {
 };
 
 /**
- * Make a terminal stream's writes non-blocking where the runtime allows it.
- * Node makes TTY writes blocking on purpose, and a terminal that stops
- * reading (Ctrl-S, a suspended viewer) then blocks the whole event loop: no
- * stall timer, limit or SIGINT handler can run, and the UDP port stays bound
- * (Node 26.12.1 and Bun 1.4.4 on Linux x86_64, an unread raw PTY, PR #20
- * review). Node's handle has `setBlocking`, after which `output/stalled`
- * fires as it does for a pipe. Bun's stream has no handle, so this is a
- * no-op there and the hang remains (BACKLOG.md). Windows consoles were not
- * measured, so they are left as Node sets them.
+ * The stream to write a terminal through, so that a terminal that stops
+ * reading (Ctrl-S, an unread pane) cannot block the event loop. Node and Bun
+ * both write to a TTY with blocking `write()` calls on the main thread, so
+ * once the terminal's buffer is full no stall timer, limit or SIGINT
+ * handler can run, and the UDP port stays bound (Node 26.12.1, Bun 1.4.4
+ * and 1.4.5 on Linux x86_64, an unread PTY; PR #20 review).
+ *
+ * - Node: the stream's handle has `setBlocking`; with it off, a full
+ *   terminal leaves the write pending and `output/stalled` fires as it does
+ *   for a pipe. (`fs.write` would not do on Node: its `process.exit()` then
+ *   waits for the thread-pool thread stuck in `write()`.)
+ * - Bun: there is no handle on a TTY stream (oven-sh/bun#47408 added one
+ *   for pipes, not terminals), so the writes go through `fs.write`, which
+ *   runs on the thread pool; the main thread stays free and Bun's
+ *   `process.exit()` does not wait for that thread.
+ *
+ * Not a terminal, or Windows (not measured): the stream as it is.
  */
-export function unblockTerminal(
-	stream: { isTTY?: boolean },
+export function terminalStream(
+	stream: Writable & { isTTY?: boolean },
+	fd: number,
 	platform: string = process.platform,
-): boolean {
-	if (!stream.isTTY || platform === "win32") return false;
+): Writable {
+	if (!stream.isTTY || platform === "win32") return stream;
 	const handle = (
-		stream as { _handle?: { setBlocking?: (b: boolean) => unknown } }
+		stream as { _handle?: { setBlocking?: (blocking: boolean) => unknown } }
 	)._handle;
-	if (typeof handle?.setBlocking !== "function") return false;
-	handle.setBlocking(false);
-	return true;
+	if (typeof handle?.setBlocking === "function") {
+		handle.setBlocking(false);
+		return stream;
+	}
+	return fdStream(fd);
+}
+
+/** A Writable over a file descriptor, each chunk written in full with `fs.write`. */
+export function fdStream(fd: number): Writable {
+	return new Writable({
+		write(chunk: Buffer, _encoding, callback) {
+			const from = (offset: number) =>
+				write(fd, chunk, offset, chunk.length - offset, null, (error, n) => {
+					if (error) callback(error);
+					else if (offset + n < chunk.length) from(offset + n);
+					else callback();
+				});
+			from(0);
+		},
+	});
 }
 
 export function streamSink(

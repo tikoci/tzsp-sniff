@@ -32,6 +32,7 @@ ipip # IP-in-IP
 keepalive
 keepalives
 KVM
+libc
 LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol

@@ -3,8 +3,9 @@
  * fixtures, and loopback UDP. Sockets bind port 0 or ask the OS for a free
  * port; nothing assumes a fixed port is free (tikoci-testing, "Hermetic").
  */
+import { CString, dlopen, FFIType } from "bun:ffi";
 import { createSocket, type Socket } from "node:dgram";
-import { readFileSync } from "node:fs";
+import { closeSync, constants, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const bytes = (hex: string) =>
@@ -242,5 +243,117 @@ export async function until(check: () => boolean, timeoutMs = 2000) {
 		if (Date.now() > deadline)
 			throw new Error("timed out waiting for a condition");
 		await new Promise((r) => setTimeout(r, 5));
+	}
+}
+
+/**
+ * An explicit environment for a child process, not a copy of this one
+ * (tikoci-testing, "Hermetic"). Windows sockets need SystemRoot, so it is
+ * kept when set.
+ */
+export function childEnv(): Record<string, string> {
+	const env: Record<string, string> = {
+		PATH: process.env.PATH ?? "",
+		NO_COLOR: "1",
+	};
+	for (const key of ["SystemRoot", "SYSTEMROOT", "TEMP", "TMP"]) {
+		const value = process.env[key];
+		if (value !== undefined) env[key] = value;
+	}
+	return env;
+}
+
+/** 7.25.1 x86_64 /tool/sniffer, an ICMP echo request (test/fixtures/routeros/). */
+const REQUEST_HEX = () => fixture("7.25.1-x86-sniffer-stream")[0] as string;
+
+/**
+ * A pseudo-terminal from libc (Linux and macOS; not Windows), for a child
+ * whose terminal nobody reads: the test never reads `master`, so the
+ * child's writes fill the terminal's buffer and then block, as with Ctrl-S.
+ * Bun.spawn's own `terminal` option cannot do this: it always reads.
+ */
+export function openPty(): { master: number; slave: number } {
+	const libc = dlopen(
+		process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6",
+		{
+			posix_openpt: { args: [FFIType.i32], returns: FFIType.i32 },
+			grantpt: { args: [FFIType.i32], returns: FFIType.i32 },
+			unlockpt: { args: [FFIType.i32], returns: FFIType.i32 },
+			ptsname: { args: [FFIType.i32], returns: FFIType.ptr },
+		},
+	);
+	try {
+		const { posix_openpt, grantpt, unlockpt, ptsname } = libc.symbols;
+		const master = posix_openpt(constants.O_RDWR | constants.O_NOCTTY);
+		if (master < 0) throw new Error("posix_openpt failed");
+		const name = ptsname(master);
+		if (grantpt(master) !== 0 || unlockpt(master) !== 0 || !name) {
+			closeSync(master);
+			throw new Error("grantpt, unlockpt or ptsname failed");
+		}
+		const path = new CString(name).toString();
+		return {
+			master,
+			slave: openSync(path, constants.O_RDWR | constants.O_NOCTTY),
+		};
+	} finally {
+		libc.close();
+	}
+}
+
+/**
+ * Run the CLI (`command`, without flags) with stdout on a terminal nobody
+ * reads, fill that terminal with full-detail packets, then send SIGINT.
+ * Returns the exit code, stderr, the port, and the time from SIGINT to exit;
+ * a child still running `budgetMs` after SIGINT is killed (code null).
+ */
+export async function stalledTerminal(command: string[], budgetMs: number) {
+	const pty = openPty();
+	const proc = Bun.spawn(
+		[
+			...command,
+			"--bind",
+			"127.0.0.1",
+			"--port",
+			"0",
+			"--follow",
+			"--detail",
+			"full",
+		],
+		{ env: childEnv(), stdin: "ignore", stdout: pty.slave, stderr: "pipe" },
+	);
+	closeSync(pty.slave);
+	let stderr = "";
+	const drained = (async () => {
+		const decoder = new TextDecoder();
+		for await (const chunk of proc.stderr)
+			stderr += decoder.decode(chunk, { stream: true });
+	})();
+	let killer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		await until(() => /listening on UDP [^ ]*:\d+/.test(stderr), budgetMs);
+		const port = Number(/listening on UDP [^ ]*:(\d+)/.exec(stderr)?.[1]);
+		// Each line is the datagram as hex, over 60 KB: more than a terminal holds.
+		const big = REQUEST_HEX() + "00".repeat(30_000);
+		await send(port, [big, big, big, big]);
+		await new Promise((r) => setTimeout(r, 500));
+		const runningBeforeInterrupt = proc.exitCode === null;
+		const interruptedAt = performance.now();
+		proc.kill("SIGINT");
+		killer = setTimeout(() => proc.kill("SIGKILL"), budgetMs);
+		await proc.exited;
+		const ms = performance.now() - interruptedAt;
+		await drained;
+		return {
+			code: proc.signalCode === "SIGKILL" ? null : proc.exitCode,
+			stderr,
+			port,
+			ms,
+			runningBeforeInterrupt,
+		};
+	} finally {
+		clearTimeout(killer);
+		proc.kill("SIGKILL");
+		closeSync(pty.master);
 	}
 }
