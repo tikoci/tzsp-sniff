@@ -7,9 +7,9 @@
  *   bun test/lab/tzsp-senders/lab.ts --only x86:stable,x86:long-term
  *
  * Safety. Each router is a machine this run creates and owns: the name is
- * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created with
- * quickchr's `add`, which refuses an existing name (test/chr/quickchr.ts,
- * shared with the integration tier). Only owned machines are configured or
+ * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created and
+ * booted by one quickchr `start` (test/chr/quickchr.ts, shared with the
+ * integration tier). Only owned machines are configured or
  * removed. They are removed when the run ends, fails, or gets
  * SIGINT or SIGTERM (after the work in flight stops), and removal is
  * verified; a machine that could not be removed is named on stderr and the
@@ -51,7 +51,6 @@ import {
 	ROOT,
 	run,
 	services,
-	start,
 	stop,
 	tempDirs,
 	teardown,
@@ -811,12 +810,13 @@ async function lab(target: Target): Promise<boolean> {
 	const ctx: Partial<Ctx> = {};
 	let ok = false;
 	try {
-		ev.machine = await create(`tzsp-lab-${target.channel}-${target.arch}`, {
+		const made = await create(`tzsp-lab-${target.channel}-${target.arch}`, {
 			routeros: target.channel,
 			arch: target.arch,
 		});
+		ev.machine = made.name;
+		if (made.bootMs !== undefined) ev.bootMs = made.bootMs;
 		ev.listenerPort = await listener.open();
-		ev.bootMs = await start(ev.machine);
 		ev.accelerator = accelerator(ev.machine);
 		const rest = await services(ev.machine);
 		const router = new Router(rest.restUrl, rest.basic);

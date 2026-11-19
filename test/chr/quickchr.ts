@@ -3,17 +3,21 @@
  * (test/lab/tzsp-senders/) and the integration tier (test/integration/).
  *
  * Safety. Each machine is one this process creates and owns: a random name
- * with a fixed prefix, checked absent, then created with `QuickCHR.add`,
- * which refuses a name in use. Ownership is the name and the `createdAt`
- * that `add` returned, so a machine of the same name made by someone else
- * is never started or removed. A failed `add` owns nothing: quickchr
- * removes what it made itself (0.6.0, `QuickCHR.add`'s catch), and a
- * failure before its claim (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made
- * nothing of this process's. Removal is verified (`teardown`).
+ * with a fixed prefix, checked absent, then created and booted by one
+ * `QuickCHR.start`. Ownership is the name and the `createdAt` that `start`
+ * returned, so a machine of the same name made by someone else is never
+ * removed. A failed `create` owns nothing: on a boot timeout quickchr
+ * removes the machine it made (0.6.0, `remove-new`), before saving state
+ * it removes the directory it made (`start`'s catch), and a failure before
+ * its claim (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made nothing of this
+ * process's. Anything left is reported. Removal is verified (`teardown`).
+ *
+ * `prefetch` resolves a channel and caches the image first, so `create`
+ * boots the version fetched and its budget holds no download.
  *
  * A signal stops the running children and REST calls (`stopping`), and no
- * new `add` or boot begins after it. A quickchr call already running in
- * this process cannot be interrupted, so `cleanupAll` waits for it first.
+ * new prefetch or `create` begins after it. A quickchr call already running
+ * in this process cannot be interrupted, so `cleanupAll` waits for it first.
  */
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -23,9 +27,10 @@ import {
 	CHANNELS,
 	type Channel,
 	type ChrInstance,
+	cacheAdd,
+	createLogger,
 	defaultBootTimeout,
 	QuickCHR,
-	type StartOptions,
 } from "@tikoci/quickchr";
 
 export const ROOT = join(import.meta.dir, "..", "..");
@@ -72,9 +77,15 @@ export function hostArch(): Target["arch"] {
  * are quoted from its source, by file.
  */
 
-/** The image download in `add`: DOWNLOAD_MAX_ATTEMPTS (3) transfers of at most DOWNLOAD_NO_LENGTH_BUDGET_MS (15 min) each, with 2 s and 4 s between them (download.ts). Free when the image is cached. */
+/**
+ * Resolving a channel: VERSION_RESOLVE_MAX_ATTEMPTS (3), 2 s and 4 s apart
+ * (versions.ts). quickchr names no per-request timeout, so 30 s each is an
+ * allowance, not a quickchr constant.
+ */
+const RESOLVE_MS = 3 * 30_000 + 6_000;
+/** The image download: DOWNLOAD_MAX_ATTEMPTS (3) transfers of at most DOWNLOAD_NO_LENGTH_BUDGET_MS (15 min) each, with 2 s and 4 s between them (download.ts). Free when the image is cached. */
 const DOWNLOAD_MS = 3 * 15 * 60_000 + 6_000;
-/** The port allocator's lock, which `add` waits for (ALLOCATION_LOCK_WAIT_MS, quickchr.ts). */
+/** The port allocator's lock, which `start` waits for when it creates a machine (ALLOCATION_LOCK_WAIT_MS, quickchr.ts). */
 const ALLOCATION_LOCK_MS = 60_000;
 /**
  * After a boot times out, quickchr collects a failure report and stops
@@ -86,17 +97,25 @@ const BOOT_FAILURE_MS = 60_000;
 /** `stopQemu` (qemu.ts): SIGTERM, 5 s, then SIGKILL; plus deleting the machine directory. */
 const STOP_MS = 30_000;
 
+/** The most `prefetch` can take: resolving the channel, then the download. */
+export const prefetchBudget = (): number => RESOLVE_MS + DOWNLOAD_MS;
+
 /**
- * quickchr's boot budget for `arch`, in ms: `defaultBootTimeout` at its
- * slowest accelerator (TCG). `start` passes no `timeoutExtra`: quickchr
- * 0.6.0 does not apply it when it boots a machine `add` created.
+ * quickchr's boot budget for `arch`, in ms. `defaultBootTimeout` is per
+ * attempt, and under KVM or HVF a boot that misses starts QEMU once more and
+ * waits again (quickchr.ts, `start`); TCG gets one longer attempt. So the
+ * larger of one TCG attempt and two accelerated ones. No `timeoutExtra`:
+ * quickchr's own budget is the one this repo relies on.
  */
 export const bootBudget = (arch: Target["arch"]): number =>
-	defaultBootTimeout(arch, false, "tcg");
+	Math.max(
+		defaultBootTimeout(arch, false, "tcg"),
+		2 * defaultBootTimeout(arch, false, "kvm"),
+	);
 
-/** The most `create` then `start` can take inside quickchr, a failed boot included. */
-export const provisionBudget = (arch: Target["arch"]): number =>
-	ALLOCATION_LOCK_MS + DOWNLOAD_MS + bootBudget(arch) + BOOT_FAILURE_MS;
+/** The most `create` can take inside quickchr once `prefetch` cached the image, a failed boot included. */
+export const createBudget = (arch: Target["arch"]): number =>
+	ALLOCATION_LOCK_MS + bootBudget(arch) + BOOT_FAILURE_MS;
 
 /**
  * The most `teardown` can take: `remove` waits for the machine's lock up to
@@ -105,7 +124,7 @@ export const provisionBudget = (arch: Target["arch"]): number =>
 export const teardownBudget = (arch: Target["arch"]): number =>
 	bootBudget(arch) + STOP_MS;
 
-/** quickchr's progress lines, which it prints to stdout unless given a callback. */
+/** quickchr's progress lines, to stderr: stdout is the tests' own. */
 const onProgress = (message: string) => console.error(`quickchr: ${message}`);
 
 /** Child processes get an allowlisted env, never a copy of process.env (tikoci-testing). */
@@ -187,7 +206,7 @@ export const owned = new Map<string, string>();
 export const tempDirs = new Set<string>();
 /** Removals in progress, so two callers share one; a finished one is dropped, so a later call tries again. */
 const removals = new Map<string, Promise<boolean>>();
-/** quickchr calls still running (`add`, `start`), which cleanup waits for. */
+/** `create` calls still running, which cleanup waits for. */
 const inFlight = new Set<Promise<unknown>>();
 /** Handles from `start`, by machine name. */
 const instances = new Map<string, ChrInstance>();
@@ -305,8 +324,8 @@ export const leftOver = (name: string): string =>
 
 /** Remove every owned machine and temp dir; return the machines still present (see `leftOver`). */
 export async function cleanupAll(): Promise<string[]> {
-	// An `add` or a boot still running cannot be stopped from here; once it
-	// settles, a machine it made is in `owned`.
+	// A `create` still running cannot be stopped from here; once it settles,
+	// a machine it made is in `owned`.
 	while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
 	const names = [...owned.keys()];
 	const results = await Promise.all(names.map((n) => teardown(n)));
@@ -321,7 +340,7 @@ export async function cleanupAll(): Promise<string[]> {
  * A signal stops work; the caller then removes machines and exits, so
  * removal never races a step still using a machine. `stop` kills the
  * running children and aborts `stopping`, which REST calls listen to and
- * `create` and `start` check before calling quickchr.
+ * `prefetch` and `create` check before calling quickchr.
  */
 export const stopping = new AbortController();
 export function stop(): void {
@@ -331,31 +350,58 @@ export function stop(): void {
 
 /* ------------------------------------------------------------- machines */
 
+/** A channel or an exact version, as quickchr's options take it. */
+const which = (routeros: string) =>
+	(CHANNELS as readonly string[]).includes(routeros)
+		? { channel: routeros as Channel }
+		: { version: routeros };
+
 /**
- * Create a machine this process owns, named `<prefix>-<random>`, or throw
- * having removed nothing. The name goes to stderr before `add`, so a run
- * killed during it says what to look for (`quickchr list <name>`).
+ * Resolve `target` to an exact version and cache its image, outside any
+ * boot's deadline (`prefetchBudget`). Returns the target with that version,
+ * so `create` boots what was fetched even if the channel moves meanwhile.
  */
-export function create(prefix: string, target: Target): Promise<string> {
+export async function prefetch(target: Target): Promise<Target> {
+	if (stopping.signal.aborted)
+		throw new Error("interrupted; not fetching an image");
+	const { version: v } = await cacheAdd({
+		...which(target.routeros),
+		arch: target.arch,
+		logger: createLogger(onProgress),
+	});
+	return { routeros: v, arch: target.arch };
+}
+
+export interface Created {
+	name: string;
+	/** quickchr's boot time: QEMU's spawn to REST answering, in ms. */
+	bootMs?: number;
+}
+
+/**
+ * Create and boot a machine this process owns, named `<prefix>-<random>`,
+ * with one `QuickCHR.start`; or throw having removed nothing. The name goes
+ * to stderr first, so a run killed meanwhile says what to look for
+ * (`quickchr list <name>`). Takes `createBudget` once the image is cached.
+ */
+export function create(prefix: string, target: Target): Promise<Created> {
 	return track(provision(prefix, target));
 }
 
-async function provision(prefix: string, target: Target): Promise<string> {
+async function provision(prefix: string, target: Target): Promise<Created> {
 	if (stopping.signal.aborted)
 		throw new Error("interrupted; not creating a machine");
 	const name = `${prefix}-${randomBytes(4).toString("hex")}`;
+	// `start` boots a machine that already has this name, so it must not
+	// have one. Another process taking the name between here and the claim
+	// would have to draw the same 32 random bits.
 	if (!absent(name)) throw new Error(`${name} already exists; not touching it`);
-	const which: StartOptions = (CHANNELS as readonly string[]).includes(
-		target.routeros,
-	)
-		? { channel: target.routeros as Channel }
-		: { version: target.routeros };
 	console.error(`machine: ${name}`);
 	try {
-		const state = await QuickCHR.add({
+		const chr = await QuickCHR.start({
 			name,
 			arch: target.arch,
-			...which,
+			...which(target.routeros),
 			// Stated, not left to quickchr's defaults: the factory admin login
 			// (no managed account, whatever the user's quickchr settings say),
 			// and the qcow2 boot disk the quickchr CLI makes and the lab's
@@ -364,40 +410,21 @@ async function provision(prefix: string, target: Target): Promise<string> {
 			bootDiskFormat: "qcow2",
 			onProgress,
 		});
-		owned.set(name, state.createdAt);
+		owned.set(name, chr.state.createdAt);
+		instances.set(name, chr);
+		return chr.state.lastBootMs === undefined
+			? { name }
+			: { name, bootMs: chr.state.lastBootMs };
 	} catch (e) {
 		let left = true;
 		try {
 			left = !absent(name);
 		} catch {}
 		throw new Error(
-			`quickchr add ${name}: ${message(e)}` +
+			`quickchr start ${name}: ${message(e)}` +
 				(left ? `; ${name} is still there and was not removed` : ""),
 		);
 	}
-	return name;
-}
-
-/** Boot an owned machine with quickchr's own boot budget; returns the boot time in ms. */
-export function start(name: string): Promise<number> {
-	return track(boot(name));
-}
-
-async function boot(name: string): Promise<number> {
-	if (stopping.signal.aborted)
-		throw new Error(`interrupted; not booting ${name}`);
-	const found = ownedMachine(name);
-	if (!("machine" in found))
-		throw new Error(
-			"refused" in found ? found.refused : `${name} is gone; not booting it`,
-		);
-	const t0 = Date.now();
-	try {
-		instances.set(name, await QuickCHR.start({ name, onProgress }));
-	} catch (e) {
-		throw new Error(`quickchr start ${name}: ${message(e)}`);
-	}
-	return Date.now() - t0;
 }
 
 function instance(name: string): ChrInstance {

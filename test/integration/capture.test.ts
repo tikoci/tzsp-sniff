@@ -6,10 +6,12 @@
  *
  * One CHR, booted by quickchr (test/chr/), serves every test in this file
  * and is removed in `afterAll`, which bun:test runs after a failed or timed
- * out hook or test too. `afterAll` first waits for the setup to settle (a
- * timed-out hook keeps running), so removal never races `add` or `start`. Each test binds its own listener to 127.0.0.1 port
- * 0 and closes it in `finally`; the router sends to the SLIRP gateway at
- * that port, which QEMU delivers to the loopback listener.
+ * out hook or test too. The image is fetched first, in its own hook, so
+ * the boot's deadline holds no download. `afterAll` first waits for the
+ * setup to settle (a timed-out hook keeps running), so removal never races
+ * the boot. Each test binds its own listener to 127.0.0.1 port 0 and
+ * closes it in `finally`; the router sends to the SLIRP gateway at that
+ * port, which QEMU delivers to the loopback listener.
  *
  * Knobs (test-only, never read by shipped code):
  * - TZSP_SNIFF_ROUTEROS: a channel or an exact version, default `stable`.
@@ -32,13 +34,15 @@ import {
 	childEnv,
 	cleanupAll,
 	create,
-	leftOver,
+	createBudget,
 	hostArch,
-	provisionBudget,
+	leftOver,
+	prefetch,
+	prefetchBudget,
 	ROOT,
 	saveLogs,
 	services,
-	start,
+	type Target,
 	teardownBudget,
 	version,
 } from "../chr/quickchr.ts";
@@ -58,12 +62,14 @@ const RESULTS = process.env.TZSP_SNIFF_INTEGRATION_RESULTS;
 const BIN = join(ROOT, "src", "cli", "bin.ts");
 
 /**
- * The setup hook's timeout outlives what quickchr itself may take to create
- * and boot the machine (`provisionBudget`, test/chr/quickchr.ts), plus the
- * REST reads after the boot, so a slow step fails inside quickchr with its
- * evidence rather than being cut off here (tikoci-testing, "Timeouts").
+ * Each hook's timeout outlives what quickchr itself may take: resolving and
+ * fetching the image (`prefetchBudget`), then creating and booting the
+ * machine (`createBudget`, test/chr/quickchr.ts) plus the REST reads after
+ * the boot. A slow step then fails inside quickchr with its evidence rather
+ * than being cut off here (tikoci-testing, "Timeouts").
  */
-const SETUP_MS = provisionBudget(hostArch()) + 4 * REST_BASE_MS;
+const PREFETCH_MS = prefetchBudget();
+const SETUP_MS = createBudget(hostArch()) + 4 * REST_BASE_MS;
 /** `afterAll` may wait out a setup still running, then removes the machine. */
 const CLEANUP_MS = SETUP_MS + teardownBudget(hostArch());
 /** Each test: REST commands with their own budgets (router.ts), and a 3-packet ping. */
@@ -75,6 +81,8 @@ const COMMENT = "tzsp-it";
 
 interface Results {
 	target: string;
+	/** The exact version `target` resolved to, which the CHR must report. */
+	version?: string;
 	quickchr: string;
 	machine: string;
 	accelerator?: string;
@@ -93,6 +101,8 @@ const results: Results = {
 	passed: [],
 };
 let router: Router;
+/** The target with its exact version, once the image is fetched. */
+let fetched: Target | undefined;
 /** The setup, so `afterAll` can wait for it to settle before removing. */
 let setup: Promise<void> | undefined;
 /** A version as RouterOS reports it: `7.25.1`, `7.26beta5`. */
@@ -187,13 +197,17 @@ const sniffAndPing = (port: number, pings: number) => () =>
 
 describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 	beforeAll(async () => {
+		results.quickchr = await version();
+		fetched = await prefetch({ routeros: TARGET, arch: hostArch() });
+		results.version = fetched.routeros;
+	}, PREFETCH_MS);
+
+	beforeAll(async () => {
 		setup = (async () => {
-			results.quickchr = await version();
-			results.machine = await create("tzsp-it", {
-				routeros: TARGET,
-				arch: hostArch(),
-			});
-			results.bootMs = await start(results.machine);
+			if (!fetched) throw new Error("the image was not fetched; not booting");
+			const made = await create("tzsp-it", fetched);
+			results.machine = made.name;
+			if (made.bootMs !== undefined) results.bootMs = made.bootMs;
 			results.accelerator = accelerator(results.machine);
 			const rest = await services(results.machine);
 			router = new Router(rest.restUrl, rest.basic);
@@ -204,7 +218,7 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 		const r = results.router;
 		expect(r?.version).toMatch(VERSION);
 		expect(r?.architecture).toMatch(/\S/);
-		if (VERSION.test(TARGET)) expect(r?.version).toBe(TARGET);
+		expect(r?.version).toBe(results.version);
 		console.log(
 			`routeros: ${r?.version} ${r?.architecture} (${TARGET}), board ${r?.board}; ` +
 				`${results.quickchr}, accel ${results.accelerator}, boot ${results.bootMs} ms`,
@@ -215,7 +229,7 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 		await setup?.catch(() => {});
 		if (RESULTS && results.machine)
 			await saveLogs(results.machine, dirname(RESULTS));
-		// Waits for any `add` still running, then removes and verifies.
+		// Waits for a `create` still running, then removes and verifies.
 		const left = await cleanupAll();
 		// A results file that cannot be written must not hide a machine left behind.
 		const failures = left.map(leftOver);

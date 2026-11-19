@@ -28,7 +28,7 @@ It is not a test tier and never gates CI. Its machine handling and REST
 calls are in `test/chr/`, shared with the integration tier.
 
 The script creates its own machines (a random name, checked absent,
-created with quickchr's `add`, which refuses an existing name) and removes
+then created and booted by one quickchr `start`) and removes
 them at the end, on failure, and on SIGINT or SIGTERM, then checks they are
 gone. Every router command must succeed and every experiment's control
 traffic must arrive (`expect` in `lab.ts`), or nothing is written to

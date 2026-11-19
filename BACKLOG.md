@@ -30,17 +30,19 @@ Small items, one or two sentences each, deleted when done or declined
   letting `--sender` also select control, unsupported and invalid records,
   which would need its own counter so the counters still add up.
 - quickchr upstream, each to follow up here once fixed:
-  - tikoci/quickchr#290: `add` prints image lines to stdout despite
-    `onProgress`.
-  - tikoci/quickchr#291: `start` of an `add`-made machine ignores
-    `timeoutExtra`; once fixed, `test/chr/` can honor
-    `QUICKCHR_TIMEOUT_EXTRA`.
   - tikoci/quickchr#292: one deadline for consumers, so `test/chr/` stops
-    quoting download and lock budgets from quickchr's source.
-  - tikoci/quickchr#293: the default arch under Rosetta; once fixed,
-    `hostArch()`'s `sysctl` check can go.
-  - tikoci/quickchr#294: a `start` bound to the machine `add` made, and
-    `remove` that will not delete a running machine's directory.
+    quoting download, lock and boot-failure budgets from quickchr's source.
+  - tikoci/quickchr#293: the default arch under Rosetta, in `start` and
+    `cacheAdd`; once fixed, `hostArch()`'s `sysctl` check can go.
+  - tikoci/quickchr#294: `remove` that will not delete a running machine's
+    directory; once fixed, `test/chr/`'s unreadable-state advice can say
+    `quickchr remove <name>` alone.
+  - tikoci/quickchr#295: a cache directory apart from the data directory;
+    once there, a local run can use a private `QUICKCHR_DATA_DIR` and drop
+    the `createdAt` ownership checks.
+  - tikoci/quickchr#290 and #291 (`add`'s stdout, `timeoutExtra` on an
+    `add`-made machine) are avoided by creating with one `start`, not
+    waited on.
 - Sweep: skip a night when neither `main` nor any resolved channel version
   changed since the last green sweep (centrs fingerprints both), once the
   nightly boots cost more than they tell.

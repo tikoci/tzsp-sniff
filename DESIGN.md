@@ -742,45 +742,59 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   `test/chr/quickchr.ts` calls the library. The lab and the integration
   tier share that module, and `scripts/sweep-plan.ts` imports quickchr's
   version helpers directly. The module's rules, which later tests inherit
-  (cross-review of ec42e8c, each seen failing against it):
+  (cross-review of ec42e8c, each seen failing against it; quickchr's
+  review of 3841326 for the single `start` and the prefetch):
 
+  - **Fetch, then create and boot in one call.** `prefetch` resolves a
+    channel to an exact version and caches the image (`cacheAdd`) in a hook
+    of its own, and `create` boots that version with one `QuickCHR.start`,
+    as quickchr recommends (tikoci/quickchr#296). Creating with `add` and
+    booting with `start` had three costs in 0.6.0: `add` printed its image
+    lines to stdout (tikoci/quickchr#290), the boot ignored `timeoutExtra`
+    (tikoci/quickchr#291), and a second `start` by name could reach a
+    machine other than the one `add` made.
   - **Ownership is the name and `createdAt`.** A random `tzsp-it-` or
     `tzsp-lab-` name is checked absent (`QuickCHR.get`, `listOrphans`),
-    and `QuickCHR.add`'s returned `createdAt` is recorded. `start`,
-    `teardown` and the log copy act only on a machine of that name with
-    that `createdAt`, so one made by another process under the same name
-    is never booted or removed.
-  - **A failed `add` owns nothing.** quickchr 0.6.0 removes what a failed
-    `add` made after its claim, and a failure before the claim
+    since `start` would boot a machine that has it, and the `createdAt` of
+    the machine `start` returns is recorded. `teardown` and the log copy
+    act only on a machine of that name with that `createdAt`, so one made
+    by another process under the same name is never removed.
+  - **A failed `create` owns nothing.** On a boot timeout quickchr 0.6.0
+    removes the machine `start` made (`remove-new`, its full `qemu.log`
+    kept under `<data dir>/failures/`), before state is saved it removes
+    the directory it made, and a failure before the claim
     (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made nothing of this process's. A
     leftover is reported, never removed.
   - **Unreadable state is reported, not removed**: its QEMU may still run,
     and only `quickchr remove <name>` should decide. A failed removal is
     not remembered, so a later `cleanupAll` tries again.
-  - **After a signal, nothing new starts.** `create` and `start` check
+  - **After a signal, nothing new starts.** `prefetch` and `create` check
     `stopping`; a quickchr call already running cannot be interrupted, so
-    `cleanupAll` waits for every `add` and `start` in flight first.
+    `cleanupAll` waits for every `create` in flight first.
   - **Stated, not inherited, options**: the factory admin login
     (`secureLogin: false`, whatever the user's quickchr settings say) and a
     qcow2 boot disk, as the quickchr CLI makes and the lab's evidence was
     taken on (the library's default is raw).
-  - **Budgets** (`provisionBudget`, `teardownBudget`): the allocator lock
-    (60 s), three download attempts of up to 15 min each, the boot budget
-    from quickchr's exported `defaultBootTimeout` at its TCG factor, and an
-    allowance for the boot-failure report; teardown waits up to the boot
-    budget for the machine lock, then stops QEMU. Only the boot budget is
-    exported; the rest are quoted from quickchr's source by file.
-    `QUICKCHR_TIMEOUT_EXTRA` is not supported: quickchr 0.6.0 does not
-    apply `timeoutExtra` when it boots a machine `add` created (BACKLOG).
+  - **Budgets.** `prefetchBudget`: three channel lookups, then three
+    download attempts of up to 15 min each. `createBudget`: the allocator
+    lock (60 s), the boot budget, and an allowance for the boot-failure
+    report. The boot budget is quickchr's exported `defaultBootTimeout`,
+    the larger of one TCG attempt and two accelerated ones (under KVM or
+    HVF a missed boot starts QEMU once more). `teardownBudget`: the boot
+    budget for the machine lock, then stopping QEMU. Only the boot budget
+    is exported; the rest are quoted from quickchr's source by file, until
+    quickchr owns the sum (tikoci/quickchr#292). No `timeoutExtra`:
+    quickchr's own budget is the one relied on.
 
   **A local run uses the developer's quickchr data directory.** quickchr
   keeps its image cache inside it and has no separate cache setting, so an
   isolated `QUICKCHR_DATA_DIR` would download the image on every run. The
   tier only touches machines it created, under the `tzsp-it-` prefix, and
-  removes them in `afterAll`. The name goes to stderr before `add`
+  removes them in `afterAll`. The name goes to stderr before `start`
   (`machine: tzsp-it-…`), so a run killed later says what it left;
   `quickchr list <name>` reports it, as a leftover directory when the kill
-  came during `add` (0.6.0), and `quickchr remove <name>` clears it. CI sets
+  came before quickchr saved its state (0.6.0), and
+  `quickchr remove <name>` clears it. CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.
