@@ -50,7 +50,7 @@ host     listener (node:dgram, one unconnected socket per port)
            │ { datagram, peer ip:port, listener label, arrival time }
          parseTzsp ─→ type 0, Ethernet? ─→ dissect ─→ filter ─→ format ─→ stdout
                          │ no                                   └─→ --write (every datagram)
-                         └─→ control or unsupported record, counted, kept
+                         └─→ control, unsupported or invalid record, counted, kept
 ```
 
 What is known about RouterOS's side, and from where:
@@ -68,7 +68,7 @@ What is known about RouterOS's side, and from where:
   port-opener (5) records carry no tag list (Wireshark `packet-tzsp.c`,
   commit e0929ac4, `dissect_tzsp`); they and any other type or encapsulation
   are kept as records, counted apart from packets, and never dissected as a
-  frame. `parseTzsp()` on `main` does not do this yet (#4).
+  frame. `parseTzsp()` reports this as `kind` (#4).
 
 Attribution:
 
@@ -119,7 +119,7 @@ The library never prints or exits (tikoci-cli-mcp, "Layers"). Proposed
 exports, all usable from Node and Bun:
 
 ```typescript
-parseTzsp(datagram: Uint8Array): TzspDatagram          // exists; see #4
+parseTzsp(datagram: Uint8Array): TzspDatagram          // exists: kind, datagram, problem
 dissect(frame: Uint8Array, options?): Dissection         // layers, never throws
 listen(options): AsyncIterable<Capture>                  // ports, limits, signal
 createFilter(spec): (capture: Capture) => boolean
