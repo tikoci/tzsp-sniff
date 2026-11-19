@@ -42,7 +42,7 @@ README.md is the user overview.
   test that showed it (tikoci-grounding). Protocol numbers from Wireshark are
   cited by file and commit; no Wireshark code is copied (it is GPL).
 - **Small items** go in [BACKLOG.md](BACKLOG.md); work with an end point is
-  an issue once the GitHub repo exists.
+  an issue.
 
 ## House skills
 

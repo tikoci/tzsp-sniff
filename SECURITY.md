@@ -1,6 +1,6 @@
 # Security Policy
 
-<!-- From tikoci-github SECURITY.example.md. The State column is the house default until the repo exists; fill it from the read-back in tikoci-github references/settings.md. -->
+<!-- From tikoci-github SECURITY.example.md. States read back with the commands in tikoci-github references/settings.md on 2026-11-19; the zizmor and bun audit rows are checked against .github/workflows. Read back again whenever a setting changes. -->
 
 ## Reporting a vulnerability
 
@@ -15,7 +15,7 @@ tzsp-sniff opens a UDP port and parses whatever datagrams arrive on it, from any
 
 ## Code scanning
 
-| Check | Planned state (house default, not yet applied) |
+| Check | State |
 | --- | --- |
 | CodeQL, default setup (`javascript-typescript`, `actions`), Extended suite | enabled |
 | zizmor workflow audit, reported to code scanning | enabled |
