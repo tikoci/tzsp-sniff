@@ -1,14 +1,98 @@
 /**
  * @tikoci/tzsp-sniff library entry point. The library never prints or exits
- * (tikoci-cli-mcp); a CLI, when it exists, is an adapter over these exports.
+ * (tikoci-cli-mcp); the `tzsp-sniff` CLI (src/cli/) is an adapter over these
+ * exports and is not exported here.
  */
+export {
+	type CaptureOptions,
+	type CaptureStream,
+	openCapture,
+} from "./capture.ts";
+export {
+	type ArpFields,
+	type ArpLayer,
+	type DataFields,
+	type DataLayer,
+	type DissectProblem,
+	type Dissection,
+	dissect,
+	type EthernetFields,
+	type EthernetLayer,
+	ICMP_TYPES,
+	ICMPV6_TYPES,
+	type IcmpFields,
+	type IcmpLayer,
+	IP_PROTOCOLS,
+	type Ipv4Fields,
+	type Ipv4Layer,
+	type Ipv6Extension,
+	type Ipv6Fields,
+	type Ipv6Layer,
+	type Layer,
+	MAX_IPV6_EXTENSIONS,
+	MAX_VLAN_TAGS,
+	type TcpFields,
+	type TcpLayer,
+	type UdpFields,
+	type UdpLayer,
+	type VlanFields,
+	type VlanLayer,
+} from "./dissect.ts";
+export {
+	CODES,
+	type Code,
+	type ErrorCode,
+	type TipCode,
+	TzspSniffError,
+	type WarningCode,
+} from "./errors.ts";
+export {
+	type BoundListener,
+	type Capture,
+	DEFAULT_QUEUE,
+	type Listener,
+	type ListenerCounters,
+	type ListenerEnd,
+	type ListenerSpec,
+	type ListenOptions,
+	listen,
+	type Peer,
+	type QueueLimits,
+} from "./listen.ts";
+export {
+	type Counters,
+	DETAILS,
+	type DatagramRecord,
+	type Detail,
+	datagramLine,
+	datagramRecord,
+	type HeaderRecord,
+	type PacketRecord,
+	packetLine,
+	packetRecord,
+	type Ranked,
+	type RecordLayer,
+	SCHEMA_VERSION,
+	type StopReason,
+	type StreamRecord,
+	type SummaryRecord,
+	type SummaryStatus,
+	type SummaryTables,
+	type TipRecord,
+	type WarningRecord,
+} from "./records.ts";
+export {
+	type StatsAccumulator,
+	type SummaryOptions,
+	summarize,
+} from "./summary.ts";
 export {
 	parseTzsp,
 	TZSP_ENCAPSULATIONS,
+	TZSP_MAX_TAGS,
 	TZSP_PORT,
 	TZSP_TAGS,
 	TZSP_TYPES,
-	TZSP_MAX_TAGS,
 	type TzspDatagram,
 	type TzspInvalidReason,
 	type TzspKind,
@@ -19,3 +103,4 @@ export {
 	type TzspUnsupportedReason,
 	toHex,
 } from "./tzsp.ts";
+export { VERSION } from "./version.ts";

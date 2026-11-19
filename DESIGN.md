@@ -139,10 +139,11 @@ exports, all usable from Node and Bun:
 
 ```typescript
 parseTzsp(datagram: Uint8Array): TzspDatagram          // exists: kind, datagram, problem
-dissect(frame: Uint8Array, options?): Dissection         // layers, never throws
-listen(options): AsyncIterable<Capture>                  // ports, limits, signal
+dissect(frame: Uint8Array): Dissection                   // exists: layers, never throws
+listen(options): Promise<Listener>                       // exists: ports, queue, signal
+openCapture(options): Promise<CaptureStream>             // exists: limits, counters, records
+summarize(): StatsAccumulator                            // exists: bounded, see Limits
 createFilter(spec): (capture: Capture) => boolean
-summarize(): StatsAccumulator                            // bounded, see Limits
 pcapngWriter(sink): CaptureWriter                        // streaming, with backpressure
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
@@ -160,6 +161,15 @@ dissectors(): DissectorInfo[]                            // what can be decoded
 
 A TUI, an MCP server or a centrs command is an adapter over these, not a
 second implementation.
+
+**Decided: `listen()` resolves once every port is bound** (first slice,
+2026-11-19), rather than returning an iterable that binds lazily. A bind
+failure then rejects before any record, and a caller that bound port 0
+learns the port before the router is pointed at it. The `Listener` is the
+async iterable, with the bound ports, its counters and a `closed` promise
+that resolves when every socket has closed. `openCapture()` is the shared
+core every surface uses: it adds the limits, dissection, counters and the
+record stream (`src/records.ts` has the record types).
 
 ### Lifecycle
 
@@ -185,7 +195,9 @@ released.
 **Requirement.** UDP cannot slow its sender, so every buffer is bounded:
 
 - **Queue**: a default budget of datagrams and bytes between the socket and
-  the consumer. When it is full, new datagrams are dropped and counted; a
+  the consumer: 10,000 datagrams or 16 MiB, whichever fills first
+  (`DEFAULT_QUEUE`; a few seconds of a busy stream, or 256 datagrams at the
+  UDP maximum). When it is full, new datagrams are dropped and counted; a
   `capture/dropped` warning and the summary give the count. A capture with
   drops never reports itself as complete.
 - **Summary**: conversation and sender tables are capped (a top-N plus an
@@ -220,10 +232,13 @@ the default.
   the flags it conflicts with. A flag given to a command it does not apply to
   is refused with a code that names where it does apply (tikoci-cli-mcp,
   "Refuse, never drop"): `decode --follow`; `--fields` or `--stats` with
-  `--format pcapng`; `--follow` with `--count` or `--duration`.
+  `--format pcapng`; `--follow` with `--count`, `--duration` or
+  `--idle`; `--detail` with `--stats`.
 - `--help` is answered before dispatch; the scan stops at a bare `--`. Tests
   hold registry and help in step, and cover `--`.
-- Every flag has a `TZSP_SNIFF_<KEY>` environment variable; a flag given on
+- Every flag has a `TZSP_SNIFF_<KEY>` environment variable (not built yet:
+  the first slice reads no environment variable, so a `.env` cannot reach
+  it); a flag given on
   the command line replaces the variable entirely (a repeated `--port`
   replaces the variable's list, it does not extend it), and `--no-<flag>`
   overrides a variable that turned it on.
@@ -256,8 +271,12 @@ its `tools` commands return; `tools btest` has the same question there.
 ### Counters and `--expect`
 
 **Requirement.** The summary counts, separately: datagrams received,
-control records, unsupported records, malformed datagrams, packets removed
-by filters, packets dropped by the queue, and packets reported. `--count`
+control records, unsupported records, invalid datagrams (truncated or
+malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
+dropped by the queue, datagrams still queued when a limit stopped the
+capture (`unread`), and packets reported; all but the first add up to it.
+The summary also says what stopped the capture (`stoppedBy`: `count`,
+`duration`, `idle`, `interrupt` or `error`). `--count`
 and `--expect` count **packets reported** (after filters). `--idle` is time
 since the last datagram received, of any kind, starting when the sockets
 are bound.
@@ -559,8 +578,6 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
 
 ## Open questions
 
-- The exact JSONL record fields and the queue budget, settled with the
-  first `listen` slice and pinned by tests.
 - Which `setup` filters translate to each sender (#8): #5 grounded the
   senders' framing, not the filters. Each flag needs its own CHR test of
   both senders before it translates; #5 saw `filter-operator-between-entries`

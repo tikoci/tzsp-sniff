@@ -10,3 +10,10 @@ Small items, one or two sentences each, deleted when done or declined
   tzsp-sniff must own the host socket (DESIGN.md, "Not quickchr's port map").
 - m2ir: add a LICENSE file matching the README's CC0-1.0 for schema
   content; nothing here is generated from m2ir until it has one (DESIGN.md).
+- Dissect TZSP inside UDP to the listener's port, capped, so the
+  `filter-stream=no` self-capture (#5 fixtures) reads as nested layers
+  rather than UDP data.
+- Test binding `::` and an IPv6 peer in the unit tier, once CI's runners are
+  known to have IPv6 loopback on all three OSes.
+- Consider a larger socket receive buffer (`recvBufferSize`) once a busy
+  capture shows kernel drops; check Bun supports the option first.

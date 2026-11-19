@@ -14,6 +14,9 @@
 			"default": "./dist/index.js"
 		}
 	},
+	"bin": {
+		"tzsp-sniff": "dist/cli/bin.js"
+	},
 	"files": [
 		"dist/",
 		"README.md",
@@ -37,7 +40,7 @@
 		"lint:fix": "biome check --write .",
 		"test": "bun test test/unit",
 		"test:coverage": "bun test --coverage test/unit",
-		"build": "rm -rf dist && bun build src/index.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
+		"build": "rm -rf dist && bun build src/index.ts src/cli/bin.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
 		"test:node": "node test/smoke/node-smoke.mjs",
 		"audit": "bun scripts/audit.ts"
 	},

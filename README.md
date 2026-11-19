@@ -12,39 +12,82 @@ few tokens, or a person can read on a terminal. It is built for RouterOS
 work, including CHRs under [quickchr](https://github.com/tikoci/quickchr),
 rather than as a general sniffer.
 
-> **Status: early.** Not yet published to npm. The library parses TZSP
-> datagrams today; the listener, dissectors and CLI are being designed.
+> **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
+> command) receives and decodes Ethernet, VLAN, ARP, IPv4, IPv6, ICMP, UDP
+> and TCP. Filters, `--write`, `decode` and `setup` are designed
+> ([DESIGN.md](DESIGN.md)) and not built yet.
 
 ## Use
 
+On the router (RouterOS 7), point the sniffer at this host:
+
+```routeros
+/tool/sniffer/set streaming-enabled=yes streaming-server=192.0.2.10:37008
+/tool/sniffer/start
+```
+
+A CHR under quickchr reaches the host at `10.0.2.2`. Then, on the host:
+
+```sh
+tzsp-sniff --count 10                     # ten packets, one line each
+tzsp-sniff --duration 30s --stats         # only the summary
+tzsp-sniff --format jsonl --follow        # a JSON record per line until Ctrl-C
+tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
+```
+
+```text
+11:13:43.607 10.0.2.15 > 10.0.2.3 icmp echo-request id=45568 seq=0 len=36
+11:13:43.609 10.0.2.3 > 10.0.2.15 icmp echo-reply id=45568 seq=0 len=36
+```
+
+With no limit, it stops after 10 seconds and says so, so a guessed command
+never hangs. stdout is the result; in text format the start line, warnings,
+tips and the summary go to stderr. `--detail line|summary|layers|full` sets
+how much each packet carries, cheapest first. A JSONL stream starts with a
+`header` record and ends with one `summary` (`complete`, `interrupted`,
+`incomplete` when datagrams were dropped, or `error`); a stream without a
+summary was cut off. An empty capture exits 0 with a warning saying which
+case it was (`capture/no-datagrams`, `capture/no-frames`); `--expect <n>`
+makes too few packets exit 1. `tzsp-sniff --help` has every flag.
+
+### Library
+
 The package will be `@tikoci/tzsp-sniff`, and runs on Node 22 or later or on
-Bun:
+Bun. The CLI is an adapter over these exports:
 
 ```typescript
-import { parseTzsp } from "@tikoci/tzsp-sniff";
+import { openCapture } from "@tikoci/tzsp-sniff";
+
+const capture = await openCapture({ ports: [{ port: 37008 }], count: 10 });
+for await (const record of capture) {
+  // header, then packet / record / warning, then summary
+  if (record.type === "packet") console.log(record.line, record.src, record.dst);
+}
+```
+
+`listen()` is the layer below: the sockets and a bounded queue, yielding
+each datagram with its arrival time, UDP peer and listener label.
+`dissect(frame)` decodes one Ethernet frame into layers, each with its span
+and fields. `parseTzsp(datagram)` reads the TZSP header:
+
+```typescript
+import { dissect, parseTzsp } from "@tikoci/tzsp-sniff";
 
 const record = parseTzsp(udpPayload);
 // { kind: "packet", datagram: udpPayload, version: 1, typeName: "received",
 //   encapsulationName: "ethernet", tags: [], payload: Uint8Array }
+if (record.kind === "packet") dissect(record.payload).protocols; // ["ethernet", "ipv4", "icmp"]
 ```
 
 `kind` says what the record is: `packet` (received Ethernet, the only kind
 whose `payload` is a frame to dissect), `control` (a keepalive or
 port-opener), `unsupported` (another type or encapsulation, or too many tags)
-or `invalid` (truncated or malformed). `parseTzsp` never throws. A
-`packet` or `control` record has no `problem`; an `unsupported` or `invalid`
-one always has a `problem` (`truncated`, `malformed` or `unsupported`) and a
-finer `reason`. An `unsupported` record can still carry a `payload` view (a
-transmit record, or a radiotap frame), so dispatch on `kind`, not on
-`payload`. `datagram` is always the input itself, a view of your buffer
-rather than a copy, so the bytes are kept whatever happened.
-
-On the router:
-
-```routeros
-/tool/sniffer set streaming-enabled=yes streaming-server=192.0.2.10:37008 filter-interface=ether2
-/tool/sniffer start
-```
+or `invalid` (truncated or malformed). Neither parser throws: a record or
+layer that cannot be read carries a `problem` (`truncated`, `malformed` or
+`unsupported`) and a finer `reason`, and keeps its bytes. An `unsupported`
+record can still carry a `payload` view (a transmit record, or a radiotap
+frame), so dispatch on `kind`, not on `payload`. `datagram` is always the
+input itself, a view of your buffer rather than a copy.
 
 ## Development
 
