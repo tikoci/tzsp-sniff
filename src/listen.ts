@@ -45,10 +45,11 @@ export interface ListenOptions {
 	queue?: Partial<QueueLimits>;
 }
 
+/** Frozen: shared by the listener and every datagram it received. */
 export interface BoundListener {
-	address: string;
-	port: number;
-	label: string;
+	readonly address: string;
+	readonly port: number;
+	readonly label: string;
 }
 
 /** The UDP peer as received: observed metadata, not a router's identity. */
@@ -310,6 +311,9 @@ export async function listen(
 			// A socket bound earlier failed and ended the listener, closing this
 			// one mid-bind: that first failure is the one to report.
 			if (failure) return abandon(failure);
+			// An abort while this bind was pending is the outcome, as it is when
+			// the bind succeeds.
+			if (signal?.aborted) return abandon(signal.reason);
 			return abandon(
 				new TzspSniffError(
 					"listen/bind-failed",
@@ -323,11 +327,13 @@ export async function listen(
 		// An abort between binds starts no further bind.
 		if (signal?.aborted) return abandon(signal.reason);
 		const port = socket.address().port;
-		const listener: BoundListener = {
+		// Frozen: every datagram from this socket refers to it, so a caller
+		// cannot relabel datagrams already queued or bypass the label check.
+		const listener: BoundListener = Object.freeze({
 			address: bind,
 			port,
 			label: spec.label ?? String(port),
-		};
+		});
 		bound.push(listener);
 		socket.on("message", (message, remote) => {
 			if (ended) return;
@@ -429,7 +435,7 @@ export async function listen(
 
 	return {
 		bind,
-		listeners: bound,
+		listeners: Object.freeze(bound),
 		queue,
 		counters,
 		boundAt,

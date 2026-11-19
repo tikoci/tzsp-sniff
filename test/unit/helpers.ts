@@ -209,6 +209,10 @@ export async function freePort(): Promise<number> {
 	// On Windows the port is free a few ms after close (see expectPortFree):
 	// wait for that, so the caller's own bind does not race it.
 	await expectPortFree(port);
+	// expectPortFree's own probe has just closed too, so on Windows wait out
+	// that release as well: 50 ms, five times the 10 ms measured there. A
+	// bind cannot prove it, since each probe ends with another close.
+	if (process.platform === "win32") await new Promise((r) => setTimeout(r, 50));
 	return port;
 }
 
@@ -292,10 +296,14 @@ export function openPty(): { master: number; slave: number } {
 			throw new Error("grantpt, unlockpt or ptsname failed");
 		}
 		const path = new CString(name).toString();
-		return {
-			master,
-			slave: openSync(path, constants.O_RDWR | constants.O_NOCTTY),
-		};
+		let slave: number;
+		try {
+			slave = openSync(path, constants.O_RDWR | constants.O_NOCTTY);
+		} catch (error) {
+			closeSync(master);
+			throw error;
+		}
+		return { master, slave };
 	} finally {
 		libc.close();
 	}
@@ -308,21 +316,31 @@ export function openPty(): { master: number; slave: number } {
  * a child still running `budgetMs` after SIGINT is killed (code null).
  */
 export async function stalledTerminal(command: string[], budgetMs: number) {
+	const start = (slave: number) =>
+		Bun.spawn(
+			[
+				...command,
+				"--bind",
+				"127.0.0.1",
+				"--port",
+				"0",
+				"--follow",
+				"--detail",
+				"full",
+			],
+			{ env: childEnv(), stdin: "ignore", stdout: slave, stderr: "pipe" },
+		);
 	const pty = openPty();
-	const proc = Bun.spawn(
-		[
-			...command,
-			"--bind",
-			"127.0.0.1",
-			"--port",
-			"0",
-			"--follow",
-			"--detail",
-			"full",
-		],
-		{ env: childEnv(), stdin: "ignore", stdout: pty.slave, stderr: "pipe" },
-	);
-	closeSync(pty.slave);
+	let proc: ReturnType<typeof start>;
+	try {
+		proc = start(pty.slave);
+	} catch (error) {
+		closeSync(pty.master);
+		throw error;
+	} finally {
+		// The child has its own copy; the test never writes to the terminal.
+		closeSync(pty.slave);
+	}
 	let stderr = "";
 	const drained = (async () => {
 		const decoder = new TextDecoder();

@@ -49,12 +49,13 @@ const isClosed = (error: Error) => {
  *   terminal leaves the write pending and `output/stalled` fires as it does
  *   for a pipe. (`fs.write` would not do on Node: its `process.exit()` then
  *   waits for the thread-pool thread stuck in `write()`.)
- * - Bun: there is no handle on a TTY stream (oven-sh/bun#47408 added one
- *   for pipes, not terminals), so the writes go through `fs.write`, which
- *   runs on the thread pool; the main thread stays free and Bun's
- *   `process.exit()` does not wait for that thread.
+ * - Bun: 1.4.5 has no handle on a TTY stream, so the writes go through
+ *   `fs.write`, which runs on the thread pool; the main thread stays free
+ *   and Bun's `process.exit()` does not wait for that thread. Bun
+ *   1.4.6-canary.1 has the handle, and there takes Node's route.
  *
- * Not a terminal, or Windows (not measured): the stream as it is.
+ * Not a terminal, or Windows: the stream as it is. Windows is not measured;
+ * Node writes a Windows stdout pipe synchronously (BACKLOG.md).
  */
 export function terminalStream(
 	stream: Writable & { isTTY?: boolean },

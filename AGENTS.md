@@ -22,7 +22,8 @@ README.md is the user overview.
 ## Layout
 
 - `src/`: shipped library code. `src/index.ts` is the package entry.
-- `test/unit/`: `bun:test`, no network or VM. `test/smoke/`: the Node check
+- `test/unit/`: `bun:test`, loopback sockets only: no external network and
+  no VM. `test/smoke/`: the Node check
   against `dist/`. `test/node/`: `bun:test` cases that run the built CLI
   under Node (after `bun run build`).
 - `scripts/`: repo tooling run by Bun.

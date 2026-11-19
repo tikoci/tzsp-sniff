@@ -100,6 +100,42 @@ describe("listen", () => {
 		}
 	});
 
+	test("an abort while a bind is pending is the outcome, even when that bind then fails", async () => {
+		const held = await holdPort();
+		try {
+			const controller = new AbortController();
+			const reason = new Error("stopped by the caller");
+			const pending = listen({
+				ports: [{ port: held.port }],
+				signal: controller.signal,
+			}).catch((e: unknown) => e);
+			// listen() is now waiting on the bind, which will fail: the port is held.
+			controller.abort(reason);
+			expect(await pending).toBe(reason);
+		} finally {
+			await closeSocket(held.socket);
+		}
+	});
+
+	test("bound listeners are frozen: queued datagrams keep their label", async () => {
+		const listener = await listen({ ports: [{ port: 0, label: "a" }] });
+		try {
+			const bound = listener.listeners[0] as { label: string };
+			expect(() => {
+				bound.label = "b";
+			}).toThrow(TypeError);
+			expect(() => {
+				(listener.listeners as unknown[]).push({});
+			}).toThrow(TypeError);
+			await send(portOf(listener), [KEEPALIVE]);
+			const first = await listener[Symbol.asyncIterator]().next();
+			expect(first.value?.listener.label).toBe("a");
+		} finally {
+			listener.close();
+			await listener.closed;
+		}
+	});
+
 	test("an already aborted signal opens nothing: no bind is even tried", async () => {
 		// A held port would fail a bind with listen/bind-failed; the abort comes first.
 		const held = await holdPort();

@@ -347,6 +347,7 @@ export const formatIpv6 = (b: Uint8Array, o = 0) => {
 
 /** Upper-layer context an IP layer passes down. */
 interface IpContext {
+	version: 4 | 6;
 	/** The packet is a first fragment: a transport length past its end is expected. */
 	fragment: boolean;
 	/** Where the IP header says its payload ends, which may be past the captured bytes. */
@@ -516,6 +517,23 @@ class Dissector {
 			operationName: ARP_OPERATIONS[operation] ?? `op-${operation}`,
 		};
 		const length = 8 + 2 * hlen + 2 * plen;
+		if (
+			hardwareType === 1 &&
+			protocolType === 0x0800 &&
+			(hlen !== 6 || plen !== 4)
+		) {
+			// Ethernet and IPv4 addresses with any other length contradict the
+			// types, whatever was captured after them.
+			this.layers.push({
+				protocol: "arp",
+				offset: start,
+				length: Math.min(length, end - start),
+				fields,
+				problem: "malformed",
+				reason: "address-length",
+			});
+			return;
+		}
 		if (end - start < length) {
 			this.layers.push({
 				protocol: "arp",
@@ -535,18 +553,6 @@ class Dissector {
 				fields,
 				problem: "unsupported",
 				reason: "address-type",
-			});
-			return;
-		}
-		if (hlen !== 6 || plen !== 4) {
-			// Ethernet and IPv4 addresses with any other length contradict the types.
-			this.layers.push({
-				protocol: "arp",
-				offset: start,
-				length,
-				fields,
-				problem: "malformed",
-				reason: "address-length",
 			});
 			return;
 		}
@@ -633,6 +639,7 @@ class Dissector {
 			return;
 		}
 		this.ipPayload(start + headerLength, payloadEnd, protocol, {
+			version: 4,
 			fragment: fields.moreFragments,
 			declaredEnd: start + totalLength,
 			cut: totalLength > available,
@@ -730,6 +737,12 @@ class Dissector {
 				fields.fragmentOffset = offsetFlags & 0xfff8;
 				fields.moreFragments = (offsetFlags & 1) !== 0;
 				fields.fragmentId = u32(b, offset + 4);
+				// Every fragment but the last carries a multiple of 8 bytes after
+				// the fragment header (RFC 8200, 4.5). Marked, and still read.
+				if (fields.moreFragments && (declaredEnd - offset - 8) % 8 !== 0) {
+					layer.problem ??= "malformed";
+					layer.reason ??= "fragment-length";
+				}
 			}
 			fields.extensions.push({ header: protocol, name, length });
 			protocol = u8(b, offset);
@@ -746,6 +759,7 @@ class Dissector {
 			return;
 		}
 		this.ipPayload(offset, payloadEnd, protocol, {
+			version: 6,
 			fragment: fields.moreFragments ?? false,
 			declaredEnd,
 			cut: declaredEnd > end,
@@ -755,10 +769,10 @@ class Dissector {
 	ipPayload(start: number, end: number, protocol: number, ip: IpContext) {
 		switch (protocol) {
 			case 1:
-				this.icmp(start, end, "icmp");
+				this.icmp(start, end, "icmp", ip);
 				return;
 			case 58:
-				this.icmp(start, end, "icmpv6");
+				this.icmp(start, end, "icmpv6", ip);
 				return;
 			case 6:
 				this.tcp(start, end, ip);
@@ -772,7 +786,7 @@ class Dissector {
 	}
 
 	// RFC 792 and RFC 4443: type, code, checksum, then a body that depends on the type.
-	icmp(start: number, end: number, protocol: "icmp" | "icmpv6") {
+	icmp(start: number, end: number, protocol: "icmp" | "icmpv6", ip: IpContext) {
 		const b = this.b;
 		const length = end - start;
 		if (length < 4) {
@@ -794,6 +808,8 @@ class Dissector {
 		const minimum =
 			(protocol === "icmp" ? ICMP_MINIMUM : ICMPV6_MINIMUM)[type] ?? 4;
 		if (length < minimum) {
+			// A whole first fragment: the message goes on in the next one.
+			if (ip.fragment && !ip.cut) return;
 			layer.problem = "truncated";
 			layer.reason = "message";
 			return;
@@ -816,11 +832,13 @@ class Dissector {
 		const b = this.b;
 		const available = end - start;
 		if (available < 8) {
+			// Fewer than 8 bytes declared contradicts the header; more declared
+			// than captured means the capture ended early.
 			this.layers.push({
 				protocol: "udp",
 				offset: start,
 				length: available,
-				problem: "truncated",
+				problem: ip.declaredEnd - start < 8 ? "malformed" : "truncated",
 				reason: "header",
 			});
 			return;
@@ -861,22 +879,28 @@ class Dissector {
 	tcp(start: number, end: number, ip: IpContext) {
 		const b = this.b;
 		const available = end - start;
-		// A whole first fragment too short for the TCP header: the header goes
-		// on in the next fragment, so this is fragment data, not a cut capture.
+		// IPv4 lets a first fragment end inside the TCP header, which goes on
+		// in the next fragment: fragment data, not a cut capture. IPv6 does not:
+		// its first fragment holds the whole upper-layer header (RFC 8200,
+		// 4.5), so there a short header is checked below like any other.
+		const splitAllowed = ip.version === 4 && ip.fragment;
 		const splitHeader =
-			ip.fragment &&
+			splitAllowed &&
 			!ip.cut &&
 			(available < 20 || (u8(b, start + 12) >> 4) * 4 > available);
 		if (splitHeader) {
 			this.data(start, end);
 			return;
 		}
+		/** A header past what the IP header declares contradicts it; within it, the capture ended. */
+		const short = (headerEnd: number): DissectProblem =>
+			!splitAllowed && headerEnd > ip.declaredEnd ? "malformed" : "truncated";
 		if (available < 20) {
 			this.layers.push({
 				protocol: "tcp",
 				offset: start,
 				length: available,
-				problem: "truncated",
+				problem: short(start + 20),
 				reason: "header",
 			});
 			return;
@@ -907,7 +931,7 @@ class Dissector {
 			return;
 		}
 		if (headerLength > available) {
-			layer.problem = "truncated";
+			layer.problem = short(start + headerLength);
 			layer.reason = "header";
 			return;
 		}

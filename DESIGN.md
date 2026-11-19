@@ -200,7 +200,8 @@ off the handle's blocking mode, on Bun, which has no handle on a TTY
 stream, through `fs.write` on the thread pool. `output/stalled` then
 fires as it does for a pipe. Tests put stdout on a libc pseudo-terminal
 that nobody reads, for Bun (`test/unit/bin.test.ts`) and for the built CLI
-under Node (`test/node/`); Windows consoles are not covered.
+under Node (`test/node/`). Windows is not covered: its consoles are not
+measured, and Node writes a Windows stdout pipe synchronously (BACKLOG.md).
 
 Tests for each: fail the second bind, cancel an idle capture, break the
 iteration, close the pipe, then bind the same port again to prove it was
@@ -341,9 +342,10 @@ different fix:
 with error `capture/expect-unmet`, also when the capture ended by SIGINT;
 the error carries the same case as the table. Without `--expect`, SIGINT
 ends a capture normally (summary written, exit 0). SIGINT before the
-sockets are bound, or a second SIGINT, exits 130, the shell's code for it:
-no header or summary was written, so it is not reported as an empty
-capture.
+sockets are bound exits 130, the shell's code for it: no header or summary
+was written, so it is not reported as an empty capture. A second SIGINT
+also exits 130, at once and without the summary; the stream may already
+hold a header and records, and its missing summary marks it cut off.
 
 ### Stream termination
 

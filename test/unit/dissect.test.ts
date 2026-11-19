@@ -169,7 +169,10 @@ describe("dissect: RouterOS captures", () => {
 		]);
 	});
 
-	test("a TCP SYN with options (7.26beta5 x86, quickchr CMR lab)", () => {
+	// RouterOS 7.26beta5 x86 CHR /tool/sniffer streaming, 2026-11-14, from
+	// tikoci/quickchr's CMR lab (examples/cmr/FINDINGS.md, "Wire"); the same
+	// bytes as CMR_SYN in tzsp.test.ts.
+	test("a TCP SYN with options (7.26beta5 x86, 2026-11-14, quickchr CMR lab)", () => {
 		const d = dissect(
 			frameOf(
 				"010000010102fcb1face5f026401f40b5808004500003c3b13400040067ba5c0000202c00002018c50d431a771961b00000000a002faf00c960000020405b40402080a0deb107c0000000001030306",
@@ -504,7 +507,12 @@ describe("dissect: IPv6", () => {
 	test("a later fragment is data, with the fragment header's fields", () => {
 		// Offset 185 units of 8 bytes (1480 bytes) in the top 13 bits, M set.
 		const fragment = `1100${((185 << 3) | 1).toString(16).padStart(4, "0")}0000abcd`;
-		const d = packet({ next: 44, extensions: fragment, payload: "aabb" });
+		const d = packet({
+			next: 44,
+			extensions: fragment,
+			payload: "aa".repeat(8),
+		});
+		expect(layer(d, "ipv6").problem).toBeUndefined();
 		expect(layer(d, "ipv6").fields).toMatchObject({
 			fragmentOffset: 1480,
 			moreFragments: true,
@@ -512,6 +520,31 @@ describe("dissect: IPv6", () => {
 			protocol: 17,
 		});
 		expect(d.protocols).toEqual(["ethernet", "ipv6", "data"]);
+	});
+
+	test("a fragment with M set must carry a multiple of 8 bytes", () => {
+		const fragment = `1100${((185 << 3) | 1).toString(16).padStart(4, "0")}0000abcd`;
+		const d = packet({ next: 44, extensions: fragment, payload: "aabb" });
+		expect(layer(d, "ipv6")).toMatchObject({
+			problem: "malformed",
+			reason: "fragment-length",
+		});
+		// Still read: the data after the fragment header is there.
+		expect(layer(d, "data").length).toBe(2);
+	});
+
+	test("a whole first fragment too short for the TCP header is malformed", () => {
+		// Offset 0, M set, next header TCP; 16 bytes of TCP (a multiple of 8).
+		const fragment = "0600000100000001";
+		const d = packet({
+			next: 44,
+			extensions: fragment,
+			payload: tcp({ sp: 1, dp: 2, flags: 2 }).slice(0, 32),
+		});
+		expect(layer(d, "tcp")).toMatchObject({
+			problem: "malformed",
+			reason: "header",
+		});
 	});
 
 	test(`more than ${MAX_IPV6_EXTENSIONS} extension headers stop as unsupported`, () => {
@@ -649,6 +682,20 @@ describe("dissect: cross-review vectors (#20)", () => {
 			problem: "malformed",
 			reason: "address-length",
 		});
+		// hlen 7 with only the 8-byte header captured: still the contradiction,
+		// not missing addresses.
+		const header = dissect(bytes(eth(0x0806, "0001080007040001")));
+		expect(layer(header, "arp")).toMatchObject({
+			length: 8,
+			problem: "malformed",
+			reason: "address-length",
+		});
+		// hlen 6 and plen 4, addresses not captured: truncated.
+		const cut = dissect(bytes(eth(0x0806, "0001080006040001")));
+		expect(layer(cut, "arp")).toMatchObject({
+			problem: "truncated",
+			reason: "addresses",
+		});
 	});
 
 	test("an AH header too short for its fixed fields is malformed", () => {
@@ -769,7 +816,16 @@ describe("dissect: ICMP, UDP, TCP", () => {
 			reason: "length",
 			fields: { payloadLength: 1 },
 		});
+		// Two bytes declared for UDP: no 8-byte header fits, whatever is captured.
 		expect(layer(v4(17, "0001"), "udp")).toMatchObject({
+			problem: "malformed",
+			reason: "header",
+		});
+		// Twenty declared, two captured: the capture ended inside the header.
+		const shortCut = dissect(
+			bytes(eth(0x0800, ipv4({ proto: 17, payload: "0001", totalLength: 40 }))),
+		);
+		expect(layer(shortCut, "udp")).toMatchObject({
 			problem: "truncated",
 			reason: "header",
 		});
@@ -792,15 +848,62 @@ describe("dissect: ICMP, UDP, TCP", () => {
 			problem: "malformed",
 			reason: "header-length",
 		});
-		expect(
-			layer(v4(6, tcp({ sp: 1, dp: 2, flags: 2, offset: 6 })), "tcp"),
-		).toMatchObject({
+		// Data offset 24 in a packet that declares 20 TCP bytes: a contradiction.
+		const noOptions = tcp({ sp: 1, dp: 2, flags: 2, offset: 6 });
+		expect(layer(v4(6, noOptions), "tcp")).toMatchObject({
+			problem: "malformed",
+			reason: "header",
+		});
+		// The packet declares 24, the capture holds 20: truncated.
+		const cutOptions = dissect(
+			bytes(
+				eth(0x0800, ipv4({ proto: 6, payload: noOptions, totalLength: 44 })),
+			),
+		);
+		expect(layer(cutOptions, "tcp")).toMatchObject({
 			problem: "truncated",
 			reason: "header",
 		});
 		expect(layer(v4(6, "0001"), "tcp")).toMatchObject({
+			problem: "malformed",
+			reason: "header",
+		});
+		const cutHeader = dissect(
+			bytes(eth(0x0800, ipv4({ proto: 6, payload: "0001", totalLength: 60 }))),
+		);
+		expect(layer(cutHeader, "tcp")).toMatchObject({
 			problem: "truncated",
 			reason: "header",
+		});
+	});
+
+	test("ICMP in a whole IPv4 first fragment may go on in the next one", () => {
+		// A 20-byte timestamp message, 16 bytes of it in this fragment (MF set).
+		const head = `0d000000${"00".repeat(12)}`;
+		const whole = dissect(
+			bytes(
+				eth(0x0800, ipv4({ proto: 1, payload: head, flagsOffset: 0x2000 })),
+			),
+		);
+		expect(layer(whole, "icmp").problem).toBeUndefined();
+		expect(whole.problem).toBeUndefined();
+		// The fragment declares 24 bytes but the capture holds 16: truncated.
+		const cut = dissect(
+			bytes(
+				eth(
+					0x0800,
+					ipv4({
+						proto: 1,
+						payload: head,
+						flagsOffset: 0x2000,
+						totalLength: 44,
+					}),
+				),
+			),
+		);
+		expect(layer(cut, "icmp")).toMatchObject({
+			problem: "truncated",
+			reason: "message",
 		});
 	});
 });
