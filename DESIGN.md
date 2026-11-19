@@ -382,16 +382,21 @@ with `--chain`).
   application protocols, negations and OR lists that would need several
   overlapping mangle rules (which could mirror a packet twice) are refused
   with a code that says to filter on the host instead. Which flags translate
-  is decided by CHR tests of both senders, not by matching names. #5 did not
-  test translation; it saw that `filter-operator-between-entries` defaults
-  to `or`, and that with `and`, `filter-ip-protocol=icmp,udp` streamed
-  nothing.
+  is decided by CHR tests of both senders, not by matching names (#8). #5 did
+  not test translation; it saw that `filter-operator-between-entries`
+  defaults to `or`, and that with `and`, `filter-ip-protocol=icmp,udp`
+  streamed nothing.
+- **Decided: `setup` does not force `filter-stream=yes`** (maintainer,
+  2026-11-19). #5 saw it default to `no`, and with `no` and a UDP filter the
+  sniffer captured its own stream. `--help`, and `setup`'s output when a
+  filter could match the stream, explain `filter-stream` and the filtering
+  options instead of setting it silently.
 - A broad mangle rule must not match its own TZSP output; `setup` adds the
   exclusion. In #5 (7.24.6 and 7.25.1 x86_64), an `output` rule matching
   UDP to the sniff target counted none of the TZSP datagrams another rule
   sent there; a `postrouting` rule counted them, and the sniffer's stream,
   and no further copy arrived. Only rules whose target was that same
-  address and port were tested.
+  address and port were tested; why no copy arrives is #9.
 
 ## Dissectors
 
@@ -556,8 +561,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
 
 - The exact JSONL record fields and the queue budget, settled with the
   first `listen` slice and pinned by tests.
-- Which `setup` filters translate to each sender: #5 grounded the senders'
-  framing, not the filters. Each flag needs its own CHR test of both
-  senders before it translates; #5 saw `filter-operator-between-entries`
+- Which `setup` filters translate to each sender (#8): #5 grounded the
+  senders' framing, not the filters. Each flag needs its own CHR test of
+  both senders before it translates; #5 saw `filter-operator-between-entries`
   default to `or`, and `and` with `filter-ip-protocol=icmp,udp` stream
   nothing.

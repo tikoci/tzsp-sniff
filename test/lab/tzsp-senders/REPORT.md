@@ -186,29 +186,18 @@ on arm64.
   (`sniffer-and-two-protocols`, `sniffer-or-two-protocols`). What `and`
   does with other combinations was not tested.
 
-## Suggested wording for `src/tzsp.ts`
+## Applied to `src/tzsp.ts`
 
-The header comment's RouterOS paragraph, for whoever next edits that file
-(#4 owns it now):
-
-```typescript
- * RouterOS: `/tool/sniffer` streaming and mangle `action=sniff-tzsp` sent
- * `01 00 00 01 01`, version 1, received, Ethernet, the end tag alone, for
- * ICMP on 7.25.1 and 7.24.6 x86_64 (KVM), and the sniffer on 7.25.1 arm64
- * (TCG), 2026-11-19 UTC (test/lab/tzsp-senders/REPORT.md, fixtures in
- * test/fixtures/routeros/). Mangle `sniff-id` added no tag: a sniff-tzsp
- * rule does not keep it, and `sniff-pc`, which does, does not send TZSP.
-```
+The header comment's RouterOS paragraph now states these results (PR #7).
 
 ## Open questions
 
 - Why mangle counts TZSP addressed to its own target in `postrouting` but
-  no copy arrives. A rule with a different target was not tested.
-- `setup` and `filter-stream`: it reads `false` by default, and `no` with a
-  UDP filter loops. Whether `setup` always prints `filter-stream=yes` is a
-  design decision, not made here.
+  no copy arrives (#9). A rule with a different target was not tested.
+- `setup` and `filter-stream`: decided, `setup` does not force
+  `filter-stream=yes`; `--help` explains it (DESIGN.md, "`setup`").
 - `setup`'s filter translation: each flag needs its own CHR test; the
-  `and` result above shows a name match is not enough.
+  `and` result above shows a name match is not enough (#8).
 - Not covered: physical routers, wireless (802.11 encapsulations), VLAN
   tags, IPv6, traffic other than ICMP echo, mangle `forward`, the `testing`
   and `development` channels, and mangle and the other sniffer settings on
