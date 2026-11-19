@@ -87,12 +87,17 @@ export interface Listener extends AsyncIterable<Capture> {
 	readonly listeners: readonly BoundListener[];
 	readonly queue: Readonly<QueueLimits>;
 	readonly counters: Readonly<ListenerCounters>;
-	/** When the last socket was bound, ms since the epoch. */
+	/**
+	 * When the last socket was bound. This and the other `…At` times are on
+	 * the monotonic clock (`performance.now()`), so elapsed time and the
+	 * capture's limits survive a wall-clock step; compare them with each
+	 * other, not with `Date.now()`. A datagram's `time` is wall time.
+	 */
 	readonly boundAt: number;
-	/** When the last datagram arrived, dropped or not. */
+	/** When the last datagram arrived, dropped or not (monotonic). */
 	readonly lastArrival: number | undefined;
 	readonly ended: ListenerEnd | undefined;
-	/** When intake stopped, ms since the epoch: the end of the capture's duration. */
+	/** When intake stopped (monotonic): the end of the capture's duration. */
 	readonly endedAt: number | undefined;
 	/**
 	 * Resolves once every socket has closed. Its port can then be bound
@@ -271,7 +276,7 @@ export async function listen(
 	const end = (how: ListenerEnd, error?: TzspSniffError) => {
 		if (ended) return;
 		ended = how;
-		endedAt = Date.now();
+		endedAt = performance.now();
 		failure = error;
 		items.length = 0;
 		head = 0;
@@ -329,7 +334,7 @@ export async function listen(
 			const time = Date.now();
 			seq += 1;
 			counters.received += 1;
-			lastArrival = time;
+			lastArrival = performance.now();
 			if (
 				counters.queued >= queue.datagrams ||
 				queuedBytes + message.length > queue.bytes
@@ -383,7 +388,7 @@ export async function listen(
 	}
 	if (signal)
 		abortRegistration = addAbortListener(signal, () => end("aborted"));
-	const boundAt = Date.now();
+	const boundAt = performance.now();
 	const closed = Promise.all(closedPromises).then(() => undefined);
 
 	const iterator: AsyncIterator<Capture> = {

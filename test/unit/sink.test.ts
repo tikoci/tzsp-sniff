@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Writable } from "node:stream";
 import { OutputClosedError } from "../../src/cli/main.ts";
-import { streamSink } from "../../src/cli/sink.ts";
+import { streamSink, unblockTerminal } from "../../src/cli/sink.ts";
 import { TzspSniffError } from "../../src/errors.ts";
 
 /** A stream whose writes never complete: a reader that stopped reading. */
@@ -62,5 +62,45 @@ describe("streamSink", () => {
 		await sink.write("x");
 		await sink.write("y");
 		expect(sink.failed).toBe(true);
+	});
+});
+
+describe("unblockTerminal", () => {
+	const fake = (isTTY: boolean, withHandle = true) => {
+		const calls: boolean[] = [];
+		const stream = {
+			isTTY,
+			_handle: withHandle
+				? {
+						setBlocking(b: boolean) {
+							calls.push(b);
+						},
+					}
+				: undefined,
+		};
+		return { stream, calls };
+	};
+
+	test("a terminal with a handle (Node) is made non-blocking", () => {
+		const { stream, calls } = fake(true);
+		expect(unblockTerminal(stream, "linux")).toBe(true);
+		expect(calls).toEqual([false]);
+	});
+
+	test("not a terminal, no handle (Bun), or Windows: left alone", () => {
+		for (const [tty, handle, platform] of [
+			[false, true, "linux"],
+			[true, false, "linux"],
+			[true, true, "win32"],
+		] as const) {
+			const { stream, calls } = fake(tty, handle);
+			expect({
+				tty,
+				handle,
+				platform,
+				done: unblockTerminal(stream, platform),
+			}).toEqual({ tty, handle, platform, done: false });
+			expect(calls).toEqual([]);
+		}
 	});
 });

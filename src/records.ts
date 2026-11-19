@@ -210,6 +210,14 @@ export interface PacketView {
 	protocol: string;
 }
 
+/**
+ * What a type/length field names: its EtherType, LLC when it is an 802.3
+ * length, or nothing for the reserved 1501 to 1535, which the dissector
+ * reports as `malformed/type-length`.
+ */
+const typeLengthName = (f: { etherType?: string; length?: number }) =>
+	f.etherType ?? (f.length !== undefined ? "llc" : undefined);
+
 export function viewPacket(d: Dissection): PacketView {
 	const view: PacketView = { vlan: [], protocol: "ethernet" };
 	for (const layer of d.layers) {
@@ -224,10 +232,10 @@ export function viewPacket(d: Dissection): PacketView {
 			case "ethernet":
 				view.src = layer.fields.src;
 				view.dst = layer.fields.dst;
-				view.protocol = layer.fields.etherType ?? "llc";
+				view.protocol = typeLengthName(layer.fields) ?? "ethernet";
 				break;
 			case "vlan":
-				view.protocol = layer.fields.etherType ?? "llc";
+				view.protocol = typeLengthName(layer.fields) ?? "vlan";
 				break;
 			case "arp":
 				view.protocol = "arp";
@@ -329,13 +337,13 @@ export function packetLine(d: Dissection): string {
 		const f = eth.fields;
 		const last = d.layers.findLast((l) => l.protocol !== "data") ?? eth;
 		let what: string = last.protocol;
-		if (last.protocol === "ethernet")
-			what = f.etherType ? `ethertype ${f.etherType}` : "llc";
-		else if (last.protocol === "vlan" && last.fields)
-			// An inner 802.3 length means LLC, as it does untagged.
-			what = last.fields.etherType
-				? `ethertype ${last.fields.etherType}`
-				: "llc";
+		const named = (fields: { etherType?: string; length?: number }) =>
+			fields.etherType
+				? `ethertype ${fields.etherType}`
+				: (typeLengthName(fields) ?? last.protocol);
+		if (last.protocol === "ethernet") what = named(f);
+		// An inner 802.3 length means LLC, as it does untagged.
+		else if (last.protocol === "vlan" && last.fields) what = named(last.fields);
 		parts.push(`${f.src} > ${f.dst} ${what} len=${d.frame.length}`);
 	} else {
 		parts.push(`ethernet len=${d.frame.length}`);

@@ -4,6 +4,7 @@
  * exports and is not exported here.
  */
 export {
+	type CaptureListener,
 	type CaptureOptions,
 	type CaptureStream,
 	openCapture,

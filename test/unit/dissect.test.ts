@@ -7,7 +7,7 @@ import {
 	MAX_IPV6_EXTENSIONS,
 	MAX_VLAN_TAGS,
 } from "../../src/dissect.ts";
-import { packetLine } from "../../src/records.ts";
+import { packetLine, viewPacket } from "../../src/records.ts";
 import { parseTzsp } from "../../src/tzsp.ts";
 import {
 	bytes,
@@ -609,6 +609,21 @@ describe("dissect: cross-review vectors (#20)", () => {
 		expect(packetLine(dissect(bytes(eth(0x8100, "000a88cc0207"))))).toBe(
 			`vlan 10 ${MAC_A} > ${MAC_B} ethertype 0x88cc len=20`,
 		);
+	});
+
+	test("a reserved type/length (1501 to 1535) is not named LLC, untagged or tagged", () => {
+		const untagged = dissect(bytes(eth(0x05dd, "00")));
+		expect(packetLine(untagged)).toBe(
+			`${MAC_A} > ${MAC_B} ethernet len=15 [malformed ethernet/type-length]`,
+		);
+		expect(viewPacket(untagged).protocol).toBe("ethernet");
+		const tagged = dissect(bytes(eth(0x8100, "000a05dd00")));
+		expect(packetLine(tagged)).toBe(
+			`vlan 10 ${MAC_A} > ${MAC_B} vlan len=19 [malformed vlan/type-length]`,
+		);
+		expect(viewPacket(tagged).protocol).toBe("vlan");
+		// A real 802.3 length is still LLC.
+		expect(viewPacket(dissect(bytes(eth(3, "424203")))).protocol).toBe("llc");
 	});
 
 	test("a VLAN tag's inner type/length follows the same rules", () => {

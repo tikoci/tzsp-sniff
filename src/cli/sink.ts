@@ -36,6 +36,30 @@ const isClosed = (error: Error) => {
 	return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
 };
 
+/**
+ * Make a terminal stream's writes non-blocking where the runtime allows it.
+ * Node makes TTY writes blocking on purpose, and a terminal that stops
+ * reading (Ctrl-S, a suspended viewer) then blocks the whole event loop: no
+ * stall timer, limit or SIGINT handler can run, and the UDP port stays bound
+ * (Node 26.12.1 and Bun 1.4.4 on Linux x86_64, an unread raw PTY, PR #20
+ * review). Node's handle has `setBlocking`, after which `output/stalled`
+ * fires as it does for a pipe. Bun's stream has no handle, so this is a
+ * no-op there and the hang remains (BACKLOG.md). Windows consoles were not
+ * measured, so they are left as Node sets them.
+ */
+export function unblockTerminal(
+	stream: { isTTY?: boolean },
+	platform: string = process.platform,
+): boolean {
+	if (!stream.isTTY || platform === "win32") return false;
+	const handle = (
+		stream as { _handle?: { setBlocking?: (b: boolean) => unknown } }
+	)._handle;
+	if (typeof handle?.setBlocking !== "function") return false;
+	handle.setBlocking(false);
+	return true;
+}
+
 export function streamSink(
 	stream: Writable,
 	options: StreamSinkOptions,

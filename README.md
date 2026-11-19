@@ -53,7 +53,10 @@ summary was cut off. `jq` reads the stream as it is, and `jq -s .` turns it
 into one array; there is no `--format json`, since a capture is a stream.
 An empty capture exits 0 with a warning saying which
 case it was (`capture/no-datagrams`, `capture/no-frames`); `--expect <n>`
-makes too few packets exit 1. `tzsp-sniff --help` has every flag.
+makes too few packets exit 1. To take the first few packets, use
+`--count <n>` rather than `| head`: a closed pipe is noticed only at the next
+write, so a quiet `--follow | head` waits for the next datagram.
+`tzsp-sniff --help` has every flag.
 
 ### Library
 

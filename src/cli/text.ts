@@ -53,12 +53,40 @@ const layerText = (l: RecordLayer) => {
 	return `  ${l.protocol} @${l.offset}+${l.length}${fields ? ` ${fields}` : ""}${problem}\n`;
 };
 
+/** The `summary` detail fields, in this order, when the record has them. */
+const SUMMARY_KEYS = [
+	"peer",
+	"length",
+	"kind",
+	"tzspType",
+	"protocols",
+	"src",
+	"srcPort",
+	"dst",
+	"dstPort",
+	"vlan",
+	"flags",
+	"problem",
+	"reason",
+] as const;
+
+const summaryFields = (r: PacketRecord | DatagramRecord) => {
+	const fields = r as Partial<Record<(typeof SUMMARY_KEYS)[number], unknown>>;
+	const parts = SUMMARY_KEYS.flatMap((key) => {
+		const v = fields[key];
+		if (v === undefined) return [];
+		return [`${key}=${Array.isArray(v) ? v.join(",") : String(v)}`];
+	});
+	return parts.length ? `  ${parts.join(" ")}\n` : "";
+};
+
 /** A packet or record: time, the listener when there are several, the line, then detail. */
 export function entryText(
 	r: PacketRecord | DatagramRecord,
 	showListener: boolean,
 ): string {
 	let text = `${r.time.slice(11, 23)}${showListener ? ` ${r.listener}` : ""} ${r.line}\n`;
+	text += summaryFields(r);
 	if (r.type === "packet" && r.layers) text += r.layers.map(layerText).join("");
 	if (r.type === "record" && r.tags) {
 		text += `  tags ${r.tags.map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;

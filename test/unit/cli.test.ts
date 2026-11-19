@@ -295,6 +295,13 @@ describe("main", () => {
 		expect(version.stdout()).toBe(`${VERSION}\n`);
 	});
 
+	test("--version still refuses a flag it would refuse without it", async () => {
+		const m = memoryIo();
+		expect(await main(["--format", "json", "--version"], m.io)).toBe(2);
+		expect(m.stdout()).toBe("");
+		expect(m.stderr()).toContain("error cli/invalid-value");
+	});
+
 	test("a usage error: exit 2, the code and fix on stderr, nothing on stdout", async () => {
 		const m = memoryIo();
 		expect(await main(["--format", "json"], m.io)).toBe(2);
@@ -379,6 +386,23 @@ describe("main", () => {
 			/^listening on UDP 0\.0\.0\.0:\d+, until 1 packets\n/,
 		);
 		expect(m.stderr()).toContain("summary: complete, stopped by count");
+	});
+
+	test("text --detail summary adds the summary fields under the line", async () => {
+		const m = memoryIo();
+		const run = main(
+			["--port", "0", "--count", "1", "--detail", "summary"],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		const [line, fields, ...rest] = m.stdout().split("\n");
+		expect(line).toMatch(/ icmp echo-request id=45568 seq=0 len=36$/);
+		expect(fields).toMatch(
+			/^ {2}peer=127\.0\.0\.1:\d+ length=\d+ protocols=ethernet,ipv4,icmp src=10\.0\.2\.15 dst=10\.0\.2\.3$/,
+		);
+		expect(rest).toEqual([""]);
 	});
 
 	test("text --stats: the summary is the result, on stdout", async () => {

@@ -53,9 +53,15 @@ export interface CaptureOptions extends ListenOptions {
  * being read; stopping early (`break`, `return()`) closes the sockets even
  * while a read is pending or before the first one.
  */
+/**
+ * The capture's listener without its datagram iterator: only the capture
+ * reads the queue, so every datagram is counted in its summary.
+ */
+export type CaptureListener = Omit<Listener, typeof Symbol.asyncIterator>;
+
 export interface CaptureStream extends AsyncIterable<StreamRecord> {
 	readonly header: HeaderRecord;
-	readonly listener: Listener;
+	readonly listener: CaptureListener;
 }
 
 /** The longest delay timers take on Node and Bun (2^31 - 1 ms, about 24.8 days). */
@@ -110,7 +116,7 @@ export async function openCapture(
 		schemaVersion: SCHEMA_VERSION,
 		tool: "tzsp-sniff",
 		version: VERSION,
-		time: isoTime(listener.boundAt),
+		time: isoTime(Date.now()),
 		bind: listener.bind,
 		listeners: listener.listeners.map(({ port, label }) => ({ port, label })),
 		limits,
@@ -145,7 +151,7 @@ export async function openCapture(
 		// One timer, moved forward to the last arrival each time it fires early.
 		const check = () => {
 			const last = listener.lastArrival ?? listener.boundAt;
-			const left = last + idleMs - Date.now();
+			const left = last + idleMs - performance.now();
 			if (left <= 0) stop("idle");
 			else idleTimer = setTimeout(check, left);
 		};
@@ -215,7 +221,7 @@ export async function openCapture(
 		stoppedBy ??= listener.ended === "error" ? "error" : "interrupt";
 		// The capture's duration ends when intake stopped, not when the caller
 		// gets around to the summary.
-		const endedAt = listener.endedAt ?? Date.now();
+		const endedAt = listener.endedAt ?? performance.now();
 		counters.datagrams = listener.counters.received;
 		counters.dropped = listener.counters.dropped;
 		counters.unread = listener.counters.queued;
@@ -293,10 +299,39 @@ export async function openCapture(
 		yield summary;
 	}
 
+	const view: CaptureListener = {
+		get bind() {
+			return listener.bind;
+		},
+		get listeners() {
+			return listener.listeners;
+		},
+		get queue() {
+			return listener.queue;
+		},
+		get counters() {
+			return listener.counters;
+		},
+		get boundAt() {
+			return listener.boundAt;
+		},
+		get lastArrival() {
+			return listener.lastArrival;
+		},
+		get ended() {
+			return listener.ended;
+		},
+		get endedAt() {
+			return listener.endedAt;
+		},
+		closed: listener.closed,
+		close: () => listener.close(),
+	};
+
 	let used = false;
 	return {
 		header,
-		listener,
+		listener: view,
 		[Symbol.asyncIterator](): AsyncIterator<StreamRecord> {
 			if (used) {
 				throw new TzspSniffError(

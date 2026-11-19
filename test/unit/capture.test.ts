@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createSocket, type Socket, type SocketOptions } from "node:dgram";
+import { join } from "node:path";
 import {
 	type CaptureOptions,
 	type CaptureStream,
@@ -165,6 +166,24 @@ describe("openCapture", () => {
 		const stoppedAt = stream.listener.endedAt as number;
 		expect(arrival - stream.listener.boundAt).toBeGreaterThanOrEqual(90);
 		expect(stoppedAt - arrival).toBeGreaterThanOrEqual(140);
+	});
+
+	test("a wall-clock step back changes neither the idle stop nor the duration", async () => {
+		const realNow = Date.now;
+		const started = performance.now();
+		try {
+			const { summary } = await readAll({ idleMs: 30 }, async () => {
+				// As if NTP stepped the clock 2 s back just after the bind.
+				Date.now = () => realNow() - 2000;
+			});
+			expect(summary.stoppedBy).toBe("idle");
+			// It stopped about 30 ms after the bind, not 2 s later.
+			expect(performance.now() - started).toBeLessThan(1000);
+			expect(summary.durationMs).toBeGreaterThanOrEqual(25);
+			expect(summary.durationMs).toBeLessThan(1000);
+		} finally {
+			Date.now = realNow;
+		}
 	});
 
 	test("--expect unmet: status error, the code, and the empty case", async () => {
@@ -413,6 +432,49 @@ describe("openCapture", () => {
 			datagrams: 1,
 			unread: 1,
 		});
+	});
+
+	test("the stream's listener cannot be read past the capture", async () => {
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			durationMs: 5000,
+		});
+		try {
+			expect(Symbol.asyncIterator in stream.listener).toBe(false);
+			// @ts-expect-error: the type has no iterator either.
+			stream.listener[Symbol.asyncIterator];
+		} finally {
+			stream.listener.close();
+			await stream.listener.closed;
+		}
+	});
+
+	test("an aborted capture nobody reads leaves no timer behind", async () => {
+		// Bun's process.getActiveResourcesInfo() lists no timers, so watch the
+		// effect instead: a leaked 60 s timer keeps the process alive.
+		const script = `
+			import { openCapture } from ${JSON.stringify(join(import.meta.dir, "../../src/capture.ts"))};
+			const controller = new AbortController();
+			const stream = await openCapture({
+				ports: [{ port: 0 }],
+				durationMs: 60_000,
+				idleMs: 60_000,
+				signal: controller.signal,
+			});
+			controller.abort();
+			await stream.listener.closed;
+		`;
+		const child = Bun.spawn([process.execPath, "--no-env-file", "-e", script], {
+			stdout: "ignore",
+			stderr: "pipe",
+		});
+		const timer = setTimeout(() => child.kill(), 5000);
+		try {
+			expect(await child.exited).toBe(0);
+			expect(child.signalCode).toBeNull();
+		} finally {
+			clearTimeout(timer);
+		}
 	});
 
 	test("an abort ends intake for good: a duration that fires later does not become the reason", async () => {

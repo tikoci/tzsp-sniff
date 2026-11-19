@@ -15,5 +15,9 @@ Small items, one or two sentences each, deleted when done or declined
   rather than UDP data.
 - Test binding `::` and an IPv6 peer in the unit tier, once CI's runners are
   known to have IPv6 loopback on all three OSes.
+- Under Bun, a terminal that stops reading (Ctrl-S, an unread PTY) still
+  blocks the event loop, so neither `output/stalled` nor SIGINT can end the
+  capture; Node is fixed by `unblockTerminal` (PR #20 review). Find a Bun
+  way to make TTY writes non-blocking, or move them off the main thread.
 - Consider a larger socket receive buffer (`recvBufferSize`) once a busy
   capture shows kernel drops; check Bun supports the option first.

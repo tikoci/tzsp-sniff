@@ -6,7 +6,7 @@
  * npx").
  */
 import { type Io, main } from "./main.ts";
-import { streamSink } from "./sink.ts";
+import { streamSink, unblockTerminal } from "./sink.ts";
 
 /** One write may take this long before stdout counts as stalled. */
 const STALL_MS = 30_000;
@@ -24,6 +24,10 @@ const onSignal = () => {
 process.on("SIGINT", onSignal);
 process.on("SIGTERM", onSignal);
 
+// A terminal that stops reading must not block the event loop that times
+// the write out (see unblockTerminal).
+unblockTerminal(process.stdout);
+unblockTerminal(process.stderr);
 const stdout = streamSink(process.stdout, {
 	required: true,
 	stallMs: STALL_MS,

@@ -186,6 +186,16 @@ releases all of them on every way a capture can end:
   and close every socket;
 - asynchronous `dgram` errors after bind end the capture with a coded error.
 
+A closed stdout pipe is seen at the next write: a pipe gives no sign that
+its reader left while nothing is written (on Linux, a zero-byte write to a
+pipe returns before it checks for a reader), so a quiet `--follow | head`
+ends at the next datagram, a limit or Ctrl-C. `--count` stops on its own.
+A terminal that stops reading (Ctrl-S) would block the event loop under
+Node's blocking TTY writes; the CLI makes its terminal streams non-blocking
+so `output/stalled` fires as it does for a pipe (`unblockTerminal` in
+`src/cli/sink.ts`). Bun offers no such switch, so there the hang remains
+(BACKLOG.md).
+
 Tests for each: fail the second bind, cancel an idle capture, break the
 iteration, close the pipe, then bind the same port again to prove it was
 released. On Windows the OS frees a UDP port a few milliseconds after the
@@ -336,7 +346,8 @@ code when there is one. Between them: `packet`, `record` (control,
 unsupported or malformed), `warning` and `tip`, as they happen. A stream
 with no `summary` was cut off (the process was killed or the pipe broke)
 and a reader treats it as failed. In text and pcapng formats, warnings, tips, errors and
-the summary go to stderr. Tests read each stream to EOF and check the last
+the summary go to stderr, except that text with `--stats` writes the summary to
+stdout as the result. Tests read each stream to EOF and check the last
 record, not only the ones before it.
 
 ### `--write`: capture now, look later

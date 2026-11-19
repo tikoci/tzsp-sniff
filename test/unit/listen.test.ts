@@ -53,7 +53,8 @@ describe("listen", () => {
 			expect(first.listener.label).toBe("chr");
 			expect(first.peer.address).toBe("127.0.0.1");
 			expect(first.peer.port).toBeGreaterThan(0);
-			expect(first.time).toBeGreaterThanOrEqual(listener.boundAt);
+			// time is wall time; the listener's …At times are monotonic.
+			expect(Math.abs(Date.now() - first.time)).toBeLessThan(5000);
 			expect(first.tzsp.kind).toBe("packet");
 			expect(second.tzsp.kind).toBe("control");
 			expect(Array.from(first.datagram)).toEqual(Array.from(bytes(REQUEST)));
@@ -67,7 +68,8 @@ describe("listen", () => {
 				dropped: 0,
 				queued: 0,
 			});
-			expect(listener.lastArrival).toBe(second.time);
+			expect(listener.lastArrival).toBeGreaterThanOrEqual(listener.boundAt);
+			expect(listener.lastArrival).toBeLessThanOrEqual(performance.now());
 		} finally {
 			listener.close();
 			await listener.closed;

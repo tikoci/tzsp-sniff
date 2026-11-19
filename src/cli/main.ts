@@ -291,7 +291,10 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 	let planned: Plan | "version";
 	try {
 		const args = parseArgs(argv);
-		planned = args.flags.has("version") ? "version" : plan(args);
+		// Plan even for --version, so a flag it would refuse is refused here
+		// too; only --help comes first, so a broken command can still ask.
+		const checked = plan(args);
+		planned = args.flags.has("version") ? "version" : checked;
 	} catch (error) {
 		if (!(error instanceof TzspSniffError)) throw error;
 		await io.stderr.write(errorText(error));
