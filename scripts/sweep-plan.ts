@@ -10,6 +10,7 @@
  * Prints the matrix and, in CI, writes `matrix=<json>` to $GITHUB_OUTPUT.
  */
 import { appendFile } from "node:fs/promises";
+import { resolveAllVersions, selectActiveChannels } from "@tikoci/quickchr";
 
 export interface Leg {
 	/** The version to boot. */
@@ -42,16 +43,8 @@ export function plan(
 }
 
 if (import.meta.main) {
-	// quickchr ships TypeScript source that this repo's tsc settings reject
-	// (exactOptionalPropertyTypes), so it is imported by a name tsc does not
-	// resolve and typed here by what this script uses (test/chr/quickchr.ts).
-	const name: string = "@tikoci/quickchr";
-	const quickchr = (await import(name)) as {
-		resolveAllVersions(): Promise<Record<string, string>>;
-		selectActiveChannels(versions: Record<string, string>): string[];
-	};
-	const versions = await quickchr.resolveAllVersions();
-	const legs = plan(versions, quickchr.selectActiveChannels(versions));
+	const versions = await resolveAllVersions();
+	const legs = plan(versions, selectActiveChannels(versions));
 	const matrix = JSON.stringify(legs);
 	console.log(`resolved: ${JSON.stringify(versions)}`);
 	console.log(`matrix=${matrix}`);

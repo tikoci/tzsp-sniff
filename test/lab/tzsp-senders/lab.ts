@@ -8,7 +8,7 @@
  *
  * Safety. Each router is a machine this run creates and owns: the name is
  * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created with
- * `quickchr add`, which refuses an existing name (test/chr/quickchr.ts,
+ * quickchr's `add`, which refuses an existing name (test/chr/quickchr.ts,
  * shared with the integration tier). Only owned machines are configured or
  * removed. They are removed when the run ends, fails, or gets
  * SIGINT or SIGTERM (after the work in flight stops), and removal is
@@ -742,7 +742,7 @@ async function scpPull(machine: string, remote: string): Promise<Buffer> {
 	if (!/^[\w.-]+$/.test(remote)) throw new StepError("unexpected file name");
 	const { sshPort: ssh, auth } = await services(machine);
 	if (!ssh || !auth)
-		throw new StepError("no SSH port or login in quickchr inspect");
+		throw new StepError("no SSH port or login in quickchr's descriptor");
 	const dir = await mkdtemp(join(tmpdir(), "tzsp-lab-"));
 	tempDirs.add(dir);
 	try {
@@ -816,7 +816,7 @@ async function lab(target: Target): Promise<boolean> {
 		});
 		ev.listenerPort = await listener.open();
 		ev.bootMs = await start(ev.machine);
-		ev.accelerator = await accelerator(ev.machine);
+		ev.accelerator = accelerator(ev.machine);
 		const rest = await services(ev.machine);
 		const router = new Router(rest.restUrl, rest.basic);
 		ev.router = await router.identity();

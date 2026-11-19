@@ -1,35 +1,36 @@
 /**
- * CHR machines through the quickchr CLI, shared by the lab
+ * CHR machines through quickchr's library, shared by the lab
  * (test/lab/tzsp-senders/) and the integration tier (test/integration/).
  *
- * The CLI, not quickchr's library: quickchr ships TypeScript source, and
- * this repo's tsc settings (exactOptionalPropertyTypes) reject it, so a
- * static import fails `bun run lint:types` (quickchr 0.5.6). The CLI is the
- * devDependency's own (`node_modules/.bin/quickchr`), run by this Bun.
- *
  * Safety. Each machine is one this process creates and owns: a random name
- * with a fixed prefix, checked absent, then created with `quickchr add`,
- * which refuses an existing name. Only owned machines are configured or
- * removed, and removal is verified (`teardown`). A signal stops the running
- * children and REST calls (`stopping`); the caller then removes its machines.
+ * with a fixed prefix, checked absent, then created with `QuickCHR.add`,
+ * which refuses an existing name (`MACHINE_EXISTS`). Only owned machines are
+ * configured or removed, and removal is verified (`teardown`). A signal
+ * stops the running children and REST calls (`stopping`); the caller then
+ * removes its machines. A quickchr call already running in this process is
+ * not interrupted: `remove` waits for its machine lock instead.
  */
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import {
+	CHANNELS,
+	type Channel,
+	type ChrInstance,
+	defaultBootTimeout,
+	QuickCHR,
+	type StartOptions,
+} from "@tikoci/quickchr";
 
 export const ROOT = join(import.meta.dir, "..", "..");
-const QUICKCHR = join(ROOT, "node_modules", ".bin", "quickchr");
 
 /**
- * Deadlines. `quickchr start` keeps quickchr's own boot budget (its
- * BOOT_TIMEOUT), so this module adds none. Teardown waits for quickchr,
- * which itself waits for a `start` of the same machine still in progress.
+ * quickchr waits for a machine's lock before `remove`, up to its boot budget
+ * (`lifecycleLockWaitMs`, quickchr 0.6.0), then stops QEMU. The integration
+ * tier's `afterAll` lets setup settle first, so this covers the stop.
  */
 export const TEARDOWN_MS = 180_000;
-export const QUICKCHR_MS = 30_000;
-/** quickchr 0.5.2 and 0.5.6 for a name it does not know: `Machine "<name>" not found.`, exit 1. */
-const NOT_FOUND = /Machine "[^"]+" not found/;
 
 /**
  * What to boot: a channel or an exact version, and the guest architecture.
@@ -45,6 +46,20 @@ export interface Target {
 /** The guest architecture this host runs natively (no cross-architecture emulation). */
 export const hostArch = (): Target["arch"] =>
 	process.arch === "arm64" ? "arm64" : "x86";
+
+/**
+ * quickchr's boot budget for `arch`, in ms: `defaultBootTimeout` at its
+ * slowest (TCG) accelerator, plus QUICKCHR_TIMEOUT_EXTRA (seconds, as the
+ * quickchr CLI reads it), which `start` passes on as `timeoutExtra`.
+ */
+export const bootBudget = (arch: Target["arch"]): number =>
+	defaultBootTimeout(arch, false, "tcg") + timeoutExtra();
+
+const timeoutExtra = (): number =>
+	Number(process.env.QUICKCHR_TIMEOUT_EXTRA ?? 0) * 1000 || 0;
+
+/** quickchr's progress lines, which it prints to stdout unless given a callback. */
+const onProgress = (message: string) => console.error(`quickchr: ${message}`);
 
 /** Child processes get an allowlisted env, never a copy of process.env (tikoci-testing). */
 export function childEnv(
@@ -114,14 +129,6 @@ export function run(
 	});
 }
 
-/** Run the quickchr CLI (the devDependency) under this Bun. */
-export function quickchr(
-	args: string[],
-	opts: { timeoutMs?: number } = {},
-): Promise<Ran> {
-	return run([process.execPath, "--no-env-file", QUICKCHR, ...args], opts);
-}
-
 /* ------------------------------------------------- ownership and cleanup */
 
 /** Machines this process created, by name. Nothing else is configured or removed. */
@@ -131,21 +138,37 @@ export const tempDirs = new Set<string>();
 const removals = new Map<string, Promise<boolean>>();
 /** `create` calls still running, so cleanup waits for a machine mid-`add`. */
 const provisioning = new Set<Promise<unknown>>();
+/** Handles from `start`, by machine name. */
+const instances = new Map<string, ChrInstance>();
 
-/** Remove one owned machine and confirm `quickchr list` no longer knows it. */
+/** quickchr knows nothing by this name: no machine, and no half-made directory. */
+const absent = (name: string) =>
+	QuickCHR.get(name) === null && !QuickCHR.listOrphans().includes(name);
+
+/**
+ * Remove one owned machine and confirm quickchr no longer knows it. A
+ * directory an interrupted `add` left without its state (quickchr's
+ * `listOrphans`) is removed too.
+ */
 export function teardown(name: string): Promise<boolean> {
 	const pending = removals.get(name);
 	if (pending) return pending;
 	const p = (async () => {
-		await quickchr(["remove", name], { timeoutMs: TEARDOWN_MS });
-		const left = await quickchr(["list", name, "--json"], {
-			timeoutMs: QUICKCHR_MS,
-		});
-		const gone =
-			left.code !== 0 &&
-			!left.timedOut &&
-			NOT_FOUND.test(left.stdout + left.stderr);
-		if (gone) owned.delete(name);
+		try {
+			const machine = QuickCHR.get(name);
+			if (machine) await machine.remove();
+			else QuickCHR.removeOrphan(name);
+		} catch (e) {
+			console.error(`quickchr remove ${name}: ${message(e)}`);
+		}
+		let gone = false;
+		try {
+			gone = absent(name);
+		} catch {}
+		if (gone) {
+			owned.delete(name);
+			instances.delete(name);
+		}
 		return gone;
 	})();
 	removals.set(name, p);
@@ -154,8 +177,8 @@ export function teardown(name: string): Promise<boolean> {
 
 /** Remove every owned machine and temp dir; return the machines still present. */
 export async function cleanupAll(): Promise<string[]> {
-	// A machine whose `add` is still running joins `owned` when it settles;
-	// each `run` has a deadline, so this wait is bounded.
+	// A machine whose `add` is still running joins `owned` before `add`
+	// starts; waiting lets `add` finish or roll back before removal.
 	await Promise.allSettled([...provisioning]);
 	const names = [...owned];
 	const results = await Promise.all(names.map((n) => teardown(n)));
@@ -179,6 +202,8 @@ export function stop(): void {
 
 /* ------------------------------------------------------------- machines */
 
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 /** Create a machine this process owns, named `<prefix>-<random>`, or throw having touched nothing. */
 export function create(prefix: string, target: Target): Promise<string> {
 	const p = provision(prefix, target);
@@ -187,68 +212,48 @@ export function create(prefix: string, target: Target): Promise<string> {
 	return p;
 }
 
-const CHANNELS = ["stable", "long-term", "testing", "development"];
-
 async function provision(prefix: string, target: Target): Promise<string> {
 	if (stopping.signal.aborted)
 		throw new Error("interrupted; not creating a machine");
 	const name = `${prefix}-${randomBytes(4).toString("hex")}`;
-	const exists = await quickchr(["list", name, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	// Only quickchr's own "not found" proves the name is free; a timeout or
-	// any other failure stops here, before `add`.
-	if (exists.code === 0)
-		throw new Error(`${name} already exists; not touching it`);
-	if (exists.timedOut || !NOT_FOUND.test(exists.stdout + exists.stderr))
-		throw new Error(
-			`quickchr list ${name} ${exists.timedOut ? "timed out" : `exited ${exists.code}`}; not creating a machine`,
-		);
-	if (stopping.signal.aborted)
-		throw new Error("interrupted; not creating a machine");
-	const which = [
-		CHANNELS.includes(target.routeros) ? "--channel" : "--version",
+	if (!absent(name)) throw new Error(`${name} already exists; not touching it`);
+	const which: StartOptions = (CHANNELS as readonly string[]).includes(
 		target.routeros,
-		"--arch",
-		target.arch,
-	];
-	// The image first, under quickchr's own download budget (a stall timeout
-	// and a size-scaled transfer budget, quickchr 0.5.6 download.ts), so the
-	// deadline on `add` below never kills a cold download.
-	const cached = await quickchr(["cache", "add", ...which]);
-	if (cached.code !== 0)
-		throw new Error(
-			`quickchr cache add exited ${cached.code}: ${lastLine(cached)}`,
-		);
-	if (stopping.signal.aborted)
-		throw new Error("interrupted; not creating a machine");
+	)
+		? { channel: target.routeros as Channel }
+		: { version: target.routeros };
 	// Owned from here: the name was absent and is random, and `add` refuses
-	// an existing name, so what `add` leaves behind is this process's.
+	// an existing name, so what `add` leaves behind is this process's. `add`
+	// downloads the image under quickchr's own download budget.
 	owned.add(name);
-	const added = await quickchr(["add", "--name", name, ...which], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	if (added.code !== 0) {
-		if (/MACHINE_EXISTS/.test(added.stdout + added.stderr)) owned.delete(name);
-		throw new Error(
-			`quickchr add ${name} exited ${added.code}: ${lastLine(added)}`,
-		);
+	try {
+		await QuickCHR.add({ name, arch: target.arch, ...which, onProgress });
+	} catch (e) {
+		if ((e as { code?: string }).code === "MACHINE_EXISTS") owned.delete(name);
+		throw new Error(`quickchr add ${name}: ${message(e)}`);
 	}
 	return name;
 }
 
-const lastLine = (r: Ran) =>
-	(r.stderr.trim() || r.stdout.trim()).split("\n").at(-1) ?? "";
-
 /** Boot an owned machine with quickchr's own boot budget; returns the boot time in ms. */
 export async function start(name: string): Promise<number> {
+	if (!owned.has(name)) throw new Error(`${name} is not this run's machine`);
 	const t0 = Date.now();
-	const started = await quickchr(["start", name]);
-	if (started.code !== 0)
-		throw new Error(
-			`quickchr start exited ${started.code}: ${lastLine(started)}`,
+	try {
+		instances.set(
+			name,
+			await QuickCHR.start({ name, timeoutExtra: timeoutExtra(), onProgress }),
 		);
+	} catch (e) {
+		throw new Error(`quickchr start ${name}: ${message(e)}`);
+	}
 	return Date.now() - t0;
+}
+
+function instance(name: string): ChrInstance {
+	const chr = instances.get(name);
+	if (!chr) throw new Error(`${name} was not started by this run`);
+	return chr;
 }
 
 export interface Services {
@@ -260,28 +265,21 @@ export interface Services {
 	auth?: { username: string; password: string };
 }
 
-/** The connection facts `quickchr inspect` gives for a running machine. */
+/** The connection facts quickchr's descriptor gives for a running machine. */
 export async function services(name: string): Promise<Services> {
-	const inspect = await quickchr(["inspect", name, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	const info = JSON.parse(inspect.stdout) as {
-		services: Record<
-			string,
-			{
-				url?: string;
-				port?: number;
-				auth?: { basic?: string; username: string; password: string };
-			}
-		>;
+	const { services: s } = await instance(name).descriptor();
+	const rest = s["rest-api"];
+	if (!rest.available || !rest.url || rest.auth?.basic === undefined)
+		throw new Error("quickchr's descriptor has no rest-api service");
+	const out: Services = {
+		restUrl: rest.url,
+		basic: rest.auth.basic,
+		auth: {
+			username: rest.auth.username,
+			password: rest.auth.password ?? "",
+		},
 	};
-	const rest = info.services["rest-api"];
-	if (!rest?.url || rest.auth?.basic === undefined)
-		throw new Error("quickchr inspect has no rest-api service");
-	const out: Services = { restUrl: rest.url, basic: rest.auth.basic };
-	const ssh = info.services.ssh?.port;
-	if (ssh !== undefined) out.sshPort = ssh;
-	out.auth = { username: rest.auth.username, password: rest.auth.password };
+	if (s.ssh.available) out.sshPort = s.ssh.port;
 	return out;
 }
 
@@ -291,14 +289,7 @@ export async function services(name: string): Promise<Services> {
  * Returns the files written; a log that is not there is skipped.
  */
 export async function saveLogs(name: string, dir: string): Promise<string[]> {
-	const listed = await quickchr(["list", name, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	let machineDir: string | undefined;
-	try {
-		machineDir = (JSON.parse(listed.stdout) as { machineDir?: string })
-			.machineDir;
-	} catch {}
+	const machineDir = QuickCHR.get(name)?.state.machineDir;
 	if (!machineDir) return [];
 	const saved: string[] = [];
 	for (const log of ["qemu.log", "serial.log"]) {
@@ -311,23 +302,23 @@ export async function saveLogs(name: string, dir: string): Promise<string[]> {
 	return saved;
 }
 
-/** The `-accel` QEMU was started with, read from its command line (Linux /proc). */
-export async function accelerator(name: string): Promise<string> {
-	const listed = await quickchr(["list", name, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	try {
-		const { pid } = JSON.parse(listed.stdout) as { pid?: number };
-		const argv = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
-		const i = argv.indexOf("-accel");
-		return i >= 0 ? (argv[i + 1] ?? "unknown") : "unknown";
-	} catch {
-		return "unknown";
-	}
+/** The accelerator quickchr booted the machine with (`kvm`, `hvf`, `tcg`). */
+export function accelerator(name: string): string {
+	return QuickCHR.get(name)?.state.lastAccel ?? "unknown";
 }
 
-/** The quickchr version, as `quickchr 0.5.6`. */
+/** The quickchr version, as `quickchr 0.6.0`. */
 export async function version(): Promise<string> {
-	const v = await quickchr(["--version"], { timeoutMs: QUICKCHR_MS });
-	return v.stdout.split("\n")[0]?.trim() ?? "";
+	// The package's exports map has no `./package.json`, so read the file.
+	const file = join(
+		ROOT,
+		"node_modules",
+		"@tikoci",
+		"quickchr",
+		"package.json",
+	);
+	const { version: v } = JSON.parse(await readFile(file, "utf8")) as {
+		version: string;
+	};
+	return `quickchr ${v}`;
 }

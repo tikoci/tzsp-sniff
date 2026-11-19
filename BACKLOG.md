@@ -29,10 +29,9 @@ Small items, one or two sentences each, deleted when done or declined
 - Filters select frames only (DESIGN.md, "Decided, filters"): consider
   letting `--sender` also select control, unsupported and invalid records,
   which would need its own counter so the counters still add up.
-- quickchr: ship types a consumer's strict `tsc` accepts
-  (`exactOptionalPropertyTypes` rejects its source today, 0.5.6), so tests
-  could use its library instead of the CLI (DESIGN.md, "Decided: quickchr
-  through its CLI").
+- quickchr (upstream): `QuickCHR.add` prints "Using cached image" to
+  stdout although `onProgress` is given (0.6.0: `ensureCachedImage` gets
+  no logger); route it through the callback.
 - Sweep: skip a night when neither `main` nor any resolved channel version
   changed since the last green sweep (centrs fingerprints both), once the
   nightly boots cost more than they tell.

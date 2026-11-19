@@ -708,8 +708,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   again through the CLI (`--proto icmp --format jsonl`), exit 0 and the
   same 6 packets. Each capture stops on `count`, so its summary is
   `complete`. Passed on RouterOS 7.25.1 (`stable`) and 7.24.6
-  (`long-term`), x86_64 under KVM, quickchr 0.5.6, Linux, 2026-11-19, in
-  about 35 s with a 24 s boot; each check was also seen failing once with
+  (`long-term`), x86_64 under KVM, quickchr 0.5.6 and 0.6.0, Linux,
+  2026-11-19, in about 33 s with a 24 s boot; each check was also seen failing once with
   its expectation swapped.
 
   `TZSP_SNIFF_ROUTEROS` (a channel or a version, default `stable`) picks
@@ -732,15 +732,19 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   job stays out of `sweep.yml` because a caller must grant every
   permission a reusable workflow's jobs ask for, even a skipped job's.
 
-  **Decided: quickchr through its CLI** (slice 3, 2026-11-19), the
-  devDependency's `node_modules/.bin/quickchr`, not its library. quickchr
-  0.5.6 ships TypeScript source, and this repo's `exactOptionalPropertyTypes`
-  makes `tsc` reject it once a test imports it; the lab already drove the
-  CLI. `test/chr/` holds that machine handling (a random `tzsp-it-` or
-  `tzsp-lab-` name checked absent, `quickchr add`, removal verified with
-  `quickchr list`) and the router's REST calls, for the lab and the
-  integration tier both. `scripts/sweep-plan.ts` imports quickchr's
-  version helpers by a name `tsc` does not resolve.
+  **Decided: quickchr through its library** (slice 3, 2026-11-19),
+  pinned exact as a devDependency. quickchr 0.5.6 ships TypeScript source
+  that this repo's `exactOptionalPropertyTypes` rejected once a test
+  imported it, so the first cut drove its CLI (tikoci/quickchr#285).
+  quickchr 0.6.0 checks its source under the house tsconfig (its
+  `lint:consumer`) and exports its boot budget (`defaultBootTimeout`), so
+  `test/chr/quickchr.ts` calls the library: a random `tzsp-it-` or
+  `tzsp-lab-` name checked absent with `QuickCHR.get` and `listOrphans`,
+  `QuickCHR.add` (which refuses an existing name), `start`, and removal
+  verified the same way, a half-made directory included. The setup hook's
+  timeout is derived from `defaultBootTimeout` rather than copied. The lab
+  and the integration tier share that module, and `scripts/sweep-plan.ts`
+  imports quickchr's version helpers directly.
 
   **A local run uses the developer's quickchr data directory.** quickchr
   keeps its image cache inside it and has no separate cache setting, so an
@@ -748,9 +752,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   tier only touches machines it created, under the `tzsp-it-` prefix, and
   removes them in `afterAll`. A run killed before then prints the name
   first (`machine: tzsp-it-…`), and `quickchr remove <name>` clears it;
-  `quickchr list` shows it unless the kill came during `quickchr add`, which
-  can leave a machine directory without its state file, which `list` omits
-  (0.5.6). CI sets
+  `quickchr list` shows it, as a leftover directory when the kill came
+  during `add` (0.6.0). CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.

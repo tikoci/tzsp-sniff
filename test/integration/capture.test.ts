@@ -29,11 +29,11 @@ import type {
 } from "../../src/records.ts";
 import {
 	accelerator,
+	bootBudget,
 	childEnv,
 	cleanupAll,
 	create,
 	hostArch,
-	QUICKCHR_MS,
 	ROOT,
 	saveLogs,
 	services,
@@ -45,6 +45,7 @@ import {
 	GATEWAY,
 	GUEST,
 	PEER,
+	REST_BASE_MS,
 	Router,
 	SETTLE,
 	snifferStream,
@@ -58,22 +59,20 @@ const BIN = join(ROOT, "src", "cli", "bin.ts");
 /**
  * The setup hook's timeout outlives each budget quickchr enforces itself,
  * so a slow step fails inside quickchr with its evidence rather than being
- * cut off here (tikoci-testing, "Timeouts"). From quickchr 0.5.6:
- * - the image download (`cache add`): at most DOWNLOAD_NO_LENGTH_BUDGET_MS,
+ * cut off here (tikoci-testing, "Timeouts"). From quickchr 0.6.0:
+ * - the image download in `add`: at most DOWNLOAD_NO_LENGTH_BUDGET_MS,
  *   15 min, when the server sends no length; with a length it is 30 s plus
  *   the size at 120 kB/s, about 6.5 min for a 43 MB image (download.ts).
  *   Free when the image is cached, as CI prefetches it;
- * - the boot (`defaultBootTimeout`, quickchr.ts): 120 s scaled by the
- *   accelerator, 1.5x under KVM or HVF and 4x under TCG, for the host's own
- *   architecture, which `hostArch` pins; plus QUICKCHR_TIMEOUT_EXTRA;
- * - `list`, `add` and `inspect`, and the REST reads, under QUICKCHR_MS each.
+ * - the boot: quickchr's exported `defaultBootTimeout` for the host's own
+ *   architecture, which `hostArch` pins, at the TCG factor, plus
+ *   QUICKCHR_TIMEOUT_EXTRA (`bootBudget`);
+ * - the REST reads after boot, under REST_BASE_MS each.
  */
 const DOWNLOAD_BUDGET_MS = 15 * 60_000;
-const BOOT_BUDGET_MS =
-	120_000 * 4 + Number(process.env.QUICKCHR_TIMEOUT_EXTRA ?? 0);
-const SETUP_MS = DOWNLOAD_BUDGET_MS + BOOT_BUDGET_MS + 6 * QUICKCHR_MS;
+const SETUP_MS = DOWNLOAD_BUDGET_MS + bootBudget(hostArch()) + 4 * REST_BASE_MS;
 /** `afterAll` may wait out a setup still running, then removes the machine. */
-const CLEANUP_MS = SETUP_MS + TEARDOWN_MS + 2 * QUICKCHR_MS;
+const CLEANUP_MS = SETUP_MS + TEARDOWN_MS;
 /** Each test: REST commands with their own budgets (router.ts), and a 3-packet ping. */
 const TEST_MS = 120_000;
 /** A capture that sees fewer packets than it waits for ends here, well inside TEST_MS. */
@@ -186,7 +185,7 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 			// Named before the boot, so a run killed later says what to remove.
 			console.log(`machine: ${results.machine}`);
 			results.bootMs = await start(results.machine);
-			results.accelerator = await accelerator(results.machine);
+			results.accelerator = accelerator(results.machine);
 			const rest = await services(results.machine);
 			router = new Router(rest.restUrl, rest.basic);
 			results.router = await router.identity();
