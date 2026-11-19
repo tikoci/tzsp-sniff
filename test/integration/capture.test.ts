@@ -32,6 +32,7 @@ import {
 	childEnv,
 	cleanupAll,
 	create,
+	leftOver,
 	hostArch,
 	provisionBudget,
 	ROOT,
@@ -154,17 +155,35 @@ async function capture(
 	}
 }
 
-/** Stream ICMP to `port`, ping PEER `pings` times, and stop the sniffer however that went. */
-const sniffAndPing = (port: number, pings: number) => async () => {
-	await router.exec(snifferStream(port));
-	await router.exec("/tool/sniffer/start");
+/**
+ * Run `body`, then `undo` however it went. The command that arms the
+ * router is inside `body`: one whose reply is lost may still have taken
+ * effect. When both fail, `body`'s error is the one thrown.
+ */
+async function withUndo(
+	body: () => Promise<void>,
+	undo: () => Promise<unknown>,
+): Promise<void> {
 	try {
-		await router.sniffing();
-		await router.exec(`/ping ${PEER} count=${pings}`);
-	} finally {
-		await router.exec("/tool/sniffer/stop");
+		await body();
+	} catch (e) {
+		await undo().catch(() => {});
+		throw e;
 	}
-};
+	await undo();
+}
+
+/** Stream ICMP to `port`, ping PEER `pings` times, and stop the sniffer however that went. */
+const sniffAndPing = (port: number, pings: number) => () =>
+	withUndo(
+		async () => {
+			await router.exec(snifferStream(port));
+			await router.exec("/tool/sniffer/start");
+			await router.sniffing();
+			await router.exec(`/ping ${PEER} count=${pings}`);
+		},
+		() => router.exec("/tool/sniffer/stop"),
+	);
 
 describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 	beforeAll(async () => {
@@ -198,12 +217,14 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 			await saveLogs(results.machine, dirname(RESULTS));
 		// Waits for any `add` still running, then removes and verifies.
 		const left = await cleanupAll();
+		// A results file that cannot be written must not hide a machine left behind.
+		const failures = left.map(leftOver);
 		if (RESULTS)
-			await writeFile(RESULTS, `${JSON.stringify(results, null, "\t")}\n`);
-		if (left.length > 0)
-			throw new Error(
-				`NOT REMOVED: ${left.join(", ")}; quickchr remove <name> clears it`,
-			);
+			await writeFile(
+				RESULTS,
+				`${JSON.stringify(results, null, "\t")}\n`,
+			).catch((e: unknown) => failures.push(`results file: ${String(e)}`));
+		if (failures.length > 0) throw new Error(failures.join("\n"));
 	}, CLEANUP_MS);
 
 	test(
@@ -236,24 +257,24 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 		"mangle action=sniff-tzsp, read through openCapture()",
 		async () => {
 			let counter = Number.NaN;
-			const records = await capture(2, async (port) => {
-				await router.exec(
-					`/ip/firewall/mangle/add chain=output protocol=icmp dst-address=${PEER} ` +
-						`action=sniff-tzsp sniff-target=${GATEWAY} sniff-target-port=${port} comment=${COMMENT}`,
-				);
-				try {
-					await router.exec(SETTLE);
-					await router.exec(`/ping ${PEER} count=2`);
-					const rules = (await router.read(
-						`/ip/firewall/mangle?comment=${COMMENT}`,
-					)) as { packets?: string }[];
-					counter = Number(rules[0]?.packets);
-				} finally {
-					await router.exec(
-						`/ip/firewall/mangle/remove [find comment=${COMMENT}]`,
-					);
-				}
-			});
+			const records = await capture(2, (port) =>
+				withUndo(
+					async () => {
+						await router.exec(
+							`/ip/firewall/mangle/add chain=output protocol=icmp dst-address=${PEER} ` +
+								`action=sniff-tzsp sniff-target=${GATEWAY} sniff-target-port=${port} comment=${COMMENT}`,
+						);
+						await router.exec(SETTLE);
+						await router.exec(`/ping ${PEER} count=2`);
+						const rules = (await router.read(
+							`/ip/firewall/mangle?comment=${COMMENT}`,
+						)) as { packets?: string }[];
+						counter = Number(rules[0]?.packets);
+					},
+					() =>
+						router.exec(`/ip/firewall/mangle/remove [find comment=${COMMENT}]`),
+				),
+			);
 			expect(counter).toBe(2);
 			const summary = summaryOf(records);
 			expect(summary?.status).toBe("complete");

@@ -728,7 +728,8 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   channels resolve to (`scripts/sweep-plan.ts`, quickchr's
   `selectActiveChannels`), every leg must-pass. `nightly.yml` calls
   `sweep.yml` on a schedule and files a red run as an issue; the release
-  workflow (#17) calls `sweep.yml` before it publishes. The issue-writing
+  workflow #17 adds is to call `sweep.yml` and publish only if it passes;
+  until #17 wires that, the `workflow_call` entry point gates nothing. The issue-writing
   job stays out of `sweep.yml` because a caller must grant every
   permission a reusable workflow's jobs ask for, even a skipped job's.
 

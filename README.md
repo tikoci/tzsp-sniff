@@ -144,11 +144,24 @@ skips a missing one with a message, and CI installs both:
 | [actionlint](https://github.com/rhysd/actionlint) | `brew install actionlint` | release binary | release binary |
 
 `bun run test:integration` boots a RouterOS CHR with
-[quickchr](https://github.com/tikoci/quickchr) (a devDependency), has it
-stream TZSP to the tests, and removes it; it needs QEMU with `qemu-img`, and KVM or HVF to
-take under a minute. `TZSP_SNIFF_ROUTEROS` picks a channel or a version
-(default `stable`). CI runs it on `stable` for every code change and on
-every active channel nightly.
+[quickchr](https://github.com/tikoci/quickchr) (a devDependency) for this
+machine's CPU, has it stream TZSP to the tests, and removes it.
+`TZSP_SNIFF_ROUTEROS` picks a channel or a version (default `stable`). CI
+runs it on `stable` for every code change and on every active channel
+nightly. It needs QEMU with `qemu-img`, and an arm64 host also needs UEFI
+firmware; `node_modules/.bin/quickchr doctor` says what is missing:
+
+<!-- cspell:ignore edk efi dnf -->
+
+| Host | Install | Boot |
+| --- | --- | --- |
+| Linux x86_64 | `apt install qemu-system-x86 qemu-utils` | under a minute with KVM |
+| Linux arm64 | `apt install qemu-system-arm qemu-efi-aarch64 qemu-utils` (`edk2-aarch64` on dnf) | under a minute with KVM |
+| macOS | `brew install qemu` (firmware included) | HVF on Intel; Apple Silicon boots the arm64 CHR under TCG, so several minutes |
+| Windows | `winget install SoftwareFreedomConservancy.QEMU` | TCG, several minutes |
+
+quickchr's [MANUAL](https://github.com/tikoci/quickchr/blob/main/MANUAL.md)
+has the full list.
 
 Agent instructions are in [AGENTS.md](AGENTS.md).
 

@@ -15,7 +15,7 @@
  * new `add` or boot begins after it. A quickchr call already running in
  * this process cannot be interrupted, so `cleanupAll` waits for it first.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,18 +32,36 @@ export const ROOT = join(import.meta.dir, "..", "..");
 
 /**
  * What to boot: a channel or an exact version, and the guest architecture.
- * The architecture is always given, so quickchr's own default (its
- * `default-arch` setting or QUICKCHR_DEFAULT_ARCH) cannot turn a boot into
- * cross-architecture emulation with a far longer budget.
+ * The architecture is always given: the budgets depend on it, and quickchr
+ * 0.6.0's library default reads `process.arch`, which is `x64` under
+ * Rosetta (`hostArch`).
  */
 export interface Target {
 	routeros: string;
 	arch: "x86" | "arm64";
 }
 
-/** The guest architecture this host runs natively (no cross-architecture emulation). */
-export const hostArch = (): Target["arch"] =>
-	process.arch === "arm64" ? "arm64" : "x86";
+/**
+ * The guest architecture of this machine's CPU, so the CHR is not under
+ * cross-architecture emulation. x64 Bun under Rosetta on Apple Silicon
+ * reports `x64`; `sysctl.proc_translated` says so, the check quickchr's
+ * own `isAppleSiliconHost` makes (platform.ts). On Apple Silicon an arm64
+ * CHR runs under TCG, not HVF (same file), still far quicker than an x86
+ * guest under cross-architecture TCG. Not yet run on a Mac.
+ */
+export function hostArch(): Target["arch"] {
+	if (process.arch === "arm64") return "arm64";
+	if (process.platform === "darwin" && process.arch === "x64")
+		try {
+			const translated = execFileSync(
+				"sysctl",
+				["-n", "sysctl.proc_translated"],
+				{ encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+			);
+			if (translated.trim() === "1") return "arm64";
+		} catch {}
+	return "x86";
+}
 
 /* ---------------------------------------------------------------- budgets */
 
@@ -187,28 +205,57 @@ const absent = (name: string) =>
 	QuickCHR.get(name) === null && !QuickCHR.listOrphans().includes(name);
 
 /**
+ * What an operator should do about a machine left behind. `quickchr remove`
+ * is advised only for a machine this run created whose state quickchr can
+ * read: on unreadable state it deletes the directory without stopping QEMU
+ * (0.6.0, `cmdRemove` falls back to `removeOrphan`).
+ */
+const ADVICE = {
+	foreign: "another machine of that name, not this run's; left in place",
+	unreadable:
+		"quickchr cannot read its state, and its QEMU may still run: stop that QEMU, then `quickchr remove <name>`",
+	present: "`quickchr remove <name>` clears it",
+};
+
+/** Why each machine `teardown` could not remove is still there. */
+const leftReasons = new Map<string, string>();
+
+/**
  * The owned machine by this name, or why it cannot be touched: gone, its
  * state unreadable (QEMU may still run), or another machine of that name.
  */
 function ownedMachine(
 	name: string,
-): { machine: ChrInstance } | { gone: true } | { refused: string } {
+):
+	| { machine: ChrInstance }
+	| { gone: true }
+	| { refused: string; advice: string } {
 	const createdAt = owned.get(name);
 	if (createdAt === undefined)
-		return { refused: `${name} is not a machine this run created` };
+		return {
+			refused: `${name} is not a machine this run created`,
+			advice: ADVICE.foreign,
+		};
 	let machine: ChrInstance | null;
 	try {
 		machine = QuickCHR.get(name);
 	} catch (e) {
-		return { refused: `quickchr cannot read ${name}'s state (${message(e)})` };
+		return {
+			refused: `quickchr cannot read ${name}'s state (${message(e)})`,
+			advice: ADVICE.unreadable,
+		};
 	}
 	if (machine === null)
 		return QuickCHR.listOrphans().includes(name)
-			? { refused: `${name} has a directory with no readable state` }
+			? {
+					refused: `${name} has a directory with no readable state`,
+					advice: ADVICE.unreadable,
+				}
 			: { gone: true };
 	if (machine.state.createdAt !== createdAt)
 		return {
 			refused: `${name} is another machine than the one this run created`,
+			advice: ADVICE.foreign,
 		};
 	return { machine };
 }
@@ -216,8 +263,8 @@ function ownedMachine(
 /**
  * Remove one owned machine and confirm quickchr no longer knows it. A
  * machine whose state quickchr cannot read is left alone and reported: its
- * QEMU may still be running, and only `quickchr remove <name>` should
- * decide that.
+ * QEMU may still be running, which only the operator can check. `leftOver`
+ * says what to do about a machine this returned false for.
  */
 export function teardown(name: string): Promise<boolean> {
 	const pending = removals.get(name);
@@ -226,6 +273,7 @@ export function teardown(name: string): Promise<boolean> {
 		const found = ownedMachine(name);
 		if ("refused" in found) {
 			console.error(`not removing: ${found.refused}`);
+			leftReasons.set(name, found.advice);
 			return false;
 		}
 		if ("machine" in found) {
@@ -242,7 +290,8 @@ export function teardown(name: string): Promise<boolean> {
 		if (gone) {
 			owned.delete(name);
 			instances.delete(name);
-		}
+			leftReasons.delete(name);
+		} else leftReasons.set(name, ADVICE.present);
 		return gone;
 	})();
 	removals.set(name, p);
@@ -250,7 +299,11 @@ export function teardown(name: string): Promise<boolean> {
 	return p;
 }
 
-/** Remove every owned machine and temp dir; return the machines still present. */
+/** A machine `teardown` left, and what to do about it, as one line. */
+export const leftOver = (name: string): string =>
+	`NOT REMOVED: ${name}: ${(leftReasons.get(name) ?? ADVICE.present).replace("<name>", name)}`;
+
+/** Remove every owned machine and temp dir; return the machines still present (see `leftOver`). */
 export async function cleanupAll(): Promise<string[]> {
 	// An `add` or a boot still running cannot be stopped from here; once it
 	// settles, a machine it made is in `owned`.

@@ -46,6 +46,7 @@ import {
 	childEnv,
 	cleanupAll,
 	create,
+	leftOver,
 	owned,
 	ROOT,
 	run,
@@ -834,7 +835,7 @@ async function lab(target: Target): Promise<boolean> {
 			listener.close();
 		} catch {}
 		if (ev.machine && owned.has(ev.machine) && !(await teardown(ev.machine)))
-			console.error(`NOT REMOVED: ${ev.machine}`);
+			console.error(leftOver(ev.machine));
 	}
 	const stem = `${ev.router?.version || target.channel}-${target.arch}`;
 	const dir = ok ? EVIDENCE : FAILED;
@@ -887,7 +888,7 @@ if (import.meta.main) {
 		Promise.all(arm.map((t) => lab(t))),
 	]);
 	const left = await cleanupAll();
-	for (const n of left) console.error(`NOT REMOVED: ${n}`);
+	for (const n of left) console.error(leftOver(n));
 	const failed = results.some(
 		(r) => r.status === "rejected" || r.value.includes(false),
 	);

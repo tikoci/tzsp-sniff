@@ -70,6 +70,7 @@ TSHARK
 tsresol # pcapng if_tsresol, the timestamp resolution option
 TZSP # TaZmen Sniffer Protocol
 UDP
+UEFI # firmware standard, arm64 CHR boots under it
 urg # TCP urgent flag
 VID # 802.1Q VLAN identifier
 VRRP
