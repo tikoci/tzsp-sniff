@@ -12,6 +12,10 @@
  *   [4..]   tags           0 = pad (1 byte), 1 = end (1 byte), else tag, length, value
  *   [..]    payload        the captured frame, after the end tag
  *
+ * The tags and payload follow every type except keepalive (4) and port-opener
+ * (5): `dissect_tzsp` reads options and the encapsulated frame only when the
+ * type is neither (packet-tzsp.c e0929ac4, the `TZSP_NULL`/`TZSP_PORT` check).
+ *
  * RouterOS: `/tool/sniffer` streaming on 7.26beta5 x86 CHR sends `01 00 00 01 01`,
  * version 1, received, Ethernet, the end tag alone (tikoci/quickchr
  * examples/cmr/FINDINGS.md, "Wire"). Whether mangle `sniff-id` adds a tag is not
@@ -77,13 +81,60 @@ export interface TzspTag {
 	hex: string;
 }
 
-export type TzspProblem =
-	| "too-short" // fewer than 4 header bytes
-	| "bad-version" // version is not 1
-	| "no-end-tag" // the tag list runs off the end
-	| "truncated-tag"; // a tag's length runs past the datagram
+/**
+ * The most tags (other than pad and end) one datagram may carry before the
+ * parser stops reading it (DESIGN.md, "Dissectors": caps on work per packet).
+ * Wireshark has no such cap; RouterOS has been seen to send none at all.
+ */
+export const TZSP_MAX_TAGS = 64;
 
-export interface TzspDatagram {
+/**
+ * What a record is, so a caller can count records apart and dissect only
+ * frames (DESIGN.md, "Decided: dispatch on record type and encapsulation").
+ *
+ * - `packet`: type 0 (received) with encapsulation 1 (Ethernet). `payload` is
+ *   an Ethernet frame, the only record to dissect.
+ * - `control`: a keepalive (4) or port-opener (5). No tags, no payload.
+ * - `unsupported`: valid TZSP, but another type or encapsulation, or more
+ *   tags than {@link TZSP_MAX_TAGS}; never dissected as a frame.
+ * - `invalid`: the datagram is truncated or malformed.
+ */
+export type TzspKind = "packet" | "control" | "unsupported" | "invalid";
+
+/**
+ * What went wrong, in the three classes every parser in this package uses
+ * (DESIGN.md, "Requirement, bytes in and records out"):
+ *
+ * - `truncated`: the bytes end early.
+ * - `malformed`: a field contradicts the format.
+ * - `unsupported`: valid, not decoded here.
+ */
+export type TzspProblem = "truncated" | "malformed" | "unsupported";
+
+/** Which check made a record `invalid`. */
+export type TzspInvalidReason =
+	| "too-short" // truncated: fewer than 4 header bytes
+	| "bad-version" // malformed: version is not 1
+	| "no-end-tag" // truncated: the tag list runs off the end
+	| "truncated-tag"; // truncated: a tag's length byte or value runs past the end
+
+/** Which check made a record `unsupported`. */
+export type TzspUnsupportedReason =
+	| "record-type" // a type other than received, keepalive or port-opener
+	| "encapsulation" // a received record that is not Ethernet
+	| "tag-limit"; // more than TZSP_MAX_TAGS tags; the rest is not read
+
+/** Which check set `problem`, finer than {@link TzspProblem}. */
+export type TzspReason = TzspInvalidReason | TzspUnsupportedReason;
+
+/** The fields every record has, whatever its kind. */
+export interface TzspRecordBase {
+	/**
+	 * The complete datagram: the input array itself, not a copy, so it shares
+	 * memory with the caller's buffer. Kept whatever the kind or problem, so
+	 * no bytes are lost; copy it to keep it past a reused buffer.
+	 */
+	datagram: Uint8Array;
 	version: number;
 	type: number;
 	/** A name from {@link TZSP_TYPES}, or `type-<n>`. */
@@ -91,13 +142,42 @@ export interface TzspDatagram {
 	encapsulation: number;
 	/** A name from {@link TZSP_ENCAPSULATIONS}, or `encap-<n>`. */
 	encapsulationName: string;
-	/** Every tag except pad and end, in order. */
+	/** Every tag except pad and end, in order; those read before a problem, if any. */
 	tags: TzspTag[];
-	/** The captured frame. Empty when there is a problem, or for keepalives. */
+	/**
+	 * The inner frame after the end tag, a view into `datagram`'s memory. Set
+	 * whenever the end tag was reached: for a `packet`, and for an `unsupported`
+	 * record of another type or encapsulation. Empty otherwise.
+	 */
 	payload: Uint8Array;
-	/** Set when the datagram could not be parsed to its payload. */
-	problem?: TzspProblem;
 }
+
+/**
+ * One parsed datagram. `kind` decides the rest: `packet` and `control` have
+ * no `problem` or `reason`; `unsupported` and `invalid` always have both, in
+ * the pairs below. Dispatch on `kind`, not on whether `payload` is empty.
+ */
+export type TzspDatagram =
+	| (TzspRecordBase & {
+			kind: "packet" | "control";
+			problem?: never;
+			reason?: never;
+	  })
+	| (TzspRecordBase & {
+			kind: "unsupported";
+			problem: "unsupported";
+			reason: TzspUnsupportedReason;
+	  })
+	| (TzspRecordBase & {
+			kind: "invalid";
+			problem: "truncated";
+			reason: Exclude<TzspInvalidReason, "bad-version">;
+	  })
+	| (TzspRecordBase & {
+			kind: "invalid";
+			problem: "malformed";
+			reason: "bad-version";
+	  });
 
 const name = (table: Record<number, string>, value: number, prefix: string) =>
 	table[value] ?? `${prefix}-${value}`;
@@ -105,49 +185,91 @@ const name = (table: Record<number, string>, value: number, prefix: string) =>
 export const toHex = (bytes: Uint8Array): string =>
 	Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
-/** Parse one TZSP datagram (a UDP payload). Never throws; see `problem`. */
+/**
+ * A plain `Uint8Array` over `bytes[start..end)`, sharing its memory. Built with
+ * the base constructor rather than `subarray()`, which calls a subclass's
+ * constructor and can throw for a valid `Uint8Array` subclass.
+ */
+const view = (bytes: Uint8Array, start: number, end: number) =>
+	new Uint8Array(bytes.buffer, bytes.byteOffset + start, end - start);
+
+/**
+ * Parse one TZSP datagram (a UDP payload). Never throws: a datagram it cannot
+ * read comes back with `kind`, `problem` and `reason` set, and its bytes in
+ * `datagram`.
+ */
 export function parseTzsp(datagram: Uint8Array): TzspDatagram {
-	const empty = new Uint8Array(0);
 	const version = datagram[0] ?? 0;
 	const type = datagram[1] ?? 0;
 	const encapsulation =
 		datagram.length >= 4
 			? ((datagram[2] as number) << 8) | (datagram[3] as number)
 			: 0;
-	const result: TzspDatagram = {
+	const base: TzspRecordBase = {
+		datagram,
 		version,
 		type,
 		typeName: name(TZSP_TYPES, type, "type"),
 		encapsulation,
 		encapsulationName: name(TZSP_ENCAPSULATIONS, encapsulation, "encap"),
 		tags: [],
-		payload: empty,
+		payload: new Uint8Array(0),
 	};
-	if (datagram.length < 4) return { ...result, problem: "too-short" };
-	if (version !== 1) return { ...result, problem: "bad-version" };
+	const truncated = (
+		reason: Exclude<TzspInvalidReason, "bad-version">,
+	): TzspDatagram => ({
+		...base,
+		kind: "invalid",
+		problem: "truncated",
+		reason,
+	});
+	const unsupported = (reason: TzspUnsupportedReason): TzspDatagram => ({
+		...base,
+		kind: "unsupported",
+		problem: "unsupported",
+		reason,
+	});
 
+	if (datagram.length < 4) return truncated("too-short");
+	if (version !== 1) {
+		return {
+			...base,
+			kind: "invalid",
+			problem: "malformed",
+			reason: "bad-version",
+		};
+	}
+	// packet-tzsp.c (e0929ac4, dissect_tzsp) reads no tags or encapsulated
+	// frame for keepalive and port-opener; bytes after the header stay in
+	// `datagram` and are not read.
+	if (type === 4 || type === 5) return { ...base, kind: "control" };
+
+	// Every other type has the tag list (same check), so its structure is
+	// validated before the type or encapsulation is judged.
 	let offset = 4;
 	while (offset < datagram.length) {
 		const tag = datagram[offset] as number;
 		if (tag === 1) {
-			result.payload = datagram.subarray(offset + 1);
-			return result;
+			base.payload = view(datagram, offset + 1, datagram.length);
+			if (type !== 0) return unsupported("record-type");
+			if (encapsulation !== 1) return unsupported("encapsulation");
+			return { ...base, kind: "packet" };
 		}
 		if (tag === 0) {
 			offset += 1;
 			continue;
 		}
+		if (base.tags.length === TZSP_MAX_TAGS) return unsupported("tag-limit");
 		const length = datagram[offset + 1];
 		if (length === undefined || offset + 2 + length > datagram.length) {
-			return { ...result, problem: "truncated-tag" };
+			return truncated("truncated-tag");
 		}
-		const value = datagram.subarray(offset + 2, offset + 2 + length);
-		result.tags.push({
+		base.tags.push({
 			tag,
 			name: name(TZSP_TAGS, tag, "tag"),
-			hex: toHex(value),
+			hex: toHex(view(datagram, offset + 2, offset + 2 + length)),
 		});
 		offset += 2 + length;
 	}
-	return { ...result, problem: "no-end-tag" };
+	return truncated("no-end-tag");
 }
