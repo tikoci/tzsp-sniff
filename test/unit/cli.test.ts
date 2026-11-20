@@ -1310,6 +1310,24 @@ describe("decode", () => {
 		expect(records.at(-1)).toMatchObject({ stoppedBy: "count" });
 	});
 
+	test("stdin with no destroy(): stopping early runs its return(), so its cleanup runs", async () => {
+		const m = memoryIo();
+		const data = readFileSync(ROUTEROS);
+		let cleaned = false;
+		m.io.stdin = () =>
+			(async function* () {
+				try {
+					yield data.subarray(0, 100);
+					yield data.subarray(100);
+					yield data.subarray(0, 0);
+				} finally {
+					cleaned = true;
+				}
+			})();
+		expect(await main(["decode", "-", "--count", "1"], m.io)).toBe(0);
+		expect(cleaned).toBe(true);
+	});
+
 	test("an input it cannot read or tell: exit 1 with the code on stderr, nothing on stdout", async () => {
 		const notCapture = join(dir, "notes.txt");
 		writeFileSync(notCapture, `${REQUEST}\n`);

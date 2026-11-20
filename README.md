@@ -172,9 +172,9 @@ and ends the capture with `write/stalled` when a sink takes nothing for 30
 seconds.
 
 `openDecode(input, options)` is `decode`: `input` is the bytes (read in
-place), or any iterable of chunks (a file or stdin stream; each chunk is
-copied, so a source may reuse its buffer), and the stream has the same
-records, with a `decode` header. Records from a file may lack `time`,
+place), or any iterable of chunks (a file or stdin stream; what is kept
+of a chunk is copied before the next is asked for, so a source may reuse
+its buffer), and the stream has the same records, with a `decode` header. Records from a file may lack `time`,
 `listener` and `peer`; `openCapture()`'s stay typed with them
 (`CaptureRecord`). On an abort, a source's `return()` is called without
 waiting, so a source parked on a read should release itself there:

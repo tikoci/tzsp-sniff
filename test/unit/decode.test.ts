@@ -394,13 +394,17 @@ describe("round trip: --write, then decode", () => {
 				comments: ["peer=10.0.2.15:5000"],
 			}) +
 			n.packet(0, NOT_TZSP, { comments: ["peer=[fe80::1]:5000", "a note"] }) +
-			n.packet(0, "01");
+			n.packet(0, "01") +
+			// Version 1, a type it does not decode (1, for transmit), the end tag.
+			n.packet(0, "0101000101");
 		const records = entriesOf(await decode(input, { detail: "layers" }));
 		expect(records.map((r) => [r.type, (r as DatagramRecord).kind])).toEqual([
 			["record", "control"],
 			["record", "invalid"],
 			["record", "invalid"],
+			["record", "unsupported"],
 		]);
+		expect(records[3]).toMatchObject({ reason: "tzsp/record-type" });
 		expect(records[0]).toMatchObject({
 			listener: "37008",
 			peer: "10.0.2.15:5000",
@@ -455,6 +459,7 @@ describe("captures of the stream: UDP to the TZSP port is unwrapped", () => {
 		const v4 = udpToTzsp(REQUEST);
 		const v6 = ipv6({ next: 17, payload: udp(40000, 37008, REQUEST) });
 		const notTzsp = ipv4({ proto: 17, payload: udp(1, 53, "00") });
+		const notTzsp6 = ipv6({ next: 17, payload: udp(1, 53, "00") });
 		const sll = (proto: number, packet: string) =>
 			`0000000100060200000000000000${h16(proto)}${packet}`;
 		const sll2 = (proto: number, packet: string) =>
@@ -475,7 +480,9 @@ describe("captures of the stream: UDP to the TZSP port is unwrapped", () => {
 					? sll(0x0800, notTzsp)
 					: linkType === 276
 						? sll2(0x0800, notTzsp)
-						: notTzsp;
+						: linkType === 229
+							? notTzsp6
+							: notTzsp;
 			const records = entriesOf(
 				await decode(p.header() + p.record(packet) + p.record(other), {
 					detail: "summary",
@@ -498,10 +505,10 @@ describe("captures of the stream: UDP to the TZSP port is unwrapped", () => {
 					},
 				],
 			});
-			if (linkType !== 229)
-				expect(records[1]?.line).toContain(
-					"udp len=1 [unsupported link/not-tzsp]",
-				);
+			expect({ linkType, line: records[1]?.line }).toMatchObject({
+				linkType,
+				line: expect.stringContaining("udp len=1 [unsupported link/not-tzsp]"),
+			});
 		}
 	});
 
@@ -554,13 +561,20 @@ describe("bad input: bounded, and never a throw", () => {
 			[`${good}0a0d0d0a${le32(28)}00000000`, "no byte-order magic"],
 		];
 		for (const [input, message] of cases) {
-			const started = performance.now();
-			const records = await decode(input);
-			expect(performance.now() - started).toBeLessThan(1000);
-			expect({ message, packets: packetsOf(records).length }).toEqual({
+			// Given in one chunk, then the end: a reader that went on to read
+			// a block it should have refused asks for more.
+			let pulledPast = false;
+			const records = await decode(
+				(function* () {
+					yield bytes(input);
+					pulledPast = true;
+				})(),
+			);
+			expect({
 				message,
-				packets: 1,
-			});
+				packets: packetsOf(records).length,
+				pulledPast: message === "over the" ? pulledPast : false,
+			}).toEqual({ message, packets: 1, pulledPast: false });
 			const summary = summaryOf(records);
 			expect(summary).toMatchObject({
 				status: "error",
@@ -644,17 +658,18 @@ describe("bad input: bounded, and never a throw", () => {
 		});
 		expect(summaryOf(odd).error?.code).toBe("decode/malformed");
 
-		// Longer than the cap, in chunks: refused once the cap passes.
-		let pulled = 0;
+		// Longer than the cap, in chunks: refused once the cap passes. Three
+		// chunks cross it; a fourth pull means the cap did not hold.
+		let fourth = false;
 		const long = (function* () {
-			for (;;) {
-				pulled += 1;
-				yield new Uint8Array(64 * 1024).fill(0x30);
-			}
+			for (let i = 0; i < 3; i++) yield new Uint8Array(64 * 1024).fill(0x30);
+			fourth = true;
+			throw new Error("pulled a fourth chunk");
 		})();
+		expect(3 * 64 * 1024).toBeGreaterThan(MAX_HEX_LINE);
 		const tooLong = await decode(long, { format: "hex" });
 		expect(summaryOf(tooLong).error?.message).toContain("longer than");
-		expect(pulled * 64 * 1024).toBeLessThan(MAX_HEX_LINE + 2 * 64 * 1024);
+		expect(fourth).toBe(false);
 	});
 
 	test("an input that fails while being read is decode/read-failed", async () => {
@@ -1014,4 +1029,169 @@ describe("cross-review of 7d0d428: structure the readers must refuse or keep", (
 			}),
 		).rejects.toBeDefined();
 	}, 5000);
+});
+
+describe("CodeRabbit review of 64ff141", () => {
+	const n = pcapngBuilder();
+	const ok = n.section() + n.iface(128);
+	const errorOf = async (
+		input: string | Uint8Array,
+		options: DecodeOptions = {},
+	) => summaryOf(await decode(input, options)).error?.code;
+
+	test("a Buffer reused for each chunk decodes the same (Buffer#slice is a view)", async () => {
+		const p = pcapBuilder({ linkType: 128 });
+		const file = bytes(p.header() + p.record(REQUEST) + p.record(KEEPALIVE));
+		const reused = (function* () {
+			const one = Buffer.alloc(1);
+			for (const b of file) {
+				one[0] = b;
+				yield one;
+			}
+		})();
+		const whole = entriesOf(await decode(file, { detail: "full" }));
+		expect(entriesOf(await decode(reused, { detail: "full" }))).toEqual(whole);
+	});
+
+	test("one huge chunk is copied in spans as needed, not whole", async () => {
+		const huge = new Uint8Array(8 * 1024 * 1024).fill(0x30);
+		const reader = new ByteReader([huge]);
+		expect(await reader.readLine(MAX_HEX_LINE)).toBe("too-long");
+		// What the reader holds, not the 8 MiB the source gave.
+		expect(reader["buffered"]).toBeLessThanOrEqual(MAX_HEX_LINE + 64 * 1024);
+		// Lines inside a huge chunk still split right.
+		const text = new TextEncoder().encode(
+			`${"ab".repeat(200_000)}\n`.repeat(5),
+		);
+		const many = new ByteReader([text]);
+		const lengths: number[] = [];
+		for (;;) {
+			const line = await many.readLine(MAX_HEX_LINE * 4);
+			if (line === undefined) break;
+			lengths.push((line as Uint8Array).length);
+		}
+		expect(lengths).toEqual([400_000, 400_000, 400_000, 400_000, 400_000]);
+	});
+
+	test("chunks used up are released, not held until the array is compacted", async () => {
+		const reader = new ByteReader(
+			Array.from({ length: 100 }, () => new Uint8Array(100)),
+		);
+		for (let i = 0; i < 100; i++) await reader.read(100);
+		const chunks = reader["chunks"] as Uint8Array[];
+		const head = reader["head"] as number;
+		expect(chunks.slice(0, head).every((c) => c.length === 0)).toBe(true);
+	});
+
+	test("an abort races a pull that is a thenable, or one aborted from inside next()", async () => {
+		const stalled = (next: (signal: AbortController) => unknown) => {
+			const controller = new AbortController();
+			return {
+				controller,
+				input: {
+					[Symbol.asyncIterator]: () => ({ next: () => next(controller) }),
+				} as unknown as AsyncIterable<Uint8Array>,
+			};
+		};
+		// A promise from another realm is not `instanceof Promise`: a thenable.
+		// biome-ignore lint/suspicious/noThenProperty: the test needs a thenable that is not a Promise.
+		const thenable = stalled(() => ({ then() {} }));
+		setTimeout(() => thenable.controller.abort(), 10);
+		await expect(
+			openDecode(thenable.input, { signal: thenable.controller.signal }),
+		).rejects.toBeDefined();
+		// The source aborts while next() runs, then never settles.
+		const inside = stalled((c) => {
+			c.abort();
+			return new Promise(() => {});
+		});
+		await expect(
+			openDecode(inside.input, { signal: inside.controller.signal }),
+		).rejects.toBeDefined();
+	}, 2000);
+
+	test("an abort after the last packet, or with nothing to read, is interrupted, not end", async () => {
+		const controller = new AbortController();
+		const stream = await openDecode(new Uint8Array(0), {
+			format: "hex",
+			signal: controller.signal,
+		});
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "header") controller.abort();
+		}
+		expect(summaryOf(records)).toMatchObject({
+			status: "interrupted",
+			stoppedBy: "interrupt",
+		});
+	});
+
+	test("on an abort, a source's return() is not waited for", async () => {
+		const controller = new AbortController();
+		const source = {
+			[Symbol.asyncIterator]() {
+				let sent = false;
+				return {
+					async next(): Promise<IteratorResult<Uint8Array>> {
+						if (sent) return { done: true, value: undefined };
+						sent = true;
+						return {
+							done: false,
+							value: bytes(ok + n.packet(0, REQUEST) + n.packet(0, REQUEST)),
+						};
+					},
+					return: () => new Promise<IteratorResult<Uint8Array>>(() => {}),
+				};
+			},
+		};
+		const stream = await openDecode(source, { signal: controller.signal });
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "packet") controller.abort();
+		}
+		expect(summaryOf(records).status).toBe("interrupted");
+	}, 2000);
+
+	test("pcapng: the exact time is checked against a Date's range before it rounds", async () => {
+		const at = (units: bigint, tsoffset?: bigint) =>
+			n.section() +
+			n.iface(128, {
+				tsresol: 6,
+				...(tsoffset === undefined ? {} : { tsoffset }),
+			}) +
+			n.packet(0, REQUEST, { units });
+		const max = 8_640_000_000_000_000n;
+		expect(packetsOf(await decode(at(max * 1000n)))[0]?.time).toBe(
+			"+275760-09-13T00:00:00.000Z",
+		);
+		expect(await errorOf(at(max * 1000n + 1n))).toBe("decode/malformed");
+		const back = -8_640_000_000_000n;
+		expect(packetsOf(await decode(at(0n, back)))[0]?.time).toBe(
+			"-271821-04-20T00:00:00.000Z",
+		);
+		expect(await errorOf(at(0n, back - 1n))).toBe("decode/malformed");
+	});
+
+	test("pcapng: a packet over its interface's snap length, or a simple block that wraps, is malformed", async () => {
+		const snapped = n.section() + n.iface(128, { snapLength: 8 });
+		expect(await errorOf(snapped + n.packet(0, REQUEST))).toBe(
+			"decode/malformed",
+		);
+		// Zero is no limit.
+		expect(packetsOf(await decode(ok + n.packet(0, REQUEST)))).toHaveLength(1);
+		// 0xfffffffd rounds up past 2^32: a 32-bit mask wraps it to 0.
+		expect(await errorOf(ok + n.simple("", 0xfffffffd))).toBe(
+			"decode/malformed",
+		);
+	});
+
+	test("pcap: the fraction rounds down before the seconds are added", async () => {
+		const p = pcapBuilder({ linkType: 128, nano: true });
+		const records = await decode(
+			p.header() + p.record(REQUEST, 1_700_000_000, 999_999),
+		);
+		expect(packetsOf(records)[0]?.time).toBe("2023-11-14T22:13:20.000Z");
+	});
 });

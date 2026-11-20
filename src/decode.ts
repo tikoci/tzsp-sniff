@@ -450,6 +450,9 @@ export async function openDecode(
 					if (record) yield record;
 					if (stoppedBy) break;
 				}
+				// The input ended while the consumer held a record, and the
+				// signal fired then: that is an interrupt, not the end.
+				if (!stoppedBy && signal?.aborted) throw new InputAborted();
 			} catch (error) {
 				if (error instanceof InputAborted) stoppedBy = "interrupt";
 				else {
@@ -459,7 +462,8 @@ export async function openDecode(
 				}
 			}
 		} finally {
-			await reader.close().catch(() => {});
+			// On an interrupt the source is told to stop, not waited for.
+			await reader.close(stoppedBy !== "interrupt").catch(() => {});
 		}
 		stoppedBy ??= "end";
 

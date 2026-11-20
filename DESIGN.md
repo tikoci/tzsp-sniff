@@ -608,16 +608,26 @@ open, it was made in the slice, and each is tested in
   name a listener or a peer.
 - **Input is pulled a block at a time** (`ByteReader`), so stdin and large
   files hold one block plus one chunk, besides the section's interfaces
-  (below). Chunks from an iterable are copied as they arrive, since a
-  source may reuse its buffer; a `Uint8Array` input is read in place. A
-  hex line is scanned once however it is chunked. `--count` and an early
-  stop close the input. An abort ends a read waiting on the input: the
-  stream ends `interrupted` (or `openDecode` rejects, during detection),
-  and the source's `return()` is called but not awaited, since an async
-  generator queues it behind the read still pending. The CLI's stdin
-  adapter destroys the stream there, so Ctrl-C ends `decode -` while the
-  producer still holds the pipe open (`bin.test.ts` under Bun,
-  `test/node/` under Node; cross-review of 7d0d428).
+  (below). Chunks from an iterable are copied, since a source may reuse
+  its buffer, into plain `Uint8Array`s (`Buffer#slice` is a view), 64 KiB
+  at a time as the reader needs them; the source is asked for its next
+  chunk only once this one is used up, so one huge chunk costs what a
+  block or a line needs, not its size. Used chunks are released as they
+  are passed. A `Uint8Array` input is read in place. A hex line is
+  scanned once however it is chunked. `--count` and an early stop close
+  the input. An abort ends a read waiting on the input, whatever the pull
+  returned (a promise from another realm, any thenable) and also when
+  the source aborts from inside `next()`: the stream ends `interrupted`
+  (or `openDecode` rejects, during detection). An abort seen when the
+  input has ended is `interrupted` too, not `end`. On an abort the
+  source's `return()` is called but not awaited: a source slow to clean
+  up cannot hold the summary, and an async generator queues `return()`
+  behind a read still pending. The CLI's stdin adapter destroys the
+  stream there, so Ctrl-C ends `decode -` while the producer still holds
+  the pipe open (`bin.test.ts` under Bun, `test/node/` under Node;
+  cross-review of 7d0d428); a stdin with no `destroy()` (an async
+  generator, in tests) has its `return()` called instead, awaited unless
+  a read is pending (CodeRabbit review of 64ff141).
   Options, and an input whose first bytes name no format, are refused
   before the first record (`decode/invalid-option`,
   `decode/unknown-format`, whose fix names `--input hex` when the bytes
@@ -631,17 +641,22 @@ open, it was made in the slice, and each is tested in
   it is cut short. A section holds at most 4,096 interfaces with 1 MiB of
   names (`MAX_INTERFACES`, `MAX_INTERFACE_NAME_BYTES`), since they are
   kept until it ends. A simple packet block must hold its original length,
-  cut to the snap length, padded, and nothing else. Timestamps apply
-  `if_tsresol` (both bases) and the signed `if_tsoffset` exactly, in
-  BigInt, rounding down to the ms; one outside what a Date holds is
-  malformed. Names and comments keep a leading U+FEFF, so a label round
+  cut to the snap length, padded (computed without a 32-bit mask, which
+  wraps a length near 2^32 to 0), and nothing else; an enhanced or
+  obsolete one may not capture more than its interface's snap length,
+  when that is set (0 is no limit, and the writer's files use 0).
+  Timestamps apply `if_tsresol` (both bases) and the signed `if_tsoffset`
+  exactly, in BigInt; the exact time is checked against what a Date holds
+  before it rounds down to the ms, so both ends hold and a time a
+  microsecond past either is malformed. Names and comments keep a leading U+FEFF, so a label round
   trips byte for byte. An option list that runs past its block is read up
   to where it stops: options annotate a packet that is still whole.
 - **pcap** in either byte order, microsecond or nanosecond, version 2
   only; the magic number is checked also under `--input pcap`. A record
   over the header's snap length (when it sets one), or over 1 MiB with its
   16-byte header, is malformed. The link type is the low 16 bits of the
-  header's field.
+  header's field. The fraction is rounded down to the ms before the
+  seconds are added: in the sum, 999,999 ns would round up a ms.
 - **A UDP header marked malformed is not unwrapped** (its length
   contradicts the packet, so its payload cannot be trusted): an Ethernet
   frame is reported as it is, with its `udp/length` problem, and a raw IP

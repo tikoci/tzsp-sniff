@@ -716,9 +716,21 @@ function streamInput(
 ): FileInput {
 	const iterator = stream[Symbol.asyncIterator]();
 	let closed: Promise<void> | undefined;
+	/** Reads from `iterator` not yet settled. */
+	let pending = 0;
 	const close = () => {
 		closed ??= (async () => {
-			stream.destroy?.();
+			if (stream.destroy) {
+				stream.destroy();
+				return;
+			}
+			// No destroy (an async generator): its return() runs its cleanup,
+			// waited for unless a read is pending, which it would queue behind.
+			const returned = Promise.resolve(iterator.return?.()).then(
+				() => {},
+				() => {},
+			);
+			if (!pending) await returned;
 		})();
 		return closed;
 	};
@@ -727,7 +739,15 @@ function streamInput(
 		close,
 		[Symbol.asyncIterator]() {
 			return {
-				next: async () => (closed ? done : iterator.next()),
+				next: async () => {
+					if (closed) return done;
+					pending += 1;
+					try {
+						return await iterator.next();
+					} finally {
+						pending -= 1;
+					}
+				},
 				async return() {
 					await close();
 					return done;

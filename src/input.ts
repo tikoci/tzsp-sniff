@@ -40,6 +40,10 @@ export const MAX_INTERFACE_NAME_BYTES = 1024 * 1024;
 /** The longest hex line read, in bytes (128 KiB, a UDP datagram's 65,535 bytes as hex with room to spare). */
 export const MAX_HEX_LINE = 128 * 1024;
 
+/** The most of a source's chunk copied at once. */
+const SPAN = 64 * 1024;
+const EMPTY = new Uint8Array(0);
+
 /** What `decode` reads: bytes in one piece, or in chunks as a file or stdin gives them. */
 export type DecodeInput =
 	| Uint8Array
@@ -62,8 +66,10 @@ const isAsync = (x: object): x is AsyncIterable<Uint8Array> =>
  * current block needs plus one chunk.
  *
  * A `Uint8Array` input is read in place, as `parseTzsp` reads a datagram.
- * Chunks from an iterable are copied as they arrive, since a source may
- * reuse its buffer for the next chunk.
+ * Chunks from an iterable are copied, since a source may reuse its buffer
+ * for the next chunk: a span at a time, as the reader needs them, and the
+ * source is not asked for the next chunk until this one is used up. One
+ * huge chunk therefore costs what a block or a line needs, not its size.
  */
 export class ByteReader {
 	/** Chunks not yet taken start at `head`, from `offset` in it. */
@@ -75,6 +81,8 @@ export class ByteReader {
 		| AsyncIterator<Uint8Array>
 		| Iterator<Uint8Array>
 		| undefined;
+	/** The source's last chunk, from where the reader has not yet copied. */
+	private rest: Uint8Array | undefined;
 	private ended = false;
 	/** A pull from the input has not settled (an abort stopped waiting for it). */
 	private pulling = false;
@@ -99,25 +107,33 @@ export class ByteReader {
 		this.buffered += chunk.length;
 	}
 
-	/** One more chunk from the input; false at its end. */
+	/** One more span of the input, copied; false at its end. */
 	private async more(): Promise<boolean> {
-		if (this.ended || !this.iterator) return false;
 		const signal = this.signal;
-		if (signal?.aborted) throw new InputAborted();
-		const next = this.iterator.next();
-		let result: IteratorResult<Uint8Array>;
-		if (next instanceof Promise) {
-			this.pulling = true;
-			next.then(
-				() => {
-					this.pulling = false;
-				},
-				() => {
-					this.pulling = false;
-				},
-			);
+		if (this.rest) {
+			if (signal?.aborted) throw new InputAborted();
+			// A copy, as a plain Uint8Array: Buffer#slice would be a view.
+			this.push(new Uint8Array(this.rest.subarray(0, SPAN)));
+			this.rest =
+				this.rest.length > SPAN ? this.rest.subarray(SPAN) : undefined;
+			return true;
 		}
-		if (signal && next instanceof Promise) {
+		if (this.ended || !this.iterator) return false;
+		if (signal?.aborted) throw new InputAborted();
+		// Normalized: a promise from another realm, or any thenable, is raced
+		// against the abort too, and a sync iterator's result is one as well.
+		const next = Promise.resolve(this.iterator.next());
+		this.pulling = true;
+		next.then(
+			() => {
+				this.pulling = false;
+			},
+			() => {
+				this.pulling = false;
+			},
+		);
+		let result: IteratorResult<Uint8Array>;
+		if (signal) {
 			let onAbort = () => {};
 			try {
 				result = await Promise.race([
@@ -125,6 +141,8 @@ export class ByteReader {
 					new Promise<never>((_, reject) => {
 						onAbort = () => reject(new InputAborted());
 						signal.addEventListener("abort", onAbort, { once: true });
+						// Aborted while next() ran: the event has already fired.
+						if (signal.aborted) onAbort();
 					}),
 				]);
 			} finally {
@@ -145,7 +163,7 @@ export class ByteReader {
 				"Pass a Uint8Array, or an iterable of them (a file or stdin stream without an encoding set).",
 			);
 		}
-		if (chunk.length) this.push(chunk.slice());
+		if (chunk.length) this.rest = chunk;
 		return true;
 	}
 
@@ -164,6 +182,8 @@ export class ByteReader {
 			const chunk = this.chunks[this.head];
 			if (!chunk || this.offset < chunk.length) break;
 			this.offset -= chunk.length;
+			// Released now; the array itself is compacted below.
+			this.chunks[this.head] = EMPTY;
 			this.head += 1;
 		}
 		// Many small chunks: drop the used ones now and then, not one by one.
@@ -246,15 +266,18 @@ export class ByteReader {
 
 	/**
 	 * Stop reading: the input's iterator is told to finish (a file closes).
-	 * After an abort a pull may still be waiting on the input (stdin with
-	 * nothing to read), and an async generator queues `return()` behind it,
-	 * so then `return()` is called but not waited for: the source releases
-	 * itself (the CLI destroys stdin there).
+	 * `wait` false is an abort: `return()` is called but not waited for, so
+	 * a source slow to clean up cannot hold the interrupted summary. A pull
+	 * may also still be waiting on the input (stdin with nothing to read),
+	 * and an async generator queues `return()` behind it, so then it is not
+	 * waited for either: the source releases itself (the CLI destroys stdin
+	 * there).
 	 */
-	async close(): Promise<void> {
+	async close(wait = true): Promise<void> {
 		const iterator = this.iterator;
 		this.iterator = undefined;
 		this.ended = true;
+		this.rest = undefined;
 		this.chunks = [];
 		this.head = 0;
 		this.offset = 0;
@@ -264,7 +287,7 @@ export class ByteReader {
 			() => {},
 			() => {},
 		);
-		if (!this.pulling) await done;
+		if (wait && !this.pulling) await done;
 	}
 }
 
@@ -376,16 +399,18 @@ interface Interface {
 /**
  * A pcapng timestamp in whole ms since the epoch, or undefined when it is
  * outside what a Date holds. Exact: the scale and the signed offset are
- * applied in BigInt, and the result rounds down.
+ * applied in BigInt, the range is checked before rounding (so both ends
+ * hold, and a time just past either does not), and the result rounds down.
  */
 function pcapngTime(units: bigint, iface: Interface): number | undefined {
 	const exponent = BigInt(iface.resolution & 0x7f);
 	const perSecond = iface.resolution & 0x80 ? 2n ** exponent : 10n ** exponent;
 	// Units and the offset as one count of units, then to ms, rounding down.
-	const total = units + iface.offset * perSecond;
-	let ms = (total * 1000n) / perSecond;
-	if (total * 1000n < 0n && ms * perSecond !== total * 1000n) ms -= 1n;
-	if (ms > MAX_TIME_MS || ms < -MAX_TIME_MS) return undefined;
+	const scaled = (units + iface.offset * perSecond) * 1000n;
+	const limit = MAX_TIME_MS * perSecond;
+	if (scaled > limit || scaled < -limit) return undefined;
+	let ms = scaled / perSecond;
+	if (scaled < 0n && ms * perSecond !== scaled) ms -= 1n;
 	return Number(ms);
 }
 
@@ -550,7 +575,8 @@ async function* pcapng(
 			// The block holds the original length, cut to the snap length, padded.
 			const original = body.getUint32(0, little);
 			captured = Math.min(original, iface.snapLength || original);
-			if (body.byteLength !== 4 + ((captured + 3) & ~3)) {
+			// Math.ceil, not a 32-bit mask: a length near 2^32 would wrap to 0.
+			if (body.byteLength !== 4 + Math.ceil(captured / 4) * 4) {
 				throw malformed(
 					`The simple packet block at byte ${start} holds ${body.byteLength - 4} bytes of data for a packet of ${captured}.`,
 				);
@@ -560,6 +586,12 @@ async function* pcapng(
 			if (captured > body.byteLength - 20) {
 				throw malformed(
 					`The packet block at byte ${start} says it captured ${captured} bytes, more than the block holds.`,
+				);
+			}
+			// Zero is no limit, as in pcap.
+			if (iface.snapLength && captured > iface.snapLength) {
+				throw malformed(
+					`The packet block at byte ${start} says it captured ${captured} bytes, more than its interface's snap length of ${iface.snapLength}.`,
 				);
 			}
 		}
@@ -650,9 +682,9 @@ async function* pcap(
 		const fraction = v.getUint32(4, little);
 		yield {
 			linkType,
-			time: Math.trunc(
-				seconds * 1000 + (nano ? fraction / 1e6 : fraction / 1e3),
-			),
+			// The fraction rounds down on its own: added first, 999,999 ns
+			// would round up to the next ms in the sum.
+			time: seconds * 1000 + Math.trunc(nano ? fraction / 1e6 : fraction / 1e3),
 			comments: [],
 			data,
 		};
