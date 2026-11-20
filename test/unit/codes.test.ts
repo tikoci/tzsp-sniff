@@ -19,7 +19,7 @@ const used = new Set(
 	sources.flatMap((s) =>
 		[
 			...s.matchAll(
-				/"((?:listen|capture|cli|filter|output|summary|tip)\/[a-z-]+)"/g,
+				/"((?:listen|capture|cli|filter|output|summary|tip|write)\/[a-z-]+)"/g,
 			),
 		].map((m) => m[1] as string),
 	),

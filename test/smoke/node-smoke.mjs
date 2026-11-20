@@ -5,12 +5,18 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	createFilter,
 	dissect,
+	fileSink,
+	LINKTYPE_TZSP,
 	listen,
 	openCapture,
 	parseTzsp,
+	pcapngWriter,
 	TZSP_PORT,
 } from "../../dist/index.js";
 
@@ -133,6 +139,41 @@ try {
 	await within(5000, "capture close", stream.listener.closed);
 }
 
+// --write's file and writer on Node's fs: a new owner-only file holding the
+// section header, the interface and one packet block.
+const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-node-"));
+try {
+	const path = join(dir, "smoke.pcapng");
+	const written = await openCapture({
+		ports: [{ port: 0 }],
+		count: 1,
+		durationMs: 5000,
+		write: pcapngWriter(fileSink(path), { target: path }),
+	});
+	const summary = await within(
+		6000,
+		"openCapture() with write",
+		(async () => {
+			let last;
+			for await (const record of written) {
+				if (record.type === "header") await sendTo(record.listeners[0].port);
+				last = record;
+			}
+			return last;
+		})(),
+	);
+	const file = readFileSync(path);
+	assert.equal(summary.status, "complete");
+	assert.deepEqual(summary.written, { datagrams: 1, bytes: file.length });
+	assert.equal(file.readUInt32LE(0), 0x0a0d0d0a);
+	assert.equal(LINKTYPE_TZSP, 128);
+	assert.ok(file.includes(REQUEST));
+	if (process.platform !== "win32")
+		assert.equal(statSync(path).mode & 0o777, 0o600);
+} finally {
+	rmSync(dir, { recursive: true, force: true });
+}
+
 // The built executable under Node.
 const child = spawn(
 	process.execPath,
@@ -183,5 +224,48 @@ assert.deepEqual(
 assert.equal(records[2].status, "complete");
 assert.deepEqual(records[0].filters, { proto: ["icmp"] });
 assert.deepEqual(records[1], { type: "packet", dst: "10.0.2.3" });
+
+// --format pcapng through Node's stdout pipe: binary, whole.
+const pcapChild = spawn(
+	process.execPath,
+	[
+		"dist/cli/bin.js",
+		"--port",
+		"0",
+		"--count",
+		"1",
+		"--duration",
+		"5s",
+		"--format",
+		"pcapng",
+	],
+	{
+		env: { PATH: process.env.PATH ?? "" },
+		stdio: ["ignore", "pipe", "pipe"],
+	},
+);
+const chunks = [];
+let pcapCode;
+try {
+	let err = "";
+	pcapChild.stdout.on("data", (chunk) => chunks.push(chunk));
+	pcapChild.stderr.setEncoding("utf8");
+	pcapChild.stderr.on("data", (chunk) => {
+		const first = !err.includes("\n");
+		err += chunk;
+		if (first && err.includes("\n")) sendTo(Number(/:(\d+)/.exec(err)[1]));
+	});
+	[pcapCode] = await within(
+		10000,
+		"the built CLI, pcapng",
+		once(pcapChild, "close"),
+	);
+} finally {
+	pcapChild.kill("SIGKILL");
+}
+assert.equal(pcapCode, 0);
+const pcap = Buffer.concat(chunks);
+assert.equal(pcap.readUInt32LE(0), 0x0a0d0d0a);
+assert.ok(pcap.includes(REQUEST));
 
 console.log(`node-smoke: ok (node ${process.version})`);

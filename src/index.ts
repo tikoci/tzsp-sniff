@@ -51,6 +51,11 @@ export {
 	type PacketFilter,
 } from "./filter.ts";
 export {
+	type FileSink,
+	type FileSinkOptions,
+	fileSink,
+} from "./file.ts";
+export {
 	CODES,
 	type Code,
 	type ErrorCode,
@@ -96,6 +101,16 @@ export {
 	type TipRecord,
 	type WarningRecord,
 } from "./records.ts";
+export {
+	type ByteSink,
+	type CaptureWriter,
+	DEFAULT_WRITE_STALL_MS,
+	LINKTYPE_TZSP,
+	type PcapngWriterOptions,
+	pcapngWriter,
+	peerComment,
+	type WrittenCounts,
+} from "./pcapng.ts";
 export {
 	type StatsAccumulator,
 	type SummaryOptions,

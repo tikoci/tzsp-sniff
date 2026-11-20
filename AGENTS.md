@@ -21,6 +21,9 @@ README.md is the user overview.
   "Development"; `node_modules/.bin/quickchr doctor` checks);
   `TZSP_SNIFF_ROUTEROS=<channel or version>` picks the router, default
   `stable`. Not part of `check`; CI runs it.
+- `bun run test:tshark`: TShark reads a pcapng the writer made (needs
+  `tshark` on `PATH`; `TZSP_SNIFF_TSHARK_VERSION` pins it). Not part of
+  `check`; CI's `tshark` job runs it.
 - `git config core.hooksPath .githooks` enables the pre-commit (Biome) and
   pre-push (lint) hooks.
 
@@ -28,7 +31,8 @@ README.md is the user overview.
 
 - `src/`: shipped library code. `src/index.ts` is the package entry.
 - `test/unit/`: `bun:test`, loopback sockets only: no external network and
-  no VM. `test/smoke/`: the Node check
+  no VM. `test/tshark/`: TShark reading our pcapng, behind
+  `TZSP_SNIFF_TSHARK`. `test/smoke/`: the Node check
   against `dist/`. `test/node/`: `bun:test` cases that run the built CLI
   under Node (after `bun run build`). `test/integration/`: a real CHR,
   behind `TZSP_SNIFF_INTEGRATION`. `test/lab/`: experiments run by hand,

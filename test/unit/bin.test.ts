@@ -1,12 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import {
+	closeSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	childEnv,
 	expectPortFree,
 	fixture,
+	openPty,
 	send,
 	stalledTerminal,
+	until,
 } from "./helpers.ts";
+import { blocks, readPcapng } from "./pcapng-reader.ts";
 
 /**
  * The real executable, spawned: process streams, exit codes and signals,
@@ -166,5 +177,117 @@ describe("tzsp-sniff executable", () => {
 			clearTimeout(killer);
 			proc.kill("SIGKILL");
 		}
+	});
+
+	describe("--write and --format pcapng", () => {
+		const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-bin-"));
+		afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+		// Windows has no SIGINT to send to a child.
+		test.skipIf(process.platform === "win32")(
+			"SIGINT during --follow --write: a valid file up to the last whole block, owner-only",
+			async () => {
+				const path = join(dir, "sigint.pcapng");
+				let port = 0;
+				const result = await run(
+					["--port", "0", "--follow", "--format", "jsonl", "--write", path],
+					async (header, proc) => {
+						port = header.listeners[0]?.port as number;
+						await send(port, [REQUEST, REQUEST, REQUEST]);
+						// Each block is written as it comes: all three are in the
+						// file before the interrupt.
+						await until(() => {
+							try {
+								return readPcapng(readFileSync(path)).packets.length === 3;
+							} catch {
+								return false;
+							}
+						}, 4000);
+						proc.kill("SIGINT");
+					},
+				);
+				expect(result.code).toBe(0);
+				const file = readFileSync(path);
+				expect(blocks(file).trailing).toBe(0);
+				expect(readPcapng(file).packets).toHaveLength(3);
+				expect(statSync(path).mode & 0o777).toBe(0o600);
+				const lines = records(result.stdout) as {
+					type: string;
+					status?: string;
+					written?: { datagrams: number; bytes: number };
+				}[];
+				expect(lines.at(-1)).toMatchObject({
+					status: "interrupted",
+					written: { datagrams: 3, bytes: file.length },
+				});
+				await expectPortFree(port);
+			},
+		);
+
+		test("--format pcapng through a real pipe: the bytes arrive whole", async () => {
+			const proc = Bun.spawn(
+				[
+					process.execPath,
+					"--no-env-file",
+					BIN,
+					"--port",
+					"0",
+					"--count",
+					"2",
+					"--format",
+					"pcapng",
+				],
+				{ env, stdout: "pipe", stderr: "pipe" },
+			);
+			const killer = setTimeout(() => proc.kill("SIGKILL"), CHILD_MS);
+			try {
+				const stdout = new Response(proc.stdout).arrayBuffer();
+				const reader = proc.stderr.getReader();
+				let stderr = "";
+				while (!stderr.includes("\n")) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					stderr += new TextDecoder().decode(value);
+				}
+				const port = Number(/:(\d+)/.exec(stderr)?.[1]);
+				await send(port, [REQUEST, REQUEST]);
+				expect(await proc.exited).toBe(0);
+				const file = readPcapng(new Uint8Array(await stdout));
+				expect(file.trailing).toBe(0);
+				expect(
+					file.packets.map((p) => Buffer.from(p.data).toString("hex")),
+				).toEqual([REQUEST, REQUEST]);
+			} finally {
+				clearTimeout(killer);
+				proc.kill("SIGKILL");
+			}
+		});
+
+		// libc pseudo-terminals: Linux and macOS.
+		test.skipIf(process.platform === "win32")(
+			"--format pcapng with stdout on a terminal: exit 2, nothing written there",
+			async () => {
+				const { master, slave } = openPty();
+				try {
+					const proc = Bun.spawn(
+						[process.execPath, "--no-env-file", BIN, "--format", "pcapng"],
+						{ env, stdout: slave, stderr: "pipe" },
+					);
+					const killer = setTimeout(() => proc.kill("SIGKILL"), CHILD_MS);
+					try {
+						expect(await proc.exited).toBe(2);
+						expect(await new Response(proc.stderr).text()).toContain(
+							"error cli/binary-to-terminal",
+						);
+					} finally {
+						clearTimeout(killer);
+						proc.kill("SIGKILL");
+					}
+				} finally {
+					closeSync(slave);
+					closeSync(master);
+				}
+			},
+		);
 	});
 });

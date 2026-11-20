@@ -11,6 +11,7 @@ centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
 CHR # Cloud Hosted Router: RouterOS as a VM
 cmdline # /proc/<pid>/cmdline
 CMR # MikroTik Centralized Management for RouterOS (/cmr)
+CREAT # O_CREAT, the open(2) flag
 crossref # tikoci-crossref, the house map of repos
 cwr # TCP congestion window reduced flag
 datagram
@@ -20,6 +21,8 @@ dissector
 dissectors
 dont # as in dontFragment, the IPv4 DF flag
 ece # TCP ECN-echo flag
+endofopt # pcapng opt_endofopt
+EPB # pcapng enhanced packet block
 EtherType
 EtherTypes
 FFI # foreign function interface
@@ -28,12 +31,17 @@ hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward
 HVF # Hypervisor.framework, the macOS QEMU accelerator
 ICMPV # as in ICMPV6_TYPES
+IDB # pcapng interface description block
+ifdrop # pcapng isb_ifdrop option
+ifrecv # pcapng isb_ifrecv option
 igmp # Internet Group Management Protocol
 ipip # IP-in-IP
+isb # pcapng interface statistics block
 keepalive
 keepalives
 KVM
 libc
+LINKTYPE # tcpdump link-layer header type, LINKTYPE_TZSP
 LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
@@ -59,6 +67,7 @@ RoMON # MikroTik Router Management Overlay Network
 routeros
 rst # TCP reset flag
 SCP # secure copy
+shb # pcapng section header block
 shellcheck
 SLIRP # QEMU user-mode networking
 TCG # QEMU's software CPU emulator (Tiny Code Generator)
@@ -73,6 +82,7 @@ TZSP # TaZmen Sniffer Protocol
 UDP
 UEFI # firmware standard, arm64 CHR boots under it
 urg # TCP urgent flag
+userappl # pcapng shb_userappl option
 VID # 802.1Q VLAN identifier
 VRRP
 Wireshark

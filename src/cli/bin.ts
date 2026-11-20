@@ -40,7 +40,12 @@ const stderr = streamSink(terminalStream(process.stderr, 2), {
 	graceMs: GRACE_MS,
 	signal: interrupt.signal,
 });
-const io: Io = { stdout, stderr, signal: interrupt.signal };
+const io: Io = {
+	stdout,
+	stderr,
+	signal: interrupt.signal,
+	stdoutTerminal: process.stdout.isTTY === true,
+};
 
 let code = 1;
 try {

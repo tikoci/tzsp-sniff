@@ -16,6 +16,7 @@ import {
 	openCapture,
 } from "../capture.ts";
 import { TzspSniffError } from "../errors.ts";
+import { fileSink } from "../file.ts";
 import {
 	createFilter,
 	type FilterSpec,
@@ -23,6 +24,7 @@ import {
 	senderAddress,
 } from "../filter.ts";
 import type { ListenerSpec } from "../listen.ts";
+import { pcapngWriter } from "../pcapng.ts";
 import {
 	DETAILS,
 	type Detail,
@@ -51,14 +53,16 @@ import {
 	summaryText,
 } from "./text.ts";
 
-/** Where output goes. `write` resolves once the text is accepted, and rejects when the reader is gone. */
+/** Where output goes. `write` resolves once the data is accepted, and rejects when the reader is gone. */
 export interface Sink {
-	write(text: string): Promise<void>;
+	write(data: string | Uint8Array): Promise<void>;
 }
 
 export interface Io {
 	stdout: Sink;
 	stderr: Sink;
+	/** stdout is a terminal: `--format pcapng` is refused there. */
+	stdoutTerminal?: boolean;
 	/** Interrupt: ends the capture as `interrupted`, with the summary written. */
 	signal?: AbortSignal;
 }
@@ -78,7 +82,7 @@ const LABEL = /^[A-Za-z0-9._-]+$/;
  * No `json`: a capture is a stream, and a document would hold every record
  * until the end (DESIGN.md, "Decided: JSONL, no `--format json`").
  */
-const FORMATS = ["text", "jsonl"] as const;
+const FORMATS = ["text", "jsonl", "pcapng"] as const;
 type Format = (typeof FORMATS)[number];
 
 export function helpText(): string {
@@ -124,6 +128,8 @@ export function helpText(): string {
 		"  tzsp-sniff --duration 30s --stats",
 		"  tzsp-sniff --proto tcp --not-port-match 22 --format jsonl --fields seq,src,dst,flags",
 		"  tzsp-sniff --port 37008=router-a --port 37009=router-b --format jsonl --follow",
+		"  tzsp-sniff --duration 30s --write capture.pcapng --stats",
+		"  tzsp-sniff --proto icmp --format pcapng --follow | tshark -r -",
 		"",
 		"On the router (RouterOS 7), toward this host:",
 		`  /tool/sniffer/set streaming-enabled=yes streaming-server=<this host>:${TZSP_PORT}`,
@@ -228,6 +234,8 @@ interface Plan {
 	tips: TipRecord[];
 	/** `--fields`, when given. */
 	fields?: string[];
+	/** `--write`, when given. */
+	write?: { path: string; overwrite: boolean };
 }
 
 /** Values of a repeatable flag, each split on commas. */
@@ -326,6 +334,37 @@ export function plan(args: ParsedArgs): Plan {
 		);
 	}
 	const format = choice("format", formatText, FORMATS);
+	if (format === "pcapng") {
+		// A capture file has no detail, fields or summary to choose: refused,
+		// not ignored (tikoci-cli-mcp, "Refuse, never drop").
+		for (const flag of ["fields", "stats", "detail"]) {
+			if (!has(flag)) continue;
+			throw new TzspSniffError(
+				"cli/flag-conflict",
+				`--${flag} does not apply to --format pcapng, which writes each datagram whole.`,
+				flag === "stats"
+					? "Drop --format pcapng and keep --stats, and add --write <file> to save the datagrams too."
+					: `Drop --${flag}, or use --format jsonl or text for it, and --write <file> to save the datagrams too.`,
+			);
+		}
+	}
+	const writePath = one("write");
+	if (writePath !== undefined && (writePath === "" || writePath === "-")) {
+		throw invalid(
+			"write",
+			`must be a file path, not ${JSON.stringify(writePath)}.`,
+			writePath === "-"
+				? "To write pcapng to stdout, use --format pcapng."
+				: "Give it as --write capture.pcapng.",
+		);
+	}
+	if (has("overwrite") && writePath === undefined) {
+		throw new TzspSniffError(
+			"cli/flag-conflict",
+			"--overwrite applies only with --write.",
+			"Add --write <file>, or drop --overwrite.",
+		);
+	}
 	const detailText = one("detail");
 	let detail: Detail =
 		detailText !== undefined
@@ -414,7 +453,15 @@ export function plan(args: ParsedArgs): Plan {
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
 	}
-	return { options, format, tips, ...(fields ? { fields } : {}) };
+	return {
+		options,
+		format,
+		tips,
+		...(fields ? { fields } : {}),
+		...(writePath !== undefined
+			? { write: { path: writePath, overwrite: has("overwrite") } }
+			: {}),
+	};
 }
 
 /** Run the CLI; resolves to the exit code. */
@@ -443,6 +490,13 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		// Plan even for --version, so a flag it would refuse is refused here
 		// too; only --help comes first, so a broken command can still ask.
 		const checked = plan(args);
+		if (checked.format === "pcapng" && io.stdoutTerminal) {
+			throw new TzspSniffError(
+				"cli/binary-to-terminal",
+				"--format pcapng writes a binary capture file, and stdout is a terminal.",
+				"Redirect it (> capture.pcapng), pipe it (| tshark -r -), or use --write capture.pcapng with a text format.",
+			);
+		}
 		planned = args.flags.has("version") ? "version" : checked;
 	} catch (error) {
 		if (!(error instanceof TzspSniffError)) throw error;
@@ -454,8 +508,22 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(`${VERSION}\n`);
 		return 0;
 	}
-	const { options, format, tips, fields } = planned;
+	const { options, format, tips, fields, write } = planned;
 	if (io.signal) options.signal = io.signal;
+	if (write) {
+		options.write = pcapngWriter(
+			fileSink(write.path, { overwrite: write.overwrite }),
+			{ target: write.path },
+		);
+	}
+	if (format === "pcapng") {
+		// stdout's sink times itself out (output/stalled) and tells a closed
+		// pipe apart, so the writer adds no timer of its own.
+		options.writeReported = pcapngWriter(
+			{ write: (chunk) => io.stdout.write(chunk) },
+			{ target: "stdout", stallMs: 0 },
+		);
+	}
 
 	let stream: Awaited<ReturnType<typeof openCapture>>;
 	try {
@@ -499,6 +567,13 @@ async function print(
 
 	for await (const record of stream) {
 		if (record.type === "summary" && record.status === "error") exitCode = 1;
+		if (
+			format === "pcapng" &&
+			(record.type === "packet" || record.type === "record")
+		) {
+			// The capture writes these to stdout itself.
+			continue;
+		}
 		if (format === "jsonl") {
 			const shaped = fields ? selectFields(record, fields) : record;
 			await io.stdout.write(`${JSON.stringify(shaped)}\n`);

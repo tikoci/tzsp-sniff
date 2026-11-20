@@ -145,7 +145,8 @@ openCapture(options): Promise<CaptureStream>             // exists: limits, coun
 summarize(): StatsAccumulator                            // exists: bounded, see Limits
 createFilter(spec): PacketFilter                         // exists: (capture, dissection?) => boolean
 selectFields(record, fields)                             // exists: --fields, for any surface
-pcapngWriter(sink): CaptureWriter                        // streaming, with backpressure
+pcapngWriter(sink): CaptureWriter                        // exists: streaming, with backpressure
+fileSink(path, { overwrite }): FileSink                  // exists: --write's file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
 ```
@@ -408,9 +409,56 @@ improves. One interface block per listener carries its label and port;
 the block timestamp is the arrival time; the UDP peer goes in a per-packet
 option. `--format pcapng` writes the same representation. Filters never
 apply to `--write`; they apply to `--format pcapng` on stdout.
-**Unverified**: that Wireshark and TShark open it this way
-(`WTAP_ENCAP_TZSP` is registered in `packet-tzsp.c`) and show the peer
-option; checked by a test before the format ships.
+**Verified** (slice 4, 2026-11-19): TShark 4.2.2 (Ubuntu 24.04's
+`4.2.2-1.1build3`), run as a non-root user, reads a file `pcapngWriter`
+made as TZSP: `frame.protocols` starts `tzsp:eth:ethertype:ip:icmp`, the
+inner `ip.src`, `ip.dst` and `icmp.type` are there, `frame.interface_name`
+is the listener's label, `frame.comment` is the peer and
+`frame.time_epoch` the arrival time (`test/tshark/pcapng.test.ts`, run
+locally in a Docker image of Ubuntu 24.04 and by CI's `tshark` job, which
+pins that version).
+
+**Decided, the file's shape** (maintainer, slice 4, 2026-11-19):
+
+- **The peer is the packet block's `opt_comment`**, as
+  `peer=<address>:<port>` (an IPv6 address in brackets). pcapng has no
+  standard option for a packet's sender, and a custom option needs an IANA
+  Private Enterprise Number this project does not have; Wireshark and
+  TShark show a comment as `frame.comment` with no setup, and `decode`
+  reads it back. The cost: it shares the slot people annotate with.
+- **Blocks**: little-endian; a section header with `shb_userappl`
+  `tzsp-sniff <version>` and an unknown section length (-1); one interface
+  block per listener in `--port` order, with `if_name` its label,
+  `if_description` `TZSP on UDP <bind>:<port>`, no snap length (0) and
+  `if_tsresol` 3, milliseconds, the precision of the arrival time; one
+  enhanced packet block per datagram, captured and original length both
+  the datagram's.
+- **One sink write per block, each awaited.** A slow sink slows the
+  capture loop and the bounded queue absorbs the burst (drops are
+  counted); a sink call that takes longer than 30 s is `write/stalled`.
+  stdout's own sink times itself out (`output/stalled`), so the writer
+  behind `--format pcapng` adds no timer.
+- **The writers sit in `openCapture()`**: `write` (every datagram the
+  capture reads, before filters) and `writeReported` (each datagram the
+  stream reports: the frames the filters keep, and every control,
+  unsupported and invalid record). A datagram is counted, then written,
+  then handed over, so the counters add up when a write fails and a record
+  the caller sees is already in the file. A writer opens after the bind (a
+  port that fails leaves no file) and before the header (a file that
+  cannot be made opens no capture), and closes on every way out; a close
+  failure makes the summary an error, or rejects `return()` when the
+  caller stopped early. A sink error that is a `TzspSniffError` ends the
+  capture with it in the summary; any other is thrown from the iteration,
+  as a consumer's own error is (the CLI's closed stdout is one: it stops
+  quietly, as in text).
+- **The header names the file** (`write`), and the summary counts what
+  was written (`written`: datagrams and bytes, headers included), so the
+  first look says whether the file is worth reading.
+- **`--format pcapng` is refused on a terminal** (`cli/binary-to-terminal`,
+  exit 2, before the bind), and with `--fields`, `--stats` or `--detail`
+  (`cli/flag-conflict`): none of them changes a capture file, so they are
+  refused rather than ignored. Its header, warnings, tips and summary go to
+  stderr as text. `--write -` is refused with a fix naming it.
 
 **Requirement, file lifecycle:** the file is created exclusively (an
 existing file is an error naming `--overwrite`), with owner-only
@@ -420,6 +468,16 @@ so a SIGINT leaves a valid file up to the last whole block. A write or
 close failure (disk full) ends the capture with a coded error and a
 non-zero exit, even if packets were already printed. The examples use a
 path in the working directory, not a shared `/tmp`.
+
+How it is met (`src/file.ts`): created with `O_CREAT|O_EXCL` and mode
+0600 (`write/exists` when it is there); `--overwrite` opens it without
+truncating and with `O_NOFOLLOW` where the OS has it, makes a regular file
+0600, and only then truncates it, so old contents are never readable by
+others while new ones arrive, and a symbolic link is refused rather than
+followed. Each block goes to the OS with its own `write()`, with no
+buffer in the process, so whatever the capture handed over survives the
+process; the file is not `fsync`ed. Nothing touches the disk until the
+ports are bound. On Windows the mode is only the read-only bit.
 
 ### `decode` input
 
@@ -807,6 +865,15 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   (`pgrep -af "qemu-system.*/machines/<name>/"`), since `remove` deletes
   such a directory without stopping it (tikoci/quickchr#294). CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
+- **TShark** (`test/tshark`, `bun run test:tshark`, which sets
+  `TZSP_SNIFF_TSHARK=1`): TShark reads a pcapng that `pcapngWriter` and
+  `fileSink` made, as a non-root user, and the test checks the link type,
+  an inner field, the interface name, the peer comment and the time. It
+  fails rather than skips when `tshark` is missing, and fails on any
+  version but `TZSP_SNIFF_TSHARK_VERSION` when that is set. CI's `tshark`
+  job runs it on `ubuntu-24.04` with the archive's TShark, pinned to
+  4.2.2; locally, any TShark on `PATH` (a Docker image of Ubuntu 24.04
+  gives CI's).
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.
 

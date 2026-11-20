@@ -30,6 +30,7 @@ import {
 	viewPacket,
 	type WarningRecord,
 } from "./records.ts";
+import type { CaptureWriter } from "./pcapng.ts";
 import { summarize } from "./summary.ts";
 import { VERSION } from "./version.ts";
 
@@ -52,6 +53,17 @@ export interface CaptureOptions extends ListenOptions {
 	 * and filters do not apply to them.
 	 */
 	filter?: FilterSpec;
+	/**
+	 * Saves every datagram the capture reads, as it was received and before
+	 * filters, whatever the stream reports (`--write`). Its target is in the
+	 * header and its counts in the summary.
+	 */
+	write?: CaptureWriter;
+	/**
+	 * Saves each datagram the stream reports: the frames the filters keep,
+	 * and every control, unsupported and invalid record (`--format pcapng`).
+	 */
+	writeReported?: CaptureWriter;
 }
 
 /**
@@ -114,6 +126,28 @@ export async function openCapture(
 	// Checked before the bind, so a bad spec opens no socket.
 	const filter = createFilter(options.filter);
 	const listener = await listen(options, internals);
+	const writers = [options.write, options.writeReported].filter(
+		(w): w is CaptureWriter => w !== undefined,
+	);
+	if (writers.length === 2 && writers[0] === writers[1]) {
+		listener.close();
+		await listener.closed;
+		throw new TzspSniffError(
+			"listen/invalid-option",
+			"write and writeReported are the same writer.",
+			"Give each its own writer, or leave one out.",
+		);
+	}
+	// After the bind, so a port that fails leaves no file; before the header,
+	// so a file that cannot be made opens no capture.
+	try {
+		for (const w of writers) await w.open(listener.listeners);
+	} catch (error) {
+		listener.close();
+		await Promise.all(writers.map((w) => w.close().catch(() => {})));
+		await listener.closed;
+		throw error;
+	}
 
 	const limits: HeaderRecord["limits"] = {};
 	if (count !== undefined) limits.count = count;
@@ -134,6 +168,7 @@ export async function openCapture(
 		detail,
 		stats: statsOnly,
 	};
+	if (options.write) header.write = options.write.target;
 
 	// The limits run from the bind, not from the first read, so a caller that
 	// is slow to start reading still gets its sockets closed on time.
@@ -168,6 +203,26 @@ export async function openCapture(
 		idleTimer = setTimeout(check, idleMs);
 	}
 
+	/**
+	 * Close every writer, each once; the first failure is returned, not
+	 * thrown, so one writer's failure does not skip closing another.
+	 */
+	let writersClosed: Promise<unknown> | undefined;
+	const closeWriters = () => {
+		writersClosed ??= (async () => {
+			let first: unknown;
+			for (const w of writers) {
+				try {
+					await w.close();
+				} catch (error) {
+					first ??= error;
+				}
+			}
+			return first;
+		})();
+		return writersClosed;
+	};
+
 	async function* run(): AsyncGenerator<StreamRecord> {
 		const counters: Counters = {
 			datagrams: 0,
@@ -195,6 +250,7 @@ export async function openCapture(
 				for await (const capture of listener) {
 					stats.addDatagram(capture);
 					let record: PacketRecord | DatagramRecord | undefined;
+					let reported = true;
 					if (capture.tzsp.kind === "packet") {
 						const d = dissect(capture.tzsp.payload);
 						if (filter(capture, d)) {
@@ -205,11 +261,17 @@ export async function openCapture(
 								record = packetRecord(capture, d, detail, undefined, view);
 						} else {
 							counters.filtered += 1;
+							reported = false;
 						}
 					} else {
 						counters[capture.tzsp.kind] += 1;
 						if (!statsOnly) record = datagramRecord(capture, detail);
 					}
+					// Saved after it is counted, so the counters add up when a write
+					// fails, and before it is handed over, so a record the caller
+					// sees is already in the file.
+					await options.write?.write(capture);
+					if (reported) await options.writeReported?.write(capture);
 					// A limit met by this entry stops intake now, before the entry
 					// is handed over: nothing more is received while the caller
 					// holds it, and a later abort cannot change why it stopped.
@@ -228,6 +290,14 @@ export async function openCapture(
 		} finally {
 			clearTimers();
 			listener.close();
+			// Every way out closes the writers. A caller that stops early gets
+			// a close failure from return(), since no summary follows.
+			await closeWriters();
+		}
+		const closeFailure = await closeWriters();
+		if (closeFailure !== undefined) {
+			if (!(closeFailure instanceof TzspSniffError)) throw closeFailure;
+			failure ??= closeFailure;
 		}
 
 		// Nothing here stopped it: its signal, a socket error the caller did not
@@ -321,6 +391,7 @@ export async function openCapture(
 			counters,
 			...stats.tables(),
 		};
+		if (options.write) summary.written = { ...options.write.written };
 		if (failure) {
 			summary.error = { code: failure.code, message: failure.message };
 			if (failure.fix) summary.error.fix = failure.fix;
@@ -361,6 +432,13 @@ export async function openCapture(
 	};
 
 	let used = false;
+	let started = false;
+	// A capture nobody reads still closes its writers once its sockets close
+	// (a limit, its signal): the file is complete then. A reader that comes
+	// later gets the close's outcome in its summary, or from return().
+	void listener.closed.then(() => {
+		if (!started) void closeWriters();
+	});
 	return {
 		header,
 		listener: view,
@@ -381,14 +459,25 @@ export async function openCapture(
 				clearTimers();
 				listener.close();
 			};
+
+			// The writers close here too: a generator that never started never
+			// runs its finally, and a close failure on an early stop has no
+			// summary to go in, so return() rejects with it.
 			return {
-				next: () => generator.next(),
-				return: (value?: unknown) => {
-					close();
-					return generator.return(value);
+				next: () => {
+					started = true;
+					return generator.next();
 				},
-				throw: (error?: unknown) => {
+				return: async (value?: unknown) => {
 					close();
+					const result = await generator.return(value);
+					const failure = await closeWriters();
+					if (failure !== undefined) throw failure;
+					return result;
+				},
+				throw: async (error?: unknown) => {
+					close();
+					await closeWriters();
 					return generator.throw(error);
 				},
 			};

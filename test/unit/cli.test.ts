@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
 import {
@@ -21,6 +22,7 @@ import {
 	send,
 	until,
 } from "./helpers.ts";
+import { readPcapng } from "./pcapng-reader.ts";
 
 const STREAM = fixture("7.25.1-x86-sniffer-stream");
 const REQUEST = STREAM[0] as string;
@@ -37,35 +39,45 @@ const codeOf = (fn: () => unknown): string | undefined => {
 
 /** Sinks that record what was written; `stdoutFailsAfter` simulates a reader that went away. */
 function memoryIo(
-	options: { stdoutFailsAfter?: number; signal?: AbortSignal } = {},
+	options: {
+		stdoutFailsAfter?: number;
+		signal?: AbortSignal;
+		stdoutTerminal?: boolean;
+	} = {},
 ) {
 	const out: string[] = [];
 	const err: string[] = [];
+	/** Binary writes to stdout (--format pcapng), in order. */
+	const bin: Uint8Array[] = [];
 	const io: Io = {
 		stdout: {
-			async write(text) {
+			async write(data) {
 				if (
 					options.stdoutFailsAfter !== undefined &&
-					out.length >= options.stdoutFailsAfter
+					out.length + bin.length >= options.stdoutFailsAfter
 				) {
 					throw new OutputClosedError();
 				}
-				out.push(text);
+				if (typeof data === "string") out.push(data);
+				else bin.push(data);
 			},
 		},
 		stderr: {
-			async write(text) {
-				err.push(text);
+			async write(data) {
+				err.push(String(data));
 			},
 		},
 	};
 	if (options.signal) io.signal = options.signal;
+	if (options.stdoutTerminal) io.stdoutTerminal = true;
 	return {
 		io,
 		out,
 		err,
+		bin,
 		stdout: () => out.join(""),
 		stderr: () => err.join(""),
+		stdoutBytes: () => Buffer.concat(bin),
 	};
 }
 
@@ -803,5 +815,237 @@ describe("main", () => {
 		await send(port, [REQUEST]);
 		expect(await run).toBe(0);
 		await expectPortFree(port);
+	});
+});
+
+describe("--write and --format pcapng", () => {
+	const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-cli-"));
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
+	let n = 0;
+	const fresh = () => join(dir, `c-${++n}.pcapng`);
+	const hexOf = (p: { data: Uint8Array }) =>
+		Buffer.from(p.data).toString("hex");
+	const planOf = (argv: string[]) => plan(parseArgs(argv));
+
+	test("pcapng refuses --fields, --stats and --detail, each with a fix", () => {
+		for (const [flag, ...rest] of [
+			["--fields", "src"],
+			["--stats"],
+			["--detail", "full"],
+		] as const) {
+			let error: TzspSniffError | undefined;
+			try {
+				planOf(["--format", "pcapng", flag, ...rest]);
+			} catch (e) {
+				error = e as TzspSniffError;
+			}
+			expect(error?.code).toBe("cli/flag-conflict");
+			expect(error?.message).toContain(flag);
+			expect(error?.fix).toContain("--write");
+		}
+	});
+
+	test("--write needs a path, --write - points at --format pcapng, --overwrite needs --write", () => {
+		expect(codeOf(() => planOf(["--write", "-"]))).toBe("cli/invalid-value");
+		expect(codeOf(() => planOf(["--write="]))).toBe("cli/invalid-value");
+		expect(codeOf(() => planOf(["--overwrite"]))).toBe("cli/flag-conflict");
+		expect(planOf(["--write", "x.pcapng", "--overwrite"]).write).toEqual({
+			path: "x.pcapng",
+			overwrite: true,
+		});
+		expect(planOf(["--write", "x.pcapng"]).write?.overwrite).toBe(false);
+		expect(planOf(["--format", "pcapng"]).format).toBe("pcapng");
+	});
+
+	test("--format pcapng to a terminal: exit 2 before any bind, with a fix", async () => {
+		const m = memoryIo({ stdoutTerminal: true });
+		expect(await main(["--format", "pcapng", "--count", "1"], m.io)).toBe(2);
+		expect(m.stderr()).toMatch(
+			/^error cli\/binary-to-terminal: .*\n {2}fix: Redirect it/,
+		);
+		expect(m.bin).toHaveLength(0);
+		// Text to a terminal is fine.
+		expect(
+			await main(
+				["--port", "0", "--duration", "10ms"],
+				memoryIo({ stdoutTerminal: true }).io,
+			),
+		).toBe(0);
+	});
+
+	test("--write with --stats: every datagram saved, before filters; the summary says what was written", async () => {
+		const path = fresh();
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--idle",
+				"300ms",
+				"--stats",
+				"--format",
+				"jsonl",
+				"--proto",
+				"tcp",
+				"--write",
+				path,
+			],
+			m.io,
+		);
+		await until(() => m.out.length > 0);
+		await send(boundPort(m.stdout()), [REQUEST, "01040000"]);
+		expect(await run).toBe(0);
+		const records = m
+			.stdout()
+			.trimEnd()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		expect(records[0]).toMatchObject({ type: "header", write: path });
+		const file = readPcapng(readFileSync(path));
+		expect(file.packets.map(hexOf)).toEqual([REQUEST, "01040000"]);
+		expect(records.at(-1)).toMatchObject({
+			type: "summary",
+			status: "complete",
+			counters: { packets: 0, filtered: 1, control: 1 },
+			written: { datagrams: 2, bytes: readFileSync(path).length },
+		});
+	});
+
+	test("text: the start line names the file, and the summary counts what was written", async () => {
+		const path = fresh();
+		const m = memoryIo();
+		const run = main(["--port", "0", "--count", "1", "--write", path], m.io);
+		await until(() => m.err.length > 0);
+		expect(m.stderr()).toContain(`, saving every datagram to ${path}\n`);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		expect(m.stderr()).toMatch(/\n {2}written: 1 datagrams, \d+ bytes\n/);
+		expect(m.stdout()).toContain("icmp echo-request");
+	});
+
+	test("an existing file: exit 1 with write/exists naming --overwrite; the file is kept", async () => {
+		const path = fresh();
+		writeFileSync(path, "keep");
+		const m = memoryIo();
+		expect(
+			await main(["--port", "0", "--count", "1", "--write", path], m.io),
+		).toBe(1);
+		expect(m.stderr()).toMatch(
+			/^error write\/exists: .*\n {2}fix: .*--overwrite/,
+		);
+		expect(m.stdout()).toBe("");
+		expect(readFileSync(path, "utf8")).toBe("keep");
+		// --overwrite replaces it.
+		const o = memoryIo();
+		const run = main(
+			["--port", "0", "--count", "1", "--write", path, "--overwrite"],
+			o.io,
+		);
+		await until(() => o.err.length > 0);
+		await send(boundPort(o.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		expect(readPcapng(readFileSync(path)).packets).toHaveLength(1);
+	});
+
+	// /dev/full fails every write with ENOSPC: a full disk.
+	test.skipIf(process.platform !== "linux")(
+		"a write that fails after packets were printed: exit 1, write/failed on stderr",
+		async () => {
+			const m = memoryIo();
+			// --overwrite: /dev/full exists. The headers fail at once, so the
+			// capture never starts.
+			expect(
+				await main(
+					[
+						"--port",
+						"0",
+						"--count",
+						"1",
+						"--write",
+						"/dev/full",
+						"--overwrite",
+					],
+					m.io,
+				),
+			).toBe(1);
+			expect(m.stderr()).toContain("error write/failed");
+			expect(m.stderr()).toContain("/dev/full");
+		},
+	);
+
+	test("--format pcapng: the reported datagrams on stdout; the start line and summary on stderr", async () => {
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--idle",
+				"300ms",
+				"--format",
+				"pcapng",
+				"--proto",
+				"tcp",
+			],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		expect(m.stderr()).toContain("listening on UDP");
+		await send(boundPort(m.stderr()), [REQUEST, "01040000"]);
+		expect(await run).toBe(0);
+		expect(m.stdout()).toBe("");
+		const file = readPcapng(m.stdoutBytes());
+		expect(file.interfaces).toHaveLength(1);
+		// The ICMP frame is filtered out; the control record is reported.
+		expect(file.packets.map(hexOf)).toEqual(["01040000"]);
+		expect(m.stderr()).toContain("summary: complete");
+	});
+
+	test("--format pcapng and --write together: the file has everything, stdout what the filters keep", async () => {
+		const path = fresh();
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--idle",
+				"300ms",
+				"--format",
+				"pcapng",
+				"--proto",
+				"tcp",
+				"--write",
+				path,
+			],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(0);
+		expect(readPcapng(readFileSync(path)).packets.map(hexOf)).toEqual([
+			REQUEST,
+		]);
+		expect(readPcapng(m.stdoutBytes()).packets).toHaveLength(0);
+	});
+
+	test("--format pcapng to a closed stdout stops quietly and frees the port; the file is closed whole", async () => {
+		const path = fresh();
+		// The section header and the interface block go through; the
+		// packet block finds the reader gone.
+		const m = memoryIo({ stdoutFailsAfter: 2 });
+		const run = main(
+			["--port", "0", "--follow", "--format", "pcapng", "--write", path],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		const port = boundPort(m.stderr());
+		await send(port, [REQUEST]);
+		expect(await run).toBe(0);
+		await expectPortFree(port);
+		expect(m.stderr()).not.toContain("summary");
+		expect(m.bin).toHaveLength(2);
+		// The datagram was saved before stdout failed, and the file closed.
+		const file = readPcapng(readFileSync(path));
+		expect(file.packets).toHaveLength(1);
+		expect(file.trailing).toBe(0);
 	});
 });

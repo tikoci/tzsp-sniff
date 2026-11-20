@@ -14,8 +14,9 @@ rather than as a general sniffer.
 
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
-> ICMP, UDP and TCP. `--write`, `decode` and `setup` are designed
-> ([DESIGN.md](DESIGN.md)) and not built yet.
+> ICMP, UDP and TCP, and saves captures as pcapng (`--write`, `--format
+> pcapng`). `decode` and `setup` are designed ([DESIGN.md](DESIGN.md)) and
+> not built yet.
 
 ## Use
 
@@ -37,6 +38,8 @@ tzsp-sniff --format jsonl --follow        # a JSON record per line until Ctrl-C
 tzsp-sniff --port 37008=router-a --port 37009=router-b --duration 1m
 tzsp-sniff --proto tcp --not-port-match 22 --count 20   # filters
 tzsp-sniff --format jsonl --host 10.0.2.15 --fields seq,src,dst,protocols
+tzsp-sniff --duration 30s --write cmr.pcapng --stats   # save everything, print the summary
+tzsp-sniff --proto icmp --format pcapng --follow | tshark -r -   # filtered, to a pipe
 ```
 
 ```text
@@ -72,6 +75,21 @@ summary in JSONL or with `--stats`, raising `--detail` as far as they need. To t
 write, so a quiet `--follow | head` waits for the next datagram.
 `tzsp-sniff --help` has every flag.
 
+`--write <file>` saves every datagram as it arrived, before filters and
+whatever the output prints, as a pcapng file with link type TZSP (128):
+each packet block holds the whole TZSP datagram (tags, control and
+malformed records included), one interface per listener carries its label
+and port, and each packet's comment names its UDP peer
+(`peer=10.0.2.15:37008`). Wireshark and TShark open it as it is (checked in
+CI on TShark 4.2.2). The file must not exist (`--overwrite` replaces it), is
+owner-only where the OS has permissions, and is written block by block, so
+Ctrl-C leaves a valid file. The header names the file, the summary counts
+what was written, and a failed write ends the capture with
+`write/failed` and exit 1. `--format pcapng` writes the same format to
+stdout with the filters applied, for a pipe or a redirect (it is refused on
+a terminal, and with `--fields`, `--stats` or `--detail`); the start line,
+warnings and the summary go to stderr.
+
 ### Library
 
 The package will be `@tikoci/tzsp-sniff`, and runs on Node 22 or later or on
@@ -98,6 +116,13 @@ const keep = createFilter({ proto: ["tcp"], not: { portMatch: [22] } });
 keep.flags; // ["--proto tcp", "--not-port-match 22"]
 // for await (const capture of listener) if (keep(capture)) { … }
 ```
+
+`pcapngWriter(sink)` and `fileSink(path, { overwrite })` are `--write`:
+pass the writer as `openCapture({ write })` to save every datagram, or as
+`writeReported` to save only what the stream reports. A sink is any
+`{ write(chunk) }` that returns a promise; the writer waits for each block
+and ends the capture with `write/stalled` when a sink takes nothing for 30
+seconds.
 
 `listen()` is the layer below: the sockets and a bounded queue, yielding
 each datagram with its arrival time, UDP peer and listener label.
@@ -162,6 +187,11 @@ firmware; `node_modules/.bin/quickchr doctor` says what is missing:
 
 quickchr's [MANUAL](https://github.com/tikoci/quickchr/blob/main/MANUAL.md)
 has the full list.
+
+`bun run test:tshark` has TShark read a file the writer made, and checks an
+inner field, the interface and the peer comment. It needs `tshark` on
+`PATH` (`apt install tshark`, `brew install wireshark`); CI runs it on
+Ubuntu 24.04's TShark and sets `TZSP_SNIFF_TSHARK_VERSION` to pin it.
 
 Agent instructions are in [AGENTS.md](AGENTS.md).
 
