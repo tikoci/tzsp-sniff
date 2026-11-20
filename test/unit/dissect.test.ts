@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import {
 	type Dissection,
 	dissect as dissectFrame,
@@ -1042,9 +1042,12 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 	});
 });
 
-// Last in the file: it reads what every test above produced.
-describe("dissect: fields match dissectors()", () => {
-	test("every field a vector produces is declared, with its type, and every declared field is produced", () => {
+// After every test in the file, in any order (`bun test --seed`): it reads
+// what all of them produced. A failure here is reported as an afterAll hook.
+afterAll(() => {
+	// Every field a vector produces is declared, with its type, and every
+	// declared field is produced.
+	{
 		const list = dissectors();
 		expect([...produced.keys()].sort()).toEqual(
 			list.map((d) => d.protocol).sort(),
@@ -1071,9 +1074,8 @@ describe("dissect: fields match dissectors()", () => {
 				}
 			}
 		}
-	});
-
-	test("every layer and list item a vector produced carries each field not declared optional", () => {
-		expect(missing).toEqual([]);
-	});
+	}
+	// Every layer and list item a vector produced carries each field not
+	// declared optional.
+	expect(missing).toEqual([]);
 });

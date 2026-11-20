@@ -24,6 +24,7 @@ const IPV6_EXTENSIONS: Record<number, string> = {
 };
 
 export interface Ipv6Extension {
+	/** Its own type, the next-header value that named it (0 for hop-by-hop). */
 	header: number;
 	name: string;
 	length: number;
@@ -40,9 +41,10 @@ export interface Ipv6Fields {
 	/** Extension headers walked, in order (at most {@link MAX_IPV6_EXTENSIONS}). */
 	extensions: Ipv6Extension[];
 	/**
-	 * The last next-header value reached: the upper-layer protocol, unless
-	 * the walk stopped at an extension header (a problem there, or a later
-	 * fragment, whose fragment header's next header is given).
+	 * The last next-header value reached: the upper-layer protocol, 59 when
+	 * no next header follows, or an extension header's type when the walk
+	 * stopped there (a problem, or a later fragment, whose fragment header's
+	 * next header is given).
 	 */
 	protocol: number;
 	protocolName?: string;
@@ -193,7 +195,11 @@ const FIELDS: FieldDecls<Ipv6Fields> = {
 		type: "object[]",
 		description: `Extension headers walked, in order (at most ${MAX_IPV6_EXTENSIONS}).`,
 		items: {
-			header: { type: "number", description: "Its next-header number." },
+			header: {
+				type: "number",
+				description:
+					"Its own type: the next-header value that named it, such as 0 for hop-by-hop.",
+			},
 			name: {
 				type: "string",
 				description:
@@ -205,7 +211,7 @@ const FIELDS: FieldDecls<Ipv6Fields> = {
 	protocol: {
 		type: "number",
 		description:
-			"The last next-header value reached: the upper-layer protocol, unless the walk stopped at an extension header (a problem there, or a later fragment, whose fragment header's next header is given).",
+			"The last next-header value reached: the upper-layer protocol, 59 when no next header follows, or an extension header's type when the walk stopped there (a problem, or a later fragment, whose fragment header's next header is given).",
 	},
 	protocolName: {
 		type: "string",

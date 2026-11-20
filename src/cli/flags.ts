@@ -209,15 +209,13 @@ export const FLAGS: readonly FlagSpec[] = [
 const BY_NAME = new Map(FLAGS.map((f) => [f.name, f]));
 
 /**
- * Where a flag `dissectors` refused belongs, as a command line to adapt:
- * listen's when listen takes it, else decode's with its file.
+ * Where a flag `dissectors` refused belongs, as a command that runs as
+ * printed: listen's help when listen takes it, else decode's.
  */
-const ownerExample = (spec: FlagSpec) => {
-	const value = spec.value ? ` ${spec.value}` : "";
-	return spec.commands.includes("listen")
-		? `To capture with it, run tzsp-sniff listen --${spec.name}${value}`
-		: `To read a file with it, run tzsp-sniff decode <file> --${spec.name}${value}`;
-};
+const ownerExample = (spec: FlagSpec) =>
+	spec.commands.includes("listen")
+		? "To capture with it, see tzsp-sniff listen --help"
+		: "To read a file with it, see tzsp-sniff decode --help";
 
 /** Own keys only: `constructor` or `__proto__` is not a command. */
 const isCommand = (name: string): name is CommandName =>

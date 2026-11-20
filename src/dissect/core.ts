@@ -28,7 +28,7 @@ export interface LayerBase<P extends string, F> {
 	offset: number;
 	/** Its span: header and everything it carries, within its parent's span. */
 	length: number;
-	/** Absent only when the header itself is cut short or unreadable. */
+	/** Absent only when the fixed part of the header is cut short or unreadable. */
 	fields?: F;
 	problem?: DissectProblem;
 	/** Which check set `problem` (`header`, `total-length`, `version` …). */
@@ -159,7 +159,8 @@ export interface FieldInfo {
 	/**
 	 * May be absent from a layer's `fields` (or an `object[]` item); the
 	 * description says when. A field not optional is in every layer that has
-	 * `fields`: a layer whose header is cut short or unreadable has none.
+	 * `fields`. A layer has none when the fixed part of its header is cut
+	 * short or unreadable; one whose options are cut short keeps them.
 	 */
 	optional: boolean;
 	description: string;
@@ -180,11 +181,12 @@ type FieldDecl<T> = null extends T
 					: [NonNullable<T>] extends [string[]]
 						? { type: "string[]" }
 						: [NonNullable<T>] extends [(infer E)[]]
-							? [E] extends [readonly unknown[]]
-								? never
-								: [E] extends [object]
+							? // A list of lists, or of objects some of which are lists.
+								[Extract<E, readonly unknown[]>] extends [never]
+								? [E] extends [object]
 									? { type: "object[]"; items: FieldDecls<E> }
 									: never
+								: never
 							: never) &
 			(undefined extends T ? { optional: true } : { optional?: never });
 

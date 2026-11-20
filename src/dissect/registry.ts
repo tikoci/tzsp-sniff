@@ -90,8 +90,8 @@ export interface DissectorInfo {
 	matches: DissectorMatch[];
 	/**
 	 * The layer's fields, as records carry them at `--detail layers`. A field
-	 * not `optional` is in every layer that has `fields`; a layer whose
-	 * header is cut short has none.
+	 * not `optional` is in every layer that has `fields`, which a layer lacks
+	 * only when the fixed part of its header is cut short or unreadable.
 	 */
 	fields: FieldInfo[];
 }

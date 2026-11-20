@@ -286,7 +286,7 @@ describe("dissectors", () => {
 		}
 	});
 
-	test("a refused flag's fix is a command that takes it, and the jq hint runs as printed", async () => {
+	test("a refused flag's fix points to the help of a command that takes it, and runs as printed", async () => {
 		const fixOf = (argv: string[]) => {
 			try {
 				parseArgs(argv);
@@ -295,14 +295,14 @@ describe("dissectors", () => {
 			}
 			return undefined;
 		};
-		expect(fixOf(["dissectors", "--input", "hex"])).toContain(
-			"run tzsp-sniff decode <file> --input pcapng|pcap|hex",
+		expect(fixOf(["dissectors", "--input", "hex"])).toEndWith(
+			"see tzsp-sniff decode --help",
 		);
-		expect(fixOf(["dissectors", "--tzsp-port", "1"])).toContain(
-			"run tzsp-sniff decode <file> --tzsp-port <port>",
+		expect(fixOf(["dissectors", "--tzsp-port", "1"])).toEndWith(
+			"see tzsp-sniff decode --help",
 		);
-		expect(fixOf(["dissectors", "--count", "1"])).toContain(
-			"run tzsp-sniff listen --count <n>",
+		expect(fixOf(["dissectors", "--count", "1"])).toEndWith(
+			"see tzsp-sniff listen --help",
 		);
 		const jq = fixOf(["dissectors", "tcp"]) ?? "";
 		expect(jq).toEndWith(`jq 'select(.protocol == "tcp")'`);
@@ -314,7 +314,7 @@ describe("dissectors", () => {
 		expect(m.stderr()).toContain(
 			"--count is a flag of listen and decode, not dissectors.",
 		);
-		expect(m.stderr()).toContain("tzsp-sniff listen --count");
+		expect(m.stderr()).toContain("tzsp-sniff listen --help");
 	});
 
 	test("--version and --help", async () => {

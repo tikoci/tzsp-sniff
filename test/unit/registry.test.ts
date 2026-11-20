@@ -237,6 +237,17 @@ describe("field declarations", () => {
 			// @ts-expect-error: a list of numbers has no declaration
 			numbers: { type: "string[]", description: "" },
 		};
+		interface Mixed {
+			list: ({ n: number } | number[])[];
+		}
+		const mixed: FieldDecls<Mixed> = {
+			// @ts-expect-error: a list whose items may be lists has no declaration
+			list: {
+				type: "object[]",
+				description: "",
+				items: { n: { type: "number", description: "" } },
+			},
+		};
 		interface Nullable {
 			label: string | null;
 			note?: string | null;
@@ -255,6 +266,7 @@ describe("field declarations", () => {
 			nestedMissing,
 			nestedWrong,
 			nullable,
-		]).toHaveLength(7);
+			mixed,
+		]).toHaveLength(8);
 	});
 });

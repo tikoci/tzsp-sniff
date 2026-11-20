@@ -86,3 +86,7 @@ Small items, one or two sentences each, deleted when done or declined
   with the first dissector reached that way (DNS or DHCP, after 0.1.0), and
   a way for a dissector to decline; the plan and its open questions are in
   DESIGN.md, "Decided: a dissector registry", "How port matches fit".
+- Recovery hints that print placeholders (`tzsp-sniff decode <file>` for
+  pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
+  command) do not run as printed (tikoci-cli-mcp); point to a command that
+  runs, as `dissectors` now does with `--help` (Codex re-review of PR #27).
