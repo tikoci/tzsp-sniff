@@ -1101,11 +1101,10 @@ describe("dissect: LLDP", () => {
 			portIdSubtype: "agent-circuit-id",
 			portId: "0102",
 		});
-		// A family other than IPv4, IPv6 and MAC, a MAC of the wrong length and
-		// a reserved subtype are hex.
-		expect(ids("0503aabb", "03aabb")).toMatchObject({
+		// A family other than IPv4, IPv6 and MAC, and a reserved subtype, are hex.
+		expect(ids("0503aabb", "06aabb")).toMatchObject({
 			chassisId: "aabb",
-			portIdSubtype: "mac-address",
+			portIdSubtype: "agent-circuit-id",
 			portId: "aabb",
 		});
 		expect(ids("09aabb", "00cc")).toMatchObject({
@@ -1114,6 +1113,60 @@ describe("dissect: LLDP", () => {
 			portIdSubtype: "subtype-0",
 			portId: "cc",
 		});
+	});
+
+	test("a MAC or address whose length does not fit is malformed (tlv-length), and kept raw", () => {
+		const cases: [string, string][] = [
+			["chassisId", tlv(1, "0501")],
+			["chassisId", tlv(1, "05010a0000")],
+			["chassisId", tlv(1, "040200000001")],
+			["portId", tlv(2, "03aabb")],
+		];
+		for (const [field, bad] of cases) {
+			const tlvs = [CHASSIS, PORT, TTL, END];
+			tlvs[field === "chassisId" ? 0 : 1] = bad;
+			const { l } = lldpOf(...tlvs);
+			expect(l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+			expect(l.fields).not.toHaveProperty(field);
+			expect(l.fields?.otherTlvs).toEqual([
+				{
+					type: field === "chassisId" ? 1 : 2,
+					length: (bad.length - 4) / 2,
+					value: bad.slice(4),
+				},
+			]);
+		}
+		// A management address of 3 bytes in family IPv4.
+		const value = "04010a00000200000001" + "00";
+		const mgmt = lldpOf(CHASSIS, PORT, TTL, tlv(8, value), END);
+		expect(mgmt.l).toMatchObject({
+			problem: "malformed",
+			reason: "tlv-length",
+		});
+		expect(mgmt.l.fields?.managementAddresses).toEqual([]);
+		expect(mgmt.l.fields?.otherTlvs).toEqual([{ type: 8, length: 11, value }]);
+	});
+
+	test("a management address whose lengths run past it is read only inside its span", () => {
+		// The address length (0x20) puts the OID length past the TLV and the frame.
+		const frame = lldpFrame(
+			CHASSIS,
+			tlv(2, "03020000000002"),
+			TTL,
+			tlv(8, "20010a000001020000"),
+		);
+		let furthest = -1;
+		const watched = new Proxy(frame, {
+			get(target, key) {
+				if (typeof key === "string" && /^\d+$/.test(key))
+					furthest = Math.max(furthest, Number(key));
+				const v = Reflect.get(target, key, target);
+				return typeof v === "function" ? v.bind(target) : v;
+			},
+		});
+		const l = layer(dissect(watched), "lldp");
+		expect(furthest).toBeLessThan(frame.length);
+		expect(l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
 	});
 
 	test("text that is not UTF-8 is malformed, and read with replacement characters", () => {
@@ -1151,6 +1204,18 @@ describe("dissect: LLDP", () => {
 	test("management addresses: families, numbering and the OID", () => {
 		// 1.3.6.1.4.1.14988 (MikroTik's enterprise number), BER-encoded.
 		const oid = "2b06010401f50c";
+		// An arc past 2^53 (2^54) still parses.
+		const big = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, "05010a000001" + "02" + "00000001" + "09" + "2ba080808080808000"),
+			END,
+		);
+		expect(big.l.problem).toBeUndefined();
+		expect(big.l.fields?.managementAddresses[0]?.oid).toBe(
+			"1.3.18014398509481984",
+		);
 		const { l } = lldpOf(
 			CHASSIS,
 			PORT,
@@ -1213,6 +1278,7 @@ describe("dissect: LLDP", () => {
 			TTL,
 			tlv(127, "aabbcc01ff"),
 			tlv(127, "0080c26300"),
+			tlv(127, "00120f05aabb"),
 			tlv(9, "abcd"),
 			END,
 		);
@@ -1226,6 +1292,15 @@ describe("dissect: LLDP", () => {
 				oui: "00-80-c2",
 				ouiName: "ieee-802.1",
 				subtype: 0x63,
+			},
+			{
+				type: 127,
+				length: 6,
+				value: "aabb",
+				oui: "00-12-0f",
+				ouiName: "ieee-802.3",
+				subtype: 5,
+				subtypeName: "eee",
 			},
 			{ type: 9, length: 2, value: "abcd" },
 		]);
@@ -1302,6 +1377,9 @@ describe("dissect: LLDP", () => {
 			reason: "repeated",
 		});
 		expect(chassis.l.fields?.chassisId).toBe("02:00:00:00:00:01");
+		expect(chassis.l.fields?.otherTlvs).toEqual([
+			{ type: 1, length: 7, value: "04020000000009" },
+		]);
 	});
 
 	test("a TLV whose length is wrong for its type is malformed, and kept raw", () => {
@@ -1319,6 +1397,9 @@ describe("dissect: LLDP", () => {
 		const end = lldpOf(CHASSIS, PORT, TTL, tlv(0, "00"), tlv(5, utf8("x")));
 		expect(end.l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
 		expect(end.l.fields).not.toHaveProperty("systemName");
+		expect(end.l.fields?.otherTlvs).toEqual([
+			{ type: 0, length: 1, value: "00" },
+		]);
 	});
 
 	test(`at most ${MAX_LLDP_TLVS} TLVs are read, then unsupported (tlv-limit)`, () => {
@@ -1346,6 +1427,15 @@ describe("dissect: LLDP", () => {
 		expect(packetLine(d)).toBe(
 			`${MAC_A} > ${LLDP_MULTICAST} lldp chassis 02:00:00:00:00:01 port ether1 ttl 121 name "core sw"`,
 		);
+		// Line and paragraph separators JSON leaves as they are are escaped too.
+		const odd = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(5, utf8("a\u0085b\u2028c")),
+			END,
+		);
+		expect(packetLine(odd.d)).toEndWith(String.raw`name "a\u0085b\u2028c"`);
 		expect(packetLine(lldpOf(PORT, END).d)).toBe(
 			`${MAC_A} > ${LLDP_MULTICAST} lldp port ether1 [malformed lldp/order]`,
 		);

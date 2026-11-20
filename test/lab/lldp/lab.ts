@@ -103,21 +103,35 @@ export function isLldp(datagram: Uint8Array): boolean {
 	return d.payload[12] === 0x88 && d.payload[13] === 0xcc;
 }
 
-class Listener {
+export class Listener {
 	private sock: Socket | undefined;
 	private start = 0;
 	kept: Datagram[] = [];
 	other = 0;
+	/** A socket error after the bind, which fails the experiment waiting. */
+	private failed: Error | undefined;
 	async open(): Promise<number> {
 		const sock = createSocket("udp4");
 		this.sock = sock;
+		// An error rejects the bind, or fails the next wait, so it reaches the
+		// caller's catch and the machine is still removed in its finally.
+		const bound = new Promise<void>((resolve, reject) => {
+			sock.once("error", reject);
+			sock.bind(0, "127.0.0.1", () => {
+				sock.off("error", reject);
+				sock.on("error", (e) => {
+					this.failed = e;
+				});
+				resolve();
+			});
+		});
 		sock.on("message", (msg) => {
 			const b = new Uint8Array(msg);
 			if (isLldp(b))
 				this.kept.push({ at: Date.now() - this.start, hex: toHex(b) });
 			else this.other++;
 		});
-		await new Promise<void>((resolve) => sock.bind(0, "127.0.0.1", resolve));
+		await bound;
 		return sock.address().port;
 	}
 	/** Start a new experiment: what arrives from now on is its own. */
@@ -129,6 +143,7 @@ class Listener {
 		const until = Date.now() + WAIT_MS;
 		while (this.kept.length < count && Date.now() < until) {
 			if (interrupted) throw new Error("interrupted");
+			if (this.failed) throw this.failed;
 			await new Promise((r) => setTimeout(r, 500));
 		}
 		if (this.kept.length < count)

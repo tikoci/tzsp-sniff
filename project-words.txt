@@ -25,6 +25,7 @@ dissectors
 DOCSIS # cable modem standard (an LLDP capability)
 dont # as in dontFragment, the IPv4 DF flag
 ece # TCP ECN-echo flag
+EEE # Energy-Efficient Ethernet (an LLDP 802.3 TLV)
 EFBIG # errno: file too large
 endofopt # pcapng opt_endofopt
 epan # Wireshark's dissector library directory

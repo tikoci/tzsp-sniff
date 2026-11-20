@@ -27,7 +27,12 @@ const OUT = join(FIXTURES, "lldp");
 const NEXT = join(FIXTURES, ".lldp-next");
 const OLD = join(FIXTURES, ".lldp-old");
 
-const EXPERIMENTS = ["default", "optional-tlvs", "identity-utf8"];
+/** Each experiment, and the LLDPDUs its run must have kept (lab.ts). */
+const EXPERIMENTS: Record<string, number> = {
+	default: 2,
+	"optional-tlvs": 1,
+	"identity-utf8": 1,
+};
 
 export interface LldpFixture {
 	file: string;
@@ -58,10 +63,12 @@ async function build(): Promise<LldpFixture[]> {
 		if (!ev.router || !ev.mac || !ev.identity || ev.failure)
 			throw new Error(`${name}: not a completed run`);
 		const stem = `${ev.router.version}-${ev.target.arch}`;
-		for (const want of EXPERIMENTS) {
+		for (const [want, count] of Object.entries(EXPERIMENTS)) {
 			const exp = ev.experiments.find((e) => e.name === want);
-			if (!exp || exp.datagrams.length === 0)
-				throw new Error(`${name}: no ${want}`);
+			if (exp?.datagrams.length !== count)
+				throw new Error(
+					`${name}: ${want} has ${exp?.datagrams.length ?? 0} LLDPDUs, not ${count}`,
+				);
 			for (const d of exp.datagrams)
 				if (!isLldp(Buffer.from(d.hex, "hex")))
 					throw new Error(`${name} ${want}: not LLDP`);

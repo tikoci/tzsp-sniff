@@ -927,8 +927,9 @@ RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
   wording was checked.
 - **Problems.** A TLV header or value past the frame is `truncated`
   (`tlv`); bytes that end with no End TLV are `truncated` (`end`); a TLV
-  whose length is wrong for its type is `malformed` (`tlv-length`) and kept
-  raw; an id subtype or string TLV that is not UTF-8 is `malformed`
+  whose length is wrong for its type (an End with a value, a MAC id other
+  than 6 bytes, an address other than its family's length) is `malformed`
+  (`tlv-length`) and kept raw; an id subtype or string TLV that is not UTF-8 is `malformed`
   (`text`), read with replacement characters; a management address OID that
   does not parse is `malformed` (`oid`). After 64 TLVs (`MAX_LLDP_TLVS`;
   RouterOS sends 11 to 14) the layer is `unsupported` (`tlv-limit`).

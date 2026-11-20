@@ -57,8 +57,10 @@ addresses:
 - **A settings change sends at once.** After each `set`, an LLDPDU arrived
   within 0.2 to 0.7 s, before the interval was due.
 - **Destination** 01:80:c2:00:00:0e (the nearest-bridge address), from
-  ether1's MAC, untagged. Nothing follows End: the frame is 156 bytes (7.25.1)
-  or 168 (7.24.6), all of it Ethernet and LLDP, so there is no padding.
+  ether1's MAC, untagged. Nothing follows End: every frame is Ethernet and
+  LLDP only, with no padding (as booted, 156 bytes on 7.25.1 and 168 on
+  7.24.6; with the optional TLVs, 184 and 196; with the UTF-8 identity, 190
+  and 202).
 - **TLVs, in order** (type and length):
   chassis id (7: subtype 4, MAC address, ether1's MAC), port id (7:
   subtype 5, interface name, `ether1`), TTL (2: **121**), system name

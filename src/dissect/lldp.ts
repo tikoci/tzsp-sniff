@@ -32,7 +32,7 @@ export interface LldpManagementAddress {
 	family: number;
 	/** `ipv4`, `ipv6` or `mac`, when the family is one of those. */
 	familyName?: string;
-	/** As text for IPv4, IPv6 and MAC of the right length, else hex. */
+	/** As text for IPv4, IPv6 and MAC, else hex. */
 	address: string;
 	interfaceNumbering: number;
 	/** `unknown`, `ifIndex` or `system-port-number`. */
@@ -152,6 +152,8 @@ const ORGANIZATIONS: Record<
 			2: "power-via-mdi",
 			3: "link-aggregation",
 			4: "max-frame-size",
+			5: "eee",
+			7: "additional-ethernet-capabilities",
 		},
 	},
 	"00-12-bb": {
@@ -184,40 +186,49 @@ function text(b: Uint8Array, start: number, end: number): string | undefined {
 	}
 }
 
-/** An address of a family: IPv4, IPv6 or MAC of the right length as text, else hex. */
+/** Address lengths by family: IPv4 4, IPv6 16, MAC 6 bytes. */
+const ADDRESS_LENGTHS: Record<number, number> = { 1: 4, 2: 16, 6: 6 };
+
+/** An address of `n` bytes fits its family: the family's length, or at least one byte for another. */
+const addressFits = (family: number, n: number) =>
+	n === (ADDRESS_LENGTHS[family] ?? Math.max(n, 1));
+
+/** An address that fits its family: IPv4, IPv6 or MAC as text, any other family as hex. */
 function address(
 	b: Uint8Array,
 	family: number,
 	start: number,
 	end: number,
 ): string {
-	const n = end - start;
-	if (family === 1 && n === 4) return formatIpv4(b, start);
-	if (family === 2 && n === 16) return formatIpv6(b, start);
-	if (family === 6 && n === 6) return formatMac(b, start);
+	if (family === 1) return formatIpv4(b, start);
+	if (family === 2) return formatIpv6(b, start);
+	if (family === 6) return formatMac(b, start);
 	return hex(b, start, end);
 }
 
-/** A BER-encoded object identifier, dotted; `undefined` when it does not parse. */
+/**
+ * A BER-encoded object identifier, dotted (ITU-T X.690, 8.19); `undefined`
+ * when it does not parse. Arcs are BigInt: one may pass 2^53, and the OID
+ * is at most 128 bytes, so the arcs stay small.
+ */
 function oid(b: Uint8Array, start: number, end: number): string | undefined {
-	const arcs: number[] = [];
-	let value = 0;
+	const arcs: bigint[] = [];
+	let value = BigInt(0);
 	let pending = false;
 	for (let i = start; i < end; i++) {
 		const byte = u8(b, i);
 		if (!pending && byte === 0x80) return undefined; // a leading 0x80 pads
-		value = value * 128 + (byte & 0x7f);
+		value = value * BigInt(128) + BigInt(byte & 0x7f);
 		pending = (byte & 0x80) !== 0;
 		if (!pending) {
 			arcs.push(value);
-			value = 0;
+			value = BigInt(0);
 		}
-		if (value > Number.MAX_SAFE_INTEGER / 128) return undefined;
 	}
 	const first = arcs[0];
 	if (pending || first === undefined) return undefined;
-	const x = Math.min(2, Math.floor(first / 40));
-	return [x, first - 40 * x, ...arcs.slice(1)].join(".");
+	const x = first < BigInt(40) ? 0 : first < BigInt(80) ? 1 : 2;
+	return [x, first - BigInt(40 * x), ...arcs.slice(1)].join(".");
 }
 
 const names = (bits: number) =>
@@ -307,7 +318,10 @@ function lldp(f: Frame, start: number, end: number) {
 		// Chassis id, port id and TTL come first, in that order (8.2).
 		if (index < 3 && type !== index + 1) mark("malformed", "order");
 		if (type === 0) {
-			if (length !== 0) mark("malformed", "tlv-length");
+			if (length !== 0) {
+				mark("malformed", "tlv-length");
+				raw(type, length, value);
+			}
 			// What follows End is not LLDP's, as Ethernet padding is not.
 			layer.length = offset - start;
 			return;
@@ -331,11 +345,23 @@ function lldp(f: Frame, start: number, end: number) {
 				const table = type === 1 ? CHASSIS_ID_SUBTYPES : PORT_ID_SUBTYPES;
 				const code = u8(b, value);
 				const subtype = table[code] ?? `subtype-${code}`;
+				// A MAC is 6 bytes; a network address is its family and an
+				// address of that family's length (8.5.2.3, 8.5.3.3).
+				const family = u8(b, value + 1);
+				if (
+					(subtype === "mac-address" && length !== 7) ||
+					(subtype === "network-address" &&
+						(length < 3 || !addressFits(family, length - 2)))
+				) {
+					mark("malformed", "tlv-length");
+					raw(type, length, value);
+					break;
+				}
 				let id: string;
-				if (subtype === "mac-address" && length === 7) {
+				if (subtype === "mac-address") {
 					id = formatMac(b, value + 1);
-				} else if (subtype === "network-address" && length >= 2) {
-					id = address(b, u8(b, value + 1), value + 2, offset);
+				} else if (subtype === "network-address") {
+					id = address(b, family, value + 2, offset);
 				} else if (TEXT_SUBTYPES.has(subtype)) {
 					const t = text(b, value + 1, offset);
 					if (t === undefined) mark("malformed", "text");
@@ -376,10 +402,13 @@ function lldp(f: Frame, start: number, end: number) {
 				// OID (8.5.9).
 				const addressLength = u8(b, value);
 				const after = value + 1 + addressLength;
-				const oidLength = u8(b, after + 5);
+				// The OID length is read only once it lies inside the TLV.
+				const oidLength = after + 6 <= offset ? u8(b, after + 5) : -1;
 				if (
 					addressLength < 2 ||
 					addressLength > 32 ||
+					!addressFits(u8(b, value + 1), addressLength - 1) ||
+					oidLength < 0 ||
 					oidLength > 128 ||
 					after + 6 + oidLength !== offset
 				) {
@@ -449,7 +478,7 @@ const FIELDS: FieldDecls<LldpFields> = {
 		type: "string",
 		optional: true,
 		description:
-			"The chassis id: a MAC address, an address (IPv4, IPv6 or MAC, else hex) or text, by subtype; hex for other subtypes.",
+			"The chassis id: a MAC address, an address (IPv4, IPv6 or MAC as text, another family as hex) or text, by subtype; hex for other subtypes. A MAC or address of the wrong length is malformed (tlv-length) and kept raw instead.",
 	},
 	portIdSubtype: {
 		type: "string",
@@ -512,7 +541,7 @@ const FIELDS: FieldDecls<LldpFields> = {
 			address: {
 				type: "string",
 				description:
-					"The address: IPv4, IPv6 or MAC of the right length as text, else hex.",
+					"The address: IPv4, IPv6 or MAC as text, another family as hex. An address whose length does not fit its family is malformed (tlv-length), and the TLV kept raw.",
 			},
 			interfaceNumbering: {
 				type: "number",
@@ -568,7 +597,7 @@ const FIELDS: FieldDecls<LldpFields> = {
 				type: "string",
 				optional: true,
 				description:
-					"The subtype's name, for the OUIs named, such as max-frame-size.",
+					"The subtype's name, for the OUIs and subtypes named, such as max-frame-size.",
 			},
 		},
 	},

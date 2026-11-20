@@ -479,9 +479,19 @@ const TCP_LETTERS: Record<string, string> = {
 	ack: ".",
 };
 
-/** A value as one word of a line: quoted as JSON when empty or when it has spaces, quotes or control characters. */
+/**
+ * A value as one word of a line: quoted as JSON when empty or when it has
+ * spaces, quotes or control characters, with the C1 controls and the line
+ * and paragraph separators JSON leaves as they are escaped too, so the
+ * value never breaks the line.
+ */
 const word = (s: string) =>
-	s === "" || /[\s"\\\p{Cc}]/u.test(s) ? JSON.stringify(s) : s;
+	s === "" || /[\s"\\\p{Cc}]/u.test(s)
+		? JSON.stringify(s).replace(
+				/[\u007f-\u009f\u2028\u2029]/g,
+				(c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+			)
+		: s;
 
 const hostPort = (host: string | undefined, port: number) =>
 	host?.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
