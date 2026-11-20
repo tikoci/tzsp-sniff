@@ -73,6 +73,7 @@ pgrep # procps process lookup by command line
 PHY # Ethernet physical layer
 pim # Protocol Independent Multicast
 plen # ARP protocol address length
+PMP # NAT Port Mapping Protocol (RFC 6886)
 postrouting # RouterOS firewall chain
 prerouting # RouterOS firewall chain
 psh # TCP push flag
@@ -89,6 +90,7 @@ shb # pcapng section header block
 shellcheck
 SLIRP # QEMU user-mode networking
 SLL # libpcap Linux cooked capture
+SSDP # Simple Service Discovery Protocol (UPnP)
 TCG # QEMU's software CPU emulator (Tiny Code Generator)
 TCI # 802.1Q tag control information
 tcpdump

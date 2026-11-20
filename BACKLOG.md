@@ -5,11 +5,6 @@ Small items, one or two sentences each, deleted when done or declined
 
 - Add the repo to tikoci.github.io
   `data/repo-config.ts` so tikoci-crossref lists it.
-- quickchr: if a lab wants it, advertise a TZSP receiver endpoint per VM
-  (address and port the guest should send to), not a `hostfwd` entry:
-  tzsp-sniff must own the host socket (DESIGN.md, "Not quickchr's port map").
-- m2ir: add a LICENSE file matching the README's CC0-1.0 for schema
-  content; nothing here is generated from m2ir until it has one (DESIGN.md).
 - Dissect TZSP inside UDP to the listener's port, capped, so the
   `filter-stream=no` self-capture (#5 fixtures) reads as nested layers
   rather than UDP data.
@@ -82,10 +77,9 @@ Small items, one or two sentences each, deleted when done or declined
 - `decode`: reassemble IP fragments of UDP to the TZSP port, so a TZSP
   datagram over the path MTU (the `filter-stream=no` loop, #5) decodes
   whole.
-- Dissector registry: matches on a UDP or TCP port, and the heuristic hook,
-  with the first dissector reached that way (DNS or DHCP, after 0.1.0), and
-  a way for a dissector to decline; the plan and its open questions are in
-  DESIGN.md, "Decided: a dissector registry", "How port matches fit".
+- Dissector registry: the heuristic hook for protocols on unusual ports,
+  with its first user (port matches are #29); DESIGN.md, "How port matches
+  fit".
 - Recovery hints that print placeholders (`tzsp-sniff decode <file>` for
   pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
   command) do not run as printed (tikoci-cli-mcp); point to a command that
