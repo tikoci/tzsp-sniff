@@ -22,7 +22,7 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   anything is allocated (1 MiB per block or pcap record with its header,
   128 KiB per hex line, 4,096 interfaces and 1 MiB of names per pcapng
   section), and the structure is checked: pcap magic, version and snap
-  length, simple packet block sizes, a section's declared length (a multiple of
+  length, a packet that captured no more than its original length, simple packet block sizes, a section's declared length (a multiple of
   4), and
   timestamps a Date can hold. Ctrl-C ends `decode -` even while the
   producer keeps stdin open; a path that is not a regular file (a named

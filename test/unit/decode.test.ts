@@ -95,7 +95,12 @@ function pcapngBuilder(little = true) {
 		packet: (
 			id: number,
 			dataHex: string,
-			o: { units?: bigint; comments?: string[]; captured?: number } = {},
+			o: {
+				units?: bigint;
+				comments?: string[];
+				captured?: number;
+				original?: number;
+			} = {},
 		) => {
 			const units = o.units ?? 0n;
 			return block(
@@ -104,13 +109,17 @@ function pcapngBuilder(little = true) {
 					u32(Number(units >> 32n)) +
 					u32(Number(units & 0xffffffffn)) +
 					u32(o.captured ?? dataHex.length / 2) +
-					u32(dataHex.length / 2) +
+					u32(o.original ?? dataHex.length / 2) +
 					pad4(dataHex) +
 					options((o.comments ?? []).map((c) => option(1, text(c)))),
 			);
 		},
 		/** An obsolete packet block (type 2): a 16-bit interface id and drops count. */
-		obsolete: (id: number, dataHex: string, o: { units?: bigint } = {}) => {
+		obsolete: (
+			id: number,
+			dataHex: string,
+			o: { units?: bigint; original?: number } = {},
+		) => {
 			const units = o.units ?? 0n;
 			return block(
 				2,
@@ -119,7 +128,7 @@ function pcapngBuilder(little = true) {
 					u32(Number(units >> 32n)) +
 					u32(Number(units & 0xffffffffn)) +
 					u32(dataHex.length / 2) +
-					u32(dataHex.length / 2) +
+					u32(o.original ?? dataHex.length / 2) +
 					pad4(dataHex),
 			);
 		},
@@ -151,11 +160,16 @@ function pcapBuilder(o: {
 			u32(0) +
 			u32(o.snapLength ?? 65535) +
 			u32(o.linkType),
-		record: (dataHex: string, seconds = 0, fraction = 0) =>
+		record: (
+			dataHex: string,
+			seconds = 0,
+			fraction = 0,
+			original = dataHex.length / 2,
+		) =>
 			u32(seconds) +
 			u32(fraction) +
 			u32(dataHex.length / 2) +
-			u32(dataHex.length / 2) +
+			u32(original) +
 			dataHex,
 	};
 }
@@ -1382,4 +1396,35 @@ describe("CodeRabbit review of f3e1d01", () => {
 		);
 		expect(error).toMatchObject({ name: "AbortError" });
 	}, 2000);
+});
+
+describe("Copilot review of 4a2508e", () => {
+	test("a packet that says it captured more than its original length is malformed", async () => {
+		const n = pcapngBuilder();
+		const p = pcapBuilder({ linkType: 128 });
+		const length = KEEPALIVE.length / 2;
+		const inputs = (original: number) => ({
+			epb: n.section() + n.iface(128) + n.packet(0, KEEPALIVE, { original }),
+			pb: n.section() + n.iface(128) + n.obsolete(0, KEEPALIVE, { original }),
+			pcap: p.header() + p.record(KEEPALIVE, 0, 0, original),
+		});
+		for (const [name, input] of Object.entries(inputs(length - 1))) {
+			const summary = summaryOf(await decode(input));
+			expect({ name, code: summary.error?.code }).toEqual({
+				name,
+				code: "decode/malformed",
+			});
+		}
+		// Equal, or a packet cut to fewer bytes than it had, decodes.
+		for (const original of [length, length + 100]) {
+			for (const [name, input] of Object.entries(inputs(original))) {
+				const records = entriesOf(await decode(input));
+				expect({ name, original, kinds: records.map((r) => r.type) }).toEqual({
+					name,
+					original,
+					kinds: ["record"],
+				});
+			}
+		}
+	});
 });

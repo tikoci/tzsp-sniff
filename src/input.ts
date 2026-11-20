@@ -607,6 +607,12 @@ async function* pcapng(
 					`The packet block at byte ${start} says it captured ${captured} bytes, more than the block holds.`,
 				);
 			}
+			const original = body.getUint32(16, little);
+			if (captured > original) {
+				throw malformed(
+					`The packet block at byte ${start} says it captured ${captured} bytes of a packet of ${original}.`,
+				);
+			}
 			// Zero is no limit, as in pcap.
 			if (iface.snapLength && captured > iface.snapLength) {
 				throw malformed(
@@ -690,6 +696,12 @@ async function* pcap(
 		if (snapLength && captured > snapLength) {
 			throw malformed(
 				`The record at byte ${start} declares ${captured} bytes, more than the file's snap length of ${snapLength}.`,
+			);
+		}
+		const original = v.getUint32(12, little);
+		if (captured > original) {
+			throw malformed(
+				`The record at byte ${start} declares ${captured} bytes of a packet of ${original}.`,
 			);
 		}
 		const seconds = v.getUint32(0, little);

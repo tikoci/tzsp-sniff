@@ -667,7 +667,8 @@ open, it was made in the slice, and each is tested in
   cut to the snap length, padded (computed without a 32-bit mask, which
   wraps a length near 2^32 to 0), and nothing else; an enhanced or
   obsolete one may not capture more than its interface's snap length,
-  when that is set (0 is no limit, and the writer's files use 0).
+  when that is set (0 is no limit, and the writer's files use 0), or
+  more than its own original length (Copilot review of 4a2508e).
   Timestamps apply `if_tsresol` (both bases) and the signed `if_tsoffset`
   exactly, in BigInt; the exact time is checked against what a Date holds
   before it rounds down to the ms, so both ends hold and a time a
@@ -676,8 +677,8 @@ open, it was made in the slice, and each is tested in
   to where it stops: options annotate a packet that is still whole.
 - **pcap** in either byte order, microsecond or nanosecond, version 2
   only; the magic number is checked also under `--input pcap`. A record
-  over the header's snap length (when it sets one), or over 1 MiB with its
-  16-byte header, is malformed. The link type is the low 16 bits of the
+  over the header's snap length (when it sets one), over its own original
+  length, or over 1 MiB with its 16-byte header, is malformed. The link type is the low 16 bits of the
   header's field. The fraction is rounded down to the ms before the
   seconds are added: in the sum, 999,999 ns would round up a ms. A
   fraction of a whole second or more (1e9 ns, 1e6 µs) is malformed,
