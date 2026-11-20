@@ -1017,10 +1017,11 @@ describe("dissect: LLDP", () => {
 	test("RouterOS's own LLDPDUs decode whole, with no problem", () => {
 		const index = lldpFixtureIndex();
 		expect(index.map((e) => e.file).sort()).toEqual(
-			["7.24.6-x86", "7.25.1-arm64", "7.25.1-x86"].flatMap((s) =>
-				["default", "identity-utf8", "optional-tlvs"].map(
-					(e) => `${s}-${e}.hex`,
-				),
+			["7.24.6-arm64", "7.24.6-x86", "7.25.1-arm64", "7.25.1-x86"].flatMap(
+				(s) =>
+					["default", "identity-utf8", "optional-tlvs"].map(
+						(e) => `${s}-${e}.hex`,
+					),
 			),
 		);
 		for (const entry of index) {

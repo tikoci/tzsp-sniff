@@ -90,3 +90,7 @@ Small items, one or two sentences each, deleted when done or declined
   pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
   command) do not run as printed (tikoci-cli-mcp); point to a command that
   runs, as `dissectors` now does with `--help` (Codex re-review of PR #27).
+- LLDP: name IEEE 802.3 organizationally specific subtype 6 (EEE fast wake,
+  per Codex's final review of PR #28) once a source we can read confirms
+  it; Wireshark's table (packet-lldp.c at ffc784d8541a) has no 6, and it is
+  listed unnamed until then.

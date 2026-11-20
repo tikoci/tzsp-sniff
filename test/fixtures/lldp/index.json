@@ -1,5 +1,41 @@
 [
 	{
+		"file": "7.24.6-arm64-default.hex",
+		"experiment": "default",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:6c:fc:73:3c:43",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-arm64-optional-tlvs.hex",
+		"experiment": "optional-tlvs",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:6c:fc:73:3c:43",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-arm64-identity-utf8.hex",
+		"experiment": "identity-utf8",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:6c:fc:73:3c:43",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-arm64.json"
+	},
+	{
 		"file": "7.24.6-x86-default.hex",
 		"experiment": "default",
 		"routeros": "7.24.6",

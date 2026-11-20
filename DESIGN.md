@@ -911,8 +911,9 @@ RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
 7.25.1 arm64 CHRs).
 
 - **Named fields, not a TLV list.** Each basic TLV is a field of its own
-  (`chassisId`, `portId`, `ttl`, `systemName` …), so `jq` and `--fields`
-  reach it by name; management addresses are a list. Every other TLV goes
+  (`chassisId`, `portId`, `ttl`, `systemName` …), so `jq` reaches it by
+  name in `--detail layers` records (`--fields` picks packet record fields,
+  not layer fields); management addresses are a list. Every other TLV goes
   in `otherTlvs` as type, length and hex, an organizationally specific one
   with its OUI and subtype, named for IEEE 802.1, IEEE 802.3 and LLDP-MED
   (TIA-1057). LLDP-MED and the 802.1 and 802.3 TLVs are not decoded further.

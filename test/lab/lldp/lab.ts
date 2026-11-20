@@ -3,7 +3,7 @@
  * (issue #26). Not a test tier: run by hand, never a gate. REPORT.md says
  * what it showed; `fixtures.ts` turns evidence/ into test/fixtures/lldp/.
  *
- *   bun test/lab/lldp/lab.ts                 # x86 stable, x86 long-term, arm64 stable
+ *   bun test/lab/lldp/lab.ts                 # stable and long-term, x86 and arm64
  *   bun test/lab/lldp/lab.ts --only x86:stable
  *
  * Safety, as in test/lab/tzsp-senders/: each router is a machine this run
@@ -66,7 +66,7 @@ export interface Target {
 }
 
 export interface Datagram {
-	/** Milliseconds since the experiment's setup finished. */
+	/** Milliseconds since the experiment's setup started. */
 	at: number;
 	/** The whole TZSP datagram, as received. */
 	hex: string;
@@ -115,6 +115,8 @@ export type Shows = (fields: LldpView, identity: string) => boolean;
 
 /** The parts of an LLDPDU an experiment's check reads. */
 export interface LldpView {
+	/** The dissection had a problem: such an LLDPDU is never evidence. */
+	problem: boolean;
 	systemName?: string;
 	/** `ouiName/subtypeName` of each organizationally specific TLV. */
 	org: string[];
@@ -125,26 +127,34 @@ const OPTIONAL_TLVS = [
 	"ieee-802.3/max-frame-size",
 	"ieee-802.1/port-and-protocol-vlan-id",
 ];
-const hasOptional = (v: LldpView) =>
+const allOptional = (v: LldpView) =>
 	OPTIONAL_TLVS.every((t) => v.org.includes(t));
+const noOptional = (v: LldpView) =>
+	!OPTIONAL_TLVS.some((t) => v.org.includes(t));
 
 /**
- * Each experiment's check: an LLDPDU sent before its setup took effect (one
- * in flight when the setup ran) is not its own, whenever it arrives.
+ * Each experiment's check: a whole LLDPDU (no problem) that shows the setup
+ * in effect. One sent before the setup took effect is not its own, whenever
+ * it arrives.
  */
 export const SHOWS: Record<string, Shows> = {
-	default: (v, identity) => v.systemName === identity && !hasOptional(v),
-	"optional-tlvs": (v, identity) => v.systemName === identity && hasOptional(v),
-	"identity-utf8": (v) => v.systemName === UTF8_IDENTITY && hasOptional(v),
+	default: (v, identity) =>
+		!v.problem && v.systemName === identity && noOptional(v),
+	"optional-tlvs": (v, identity) =>
+		!v.problem && v.systemName === identity && allOptional(v),
+	"identity-utf8": (v) =>
+		!v.problem && v.systemName === UTF8_IDENTITY && allOptional(v),
 };
 
 /** The LLDP layer of a TZSP datagram, as the checks read it; `undefined` when there is none. */
 export function lldpView(datagram: Uint8Array): LldpView | undefined {
 	const d = parseTzsp(datagram);
 	if (d.kind !== "packet" || !d.payload) return undefined;
-	const l = dissect(d.payload).layers.find((x) => x.protocol === "lldp");
+	const dissection = dissect(d.payload);
+	const l = dissection.layers.find((x) => x.protocol === "lldp");
 	if (l?.protocol !== "lldp" || !l.fields) return undefined;
 	const view: LldpView = {
+		problem: dissection.problem !== undefined,
 		org: l.fields.otherTlvs.map((t) => `${t.ouiName}/${t.subtypeName}`),
 	};
 	if (l.fields.systemName !== undefined) view.systemName = l.fields.systemName;
@@ -235,11 +245,14 @@ async function experiment(
 ): Promise<Experiment> {
 	const shows = SHOWS[name];
 	if (!shows) throw new Error(`no check for experiment ${name}`);
-	for (const command of setup) await router.exec(command);
+	// Armed before the setup runs: RouterOS sends an LLDPDU as soon as a
+	// setting changes (REPORT.md), which can arrive before the REST call
+	// returns. `at` counts from here, the start of the setup.
 	listener.reset((b) => {
 		const view = lldpView(b);
 		return view !== undefined && shows(view, identity);
 	});
+	for (const command of setup) await router.exec(command);
 	return { name, setup, datagrams: await listener.waitFor(count) };
 }
 
@@ -345,6 +358,7 @@ if (import.meta.main) {
 		{ channel: "stable", arch: "x86" },
 		{ channel: "long-term", arch: "x86" },
 		{ channel: "stable", arch: "arm64" },
+		{ channel: "long-term", arch: "arm64" },
 	];
 	const pick = only >= 0 ? (process.argv[only + 1] ?? "").split(",") : [];
 	const targets =
