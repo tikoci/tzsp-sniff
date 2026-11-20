@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import {
 	closeSync,
+	fstatSync,
 	mkdtempSync,
 	openSync,
 	readFileSync,
@@ -267,6 +268,7 @@ describe("tzsp-sniff executable", () => {
 		test("--write naming the file stdout is redirected to: exit 2, the file left alone", async () => {
 			const path = join(dir, "redirected.pcapng");
 			const fd = openSync(path, "w");
+			const opened = fstatSync(fd, { bigint: true });
 			try {
 				const proc = Bun.spawn(
 					[
@@ -294,7 +296,10 @@ describe("tzsp-sniff executable", () => {
 			} finally {
 				closeSync(fd);
 			}
-			expect(readFileSync(path).length).toBe(0);
+			// Left alone: the same inode (not renamed over), still empty.
+			const now = statSync(path, { bigint: true });
+			expect(now.ino).toBe(opened.ino);
+			expect(now.size).toBe(0n);
 		});
 
 		test.if(process.platform !== "win32")(
