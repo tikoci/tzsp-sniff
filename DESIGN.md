@@ -878,11 +878,25 @@ become a module and a line.
   and IP protocol is `data`; no match is claimed twice.
 - **Not built until a dissector needs them:** matches on a UDP or TCP port,
   and the heuristic hook for protocols on unusual ports. No 0.1.0 dissector
-  is reached either way, and a port match needs choices best made with its
-  first user (destination or source port first, a port shared by two
-  protocols, a first IP fragment). #25 as filed had the registry accept a
-  port match; this PR leaves it out, for the maintainer to confirm
-  (BACKLOG.md).
+  is reached either way. #25 as filed had the registry accept a port match;
+  the maintainer agreed to leave it out (2026-11-20, on PR #27), so it comes
+  with its first user, DNS or DHCP after 0.1.0 (BACKLOG.md).
+- **How port matches fit, when they come.** The additions: `udpPort` and
+  `tcpPort` variants of `Match` and `DissectorMatch`, two dispatch maps,
+  and, where UDP and TCP now pass their payload to a `data` layer, a lookup
+  by port, as IP looks up by protocol number. The duplicate guard,
+  `dissectors()` and its text already take any match kind, and no existing
+  dissector changes. The one contract that changes: today a dissector the
+  registry picks always takes the bytes, which suits EtherTypes and IP
+  protocol numbers. A port is a convention (a port two protocols share, DNS
+  on UDP and TCP, other traffic on a well-known port), so a dissector
+  reached by port, or by the heuristic hook on a broader scope than a port,
+  may need to decline: an optional check on its match, and the layers a
+  declined attempt pushed dropped. Kept apart from this registry until a
+  dissector needs it, as the matches are now. Open until then: which port
+  is tried first, what counts as a clash when declining is allowed, a TCP
+  segment that does not start a message, and a first IP fragment, which
+  dispatches with its payload cut short.
 - **`dissectors` prints text or JSONL**, one `dissector` record per
   protocol with no `header` or `summary`: it is a fixed list, not a
   capture, so it has no stream to frame. `--format json` is refused as on

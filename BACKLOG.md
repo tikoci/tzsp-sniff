@@ -83,6 +83,6 @@ Small items, one or two sentences each, deleted when done or declined
   datagram over the path MTU (the `filter-stream=no` loop, #5) decodes
   whole.
 - Dissector registry: matches on a UDP or TCP port, and the heuristic hook,
-  with the first dissector reached that way (DNS or DHCP, after 0.1.0);
-  decide there which port wins, and what a first IP fragment does (DESIGN.md,
-  "Decided: a dissector registry").
+  with the first dissector reached that way (DNS or DHCP, after 0.1.0), and
+  a way for a dissector to decline; the plan and its open questions are in
+  DESIGN.md, "Decided: a dissector registry", "How port matches fit".
