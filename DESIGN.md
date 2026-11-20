@@ -657,8 +657,9 @@ open, it was made in the slice, and each is tested in
   other blocks skipped by their length. A section that declares its
   length is held to it: a block crossing its end, or a section header
   that does not start there, is malformed, and an input that ends before
-  it is cut short. A section holds at most 4,096 interfaces with 1 MiB of
-  names (`MAX_INTERFACES`, `MAX_INTERFACE_NAME_BYTES`), since they are
+  it is cut short; a declared length that is not a multiple of 4
+  (whole blocks) is malformed (Copilot review of 10ada3c). A section
+  holds at most 4,096 interfaces with 1 MiB of names (`MAX_INTERFACES`, `MAX_INTERFACE_NAME_BYTES`), since they are
   kept until it ends. A simple packet block must hold its original length,
   cut to the snap length, padded (computed without a 32-bit mask, which
   wraps a length near 2^32 to 0), and nothing else; an enhanced or

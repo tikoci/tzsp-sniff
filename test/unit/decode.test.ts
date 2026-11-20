@@ -894,6 +894,13 @@ describe("cross-review of 7d0d428: structure the readers must refuse or keep", (
 		);
 		expect(packetsOf(exact)).toHaveLength(2);
 		expect(summaryOf(exact).status).toBe("complete");
+		// Not a multiple of 4 (Copilot review of 10ada3c): malformed, not cut short.
+		for (const length of [1n, size(iface) + 2n]) {
+			expect({
+				length,
+				code: await errorOf(n.section(length) + iface),
+			}).toEqual({ length, code: "decode/malformed" });
+		}
 	});
 
 	test("a UDP length that contradicts its packet is not unwrapped", async () => {

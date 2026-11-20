@@ -511,9 +511,10 @@ async function* pcapng(
 				);
 			}
 			const declared = body.getBigInt64(4, little);
-			if (declared < -1n) {
+			// -1 is unknown; any other length is whole blocks, so a multiple of 4.
+			if (declared < -1n || (declared !== -1n && declared % 4n !== 0n)) {
 				throw malformed(
-					`The section header at byte ${start} declares a section length of ${declared}.`,
+					`The section header at byte ${start} declares a section length of ${declared}${declared < -1n ? "" : ", not a multiple of 4"}.`,
 				);
 			}
 			// The length counts what follows the section header.
