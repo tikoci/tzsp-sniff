@@ -31,6 +31,7 @@ import {
 	createLogger,
 	defaultBootTimeout,
 	QuickCHR,
+	QuickCHRError,
 } from "@tikoci/quickchr";
 
 export const ROOT = join(import.meta.dir, "..", "..");
@@ -87,15 +88,16 @@ const RESOLVE_MS = 3 * 30_000 + 6_000;
 const DOWNLOAD_MS = 3 * 15 * 60_000 + 6_000;
 /** The port allocator's lock, which `start` waits for when it creates a machine (ALLOCATION_LOCK_WAIT_MS, quickchr.ts). */
 const ALLOCATION_LOCK_MS = 60_000;
-/**
- * After a boot times out, quickchr collects a failure report and stops
- * QEMU (`captureBootFailure`, `cleanupAfterBootFailure`, quickchr.ts): a
- * few monitor queries of 3 s each and a 5 s stop. An allowance from
- * reading the source, not a quickchr constant.
- */
-const BOOT_FAILURE_MS = 60_000;
 /** `stopQemu` (qemu.ts): SIGTERM, 5 s, then SIGKILL; plus deleting the machine directory. */
 const STOP_MS = 30_000;
+/**
+ * After a boot times out, quickchr writes a failure report
+ * (`captureBootFailure`), at most BOOT_FORENSICS_BUDGET_MS (180 s,
+ * diagnostics.ts; the deep probes under QUICKCHR_DEEP_BOOT_DIAGNOSTICS=1
+ * included), then stops and removes the machine (`cleanupAfterBootFailure`,
+ * quickchr.ts). The constant is not exported, so it is quoted.
+ */
+const BOOT_FAILURE_MS = 180_000 + STOP_MS;
 
 /** The most `prefetch` can take: resolving the channel, then the download. */
 export const prefetchBudget = (): number => RESOLVE_MS + DOWNLOAD_MS;
@@ -240,6 +242,36 @@ const ADVICE = {
 const leftReasons = new Map<string, string>();
 
 /**
+ * The QEMU processes running for machine `name`: their command line names
+ * its directory (`…/machines/<name>/`, its disk and sockets). quickchr
+ * 0.6.0 spawns QEMU before it first saves the machine's state, and a
+ * failure in between deletes the directory but leaves QEMU running
+ * (`start`'s catch, tikoci/quickchr#298; seen with the state write forced
+ * to fail). Found with
+ * `pgrep` (Linux, macOS); none where it is missing.
+ */
+function qemuFor(name: string): number[] {
+	try {
+		return execFileSync(
+			"pgrep",
+			["-f", `^[^ ]*qemu-system[^ ]* .*/machines/${name}/`],
+			{ encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+		)
+			.split(/\s+/)
+			.filter(Boolean)
+			.map(Number);
+	} catch {
+		return [];
+	}
+}
+
+/** Names whose `create` failed after quickchr claimed them: a QEMU may still run for one (`qemuFor`). */
+const failedCreates = new Set<string>();
+
+const strayAdvice = (pids: number[]) =>
+	`QEMU still runs for it (pid ${pids.join(", ")}) with no state quickchr can read: stop it (\`kill ${pids.join(" ")}\`), then \`quickchr remove <name>\` if \`quickchr list <name>\` still shows it`;
+
+/**
  * The owned machine by this name, or why it cannot be touched: gone, its
  * state unreadable (QEMU may still run), or another machine of that name.
  */
@@ -320,9 +352,12 @@ export function teardown(name: string): Promise<boolean> {
 
 /** A machine `teardown` left, and what to do about it, as one line. */
 export const leftOver = (name: string): string =>
-	`NOT REMOVED: ${name}: ${(leftReasons.get(name) ?? ADVICE.present).replace("<name>", name)}`;
+	`NOT REMOVED: ${name}: ${(leftReasons.get(name) ?? ADVICE.present).replaceAll("<name>", name)}`;
 
-/** Remove every owned machine and temp dir; return the machines still present (see `leftOver`). */
+/**
+ * Remove every owned machine and temp dir; return the machines still
+ * present, and any failed `create` whose QEMU still runs (see `leftOver`).
+ */
 export async function cleanupAll(): Promise<string[]> {
 	// A `create` still running cannot be stopped from here; once it settles,
 	// a machine it made is in `owned`.
@@ -333,7 +368,16 @@ export async function cleanupAll(): Promise<string[]> {
 		await rm(dir, { recursive: true, force: true });
 		tempDirs.delete(dir);
 	}
-	return names.filter((_, i) => !results[i]);
+	const left = names.filter((_, i) => !results[i]);
+	for (const name of failedCreates) {
+		const pids = qemuFor(name);
+		if (pids.length === 0) failedCreates.delete(name);
+		else if (!left.includes(name)) {
+			leftReasons.set(name, strayAdvice(pids));
+			left.push(name);
+		}
+	}
+	return left;
 }
 
 /**
@@ -416,13 +460,24 @@ async function provision(prefix: string, target: Target): Promise<Created> {
 			? { name }
 			: { name, bootMs: chr.state.lastBootMs };
 	} catch (e) {
+		// Before its claim, quickchr made nothing of this process's; after
+		// it, a QEMU it spawned may outlive the machine's directory.
+		const claimed = !(
+			e instanceof QuickCHRError &&
+			(e.code === "MACHINE_EXISTS" || e.code === "MACHINE_LOCKED")
+		);
 		let left = true;
 		try {
 			left = !absent(name);
 		} catch {}
+		const pids = claimed ? qemuFor(name) : [];
+		if (pids.length > 0) failedCreates.add(name);
 		throw new Error(
 			`quickchr start ${name}: ${message(e)}` +
-				(left ? `; ${name} is still there and was not removed` : ""),
+				(left ? `; ${name} is still there and was not removed` : "") +
+				(pids.length > 0
+					? `; ${strayAdvice(pids).replaceAll("<name>", name)}`
+					: ""),
 		);
 	}
 }

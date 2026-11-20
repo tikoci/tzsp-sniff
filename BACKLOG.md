@@ -37,6 +37,8 @@ Small items, one or two sentences each, deleted when done or declined
   - tikoci/quickchr#294: `remove` that will not delete a running machine's
     directory; once fixed, `test/chr/`'s unreadable-state advice can say
     `quickchr remove <name>` alone.
+  - tikoci/quickchr#298: a failed first state save after QEMU is spawned
+    leaves QEMU running; once fixed, `test/chr/`'s `qemuFor` check can go.
   - tikoci/quickchr#295: a cache directory apart from the data directory;
     once there, a local run can use a private `QUICKCHR_DATA_DIR` and drop
     the `createdAt` ownership checks.

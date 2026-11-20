@@ -716,8 +716,9 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   the router, and `TZSP_SNIFF_INTEGRATION_RESULTS` names a JSON file for
   the results, beside which the machine's QEMU log is copied before
   removal; both are test knobs, which shipped code never reads. Setup
-  asserts that the CHR reported a version and an architecture (and the
-  version asked for, when one was pinned). The guest architecture is always
+  asserts that the CHR reported a version and an architecture, and that
+  the version is the exact one `prefetch` resolved the target to, on every
+  run (a channel too). The guest architecture is always
   the host's own, given to quickchr explicitly, so its `default-arch`
   setting cannot turn the boot into cross-architecture emulation; the setup
   and cleanup hooks' timeouts are derived from what quickchr itself may wait
@@ -764,7 +765,14 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
     kept under `<data dir>/failures/`), before state is saved it removes
     the directory it made, and a failure before the claim
     (`MACHINE_EXISTS`, `MACHINE_LOCKED`) made nothing of this process's. A
-    leftover is reported, never removed.
+    leftover is reported, never removed. One gap is quickchr's: a failure
+    after QEMU is spawned and before the state is first saved deletes the
+    directory and leaves QEMU running (tikoci/quickchr#298). `create` then
+    looks for a QEMU whose command line names `/machines/<name>/`
+    (`pgrep`), and reports it with its pid in the error and in
+    `cleanupAll`'s leftovers, so the run fails rather than hiding it
+    (final cross-review of 90c4d98, seen with the state write forced to
+    fail).
   - **Unreadable state is reported, not removed**: its QEMU may still run,
     and only `quickchr remove <name>` should decide. A failed removal is
     not remembered, so a later `cleanupAll` tries again.
@@ -777,8 +785,9 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
     taken on (the library's default is raw).
   - **Budgets.** `prefetchBudget`: three channel lookups, then three
     download attempts of up to 15 min each. `createBudget`: the allocator
-    lock (60 s), the boot budget, and an allowance for the boot-failure
-    report. The boot budget is quickchr's exported `defaultBootTimeout`,
+    lock (60 s), the boot budget, and the boot-failure report
+    (`BOOT_FORENSICS_BUDGET_MS`, 180 s, deep diagnostics included) with
+    the stop after it. The boot budget is quickchr's exported `defaultBootTimeout`,
     the larger of one TCG attempt and two accelerated ones (under KVM or
     HVF a missed boot starts QEMU once more). `teardownBudget`: the boot
     budget for the machine lock, then stopping QEMU. Only the boot budget
@@ -792,9 +801,11 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   tier only touches machines it created, under the `tzsp-it-` prefix, and
   removes them in `afterAll`. The name goes to stderr before `start`
   (`machine: tzsp-it-…`), so a run killed later says what it left;
-  `quickchr list <name>` reports it, as a leftover directory when the kill
-  came before quickchr saved its state (0.6.0), and
-  `quickchr remove <name>` clears it. CI sets
+  `quickchr list <name>` reports it, and `quickchr remove <name>` clears
+  it. A kill before quickchr saved its state leaves a directory with no
+  readable state, and its QEMU may run: stop that QEMU first
+  (`pgrep -af "qemu-system.*/machines/<name>/"`), since `remove` deletes
+  such a directory without stopping it (tikoci/quickchr#294). CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.

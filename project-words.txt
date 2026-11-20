@@ -44,6 +44,7 @@ MNDP # MikroTik Neighbor Discovery Protocol
 NIC # network interface card
 OSPF
 pcapng
+pgrep # procps process lookup by command line
 pim # Protocol Independent Multicast
 plen # ARP protocol address length
 postrouting # RouterOS firewall chain
