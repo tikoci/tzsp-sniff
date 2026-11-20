@@ -29,4 +29,30 @@ Small items, one or two sentences each, deleted when done or declined
 - Filters select frames only (DESIGN.md, "Decided, filters"): consider
   letting `--sender` also select control, unsupported and invalid records,
   which would need its own counter so the counters still add up.
+- quickchr upstream, each to follow up here once fixed:
+  - tikoci/quickchr#292: one deadline for consumers, so `test/chr/` stops
+    quoting download, lock and boot-failure budgets from quickchr's source.
+  - tikoci/quickchr#293: the default arch under Rosetta, in `start` and
+    `cacheAdd`; once fixed, `hostArch()`'s `sysctl` check can go.
+  - tikoci/quickchr#294: `remove` that will not delete a running machine's
+    directory; once fixed, `test/chr/`'s unreadable-state advice can say
+    `quickchr remove <name>` alone.
+  - tikoci/quickchr#298: a failed first state save after QEMU is spawned
+    leaves QEMU running; once fixed, `test/chr/`'s `qemuFor` check can go.
+  - tikoci/quickchr#295: a cache directory apart from the data directory;
+    once there, a local run can use a private `QUICKCHR_DATA_DIR` and drop
+    the `createdAt` ownership checks.
+  - tikoci/quickchr#290 and #291 (`add`'s stdout, `timeoutExtra` on an
+    `add`-made machine) are avoided by creating with one `start`, not
+    waited on.
+- Sweep: skip a night when neither `main` nor any resolved channel version
+  changed since the last green sweep (centrs fingerprints both), once the
+  nightly boots cost more than they tell.
+- Integration: reap `tzsp-it-` machines a killed run left behind, once it
+  can tell them from a run still in progress (quickchr has no owner field).
+- CI smoke waits for the whole unit matrix; split the Linux unit leg out
+  (centrs `unit-linux`) if macOS or Windows make it wait noticeably.
+- zizmor `self-repository` (a note) asks for `$/.github/workflows/…` in
+  place of `./.github/workflows/…`; actionlint 1.7.12 rejects that form,
+  so switch once actionlint accepts it.
 - `--port-match` ranges (`8000-8100`), if a lab asks for one.

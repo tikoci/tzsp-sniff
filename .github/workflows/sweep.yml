@@ -1,0 +1,73 @@
+# The integration tier on every active RouterOS channel (tikoci-testing,
+# "Tiers"): called nightly by nightly.yml and by the release workflow before
+# it publishes (#17), or dispatched. Each resolved version boots once,
+# through integration.yml, which owns the QEMU setup and saves the image
+# cache for that version. Every leg must pass. It needs only
+# `contents: read`, so any caller can call it; filing the nightly failure
+# is nightly.yml's job. Locally, one leg:
+# `TZSP_SNIFF_ROUTEROS=<channel or version> bun run test:integration`.
+name: Sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      bun-version:
+        description: "Bun to run: empty for the packageManager pin, `latest`, or an exact version"
+        type: string
+        default: ""
+  # nightly.yml and the release call it with no input, so it runs on the pin.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A sweep finishes; a newer pending one replaces an older pending one.
+  group: sweep-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  BUN_VERSION: ${{ inputs.bun-version }}
+
+jobs:
+  plan:
+    name: Plan the channels
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Resolve the active channels
+        id: plan
+        run: |
+          bun scripts/sweep-plan.ts | tee "$RUNNER_TEMP/plan.txt"
+          { echo "### Sweep plan"; echo '```text'; cat "$RUNNER_TEMP/plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  integration:
+    name: RouterOS ${{ matrix.leg.version }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      routeros: ${{ matrix.leg.version }}
+      label: ${{ matrix.leg.version }}, ${{ matrix.leg.channels }}
+      bun-version: ${{ inputs.bun-version }}
+      save-cache: true

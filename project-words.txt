@@ -26,6 +26,7 @@ FFI # foreign function interface
 GRE
 hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward
+HVF # Hypervisor.framework, the macOS QEMU accelerator
 ICMPV # as in ICMPV6_TYPES
 igmp # Internet Group Management Protocol
 ipip # IP-in-IP
@@ -43,11 +44,13 @@ MNDP # MikroTik Neighbor Discovery Protocol
 NIC # network interface card
 OSPF
 pcapng
+pgrep # procps process lookup by command line
 pim # Protocol Independent Multicast
 plen # ARP protocol address length
 postrouting # RouterOS firewall chain
 prerouting # RouterOS firewall chain
 psh # TCP push flag
+qcow # QEMU disk format (qcow2)
 quickchr # CHR VMs under QEMU, https://github.com/tikoci/quickchr
 radiotap
 restraml # RouterOS command schemas, https://github.com/tikoci/restraml
@@ -68,6 +71,7 @@ TSHARK
 tsresol # pcapng if_tsresol, the timestamp resolution option
 TZSP # TaZmen Sniffer Protocol
 UDP
+UEFI # firmware standard, arm64 CHR boots under it
 urg # TCP urgent flag
 VID # 802.1Q VLAN identifier
 VRRP

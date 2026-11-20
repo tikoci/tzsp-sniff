@@ -13,13 +13,22 @@ bun test/lab/tzsp-senders/fixtures.ts  # rebuild test/fixtures/routeros/ from ev
 bun test test/unit/routeros-fixtures.test.ts
 ```
 
-`--only x86:stable,x86:long-term,arm64:stable` picks routers. It needs
-`quickchr` (0.5.2 here) and `scp` on `PATH`, and Linux to read the QEMU
-accelerator from `/proc/<pid>/cmdline`. It is not a test tier and never
-gates CI.
+<!-- cspell:ignore efi -->
+
+`--only x86:stable,x86:long-term,arm64:stable` picks routers. It runs the
+quickchr devDependency (`bun install`; the results below were taken with
+quickchr 0.5.2 on `PATH`, before the lab moved to it; it now uses
+quickchr's library), and needs `scp` on `PATH`. The default run boots
+both an x86 and an arm64 CHR, so it needs both QEMU system emulators,
+`qemu-img`, and UEFI firmware for arm64. On Debian or Ubuntu:
+`apt install qemu-system-x86 qemu-system-arm qemu-efi-aarch64 qemu-utils
+openssh-client`. Other hosts: README, "Development", and
+`node_modules/.bin/quickchr doctor`.
+It is not a test tier and never gates CI. Its machine handling and REST
+calls are in `test/chr/`, shared with the integration tier.
 
 The script creates its own machines (a random name, checked absent,
-created with `quickchr add`, which refuses an existing name) and removes
+then created and booted by one quickchr `start`) and removes
 them at the end, on failure, and on SIGINT or SIGTERM, then checks they are
 gone. Every router command must succeed and every experiment's control
 traffic must arrive (`expect` in `lab.ts`), or nothing is written to

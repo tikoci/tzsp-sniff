@@ -7,9 +7,10 @@
  *   bun test/lab/tzsp-senders/lab.ts --only x86:stable,x86:long-term
  *
  * Safety. Each router is a machine this run creates and owns: the name is
- * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created with
- * `quickchr add`, which refuses an existing name. Only owned machines are
- * configured or removed. They are removed when the run ends, fails, or gets
+ * `tzsp-lab-<channel>-<arch>-<random>`, checked absent, then created and
+ * booted by one quickchr `start` (test/chr/quickchr.ts, shared with the
+ * integration tier). Only owned machines are configured or
+ * removed. They are removed when the run ends, fails, or gets
  * SIGINT or SIGTERM (after the work in flight stops), and removal is
  * verified; a machine that could not be removed is named on stderr and the
  * exit code is non-zero. A second signal exits at once, naming what is left.
@@ -28,8 +29,7 @@
  * that fails writes its partial evidence to .scratch/tzsp-lab/ instead.
  * `fixtures.ts` turns evidence/ into test/fixtures/routeros/.
  */
-import { type ChildProcess, spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { createSocket } from "node:dgram";
 import {
 	chmod,
@@ -41,15 +41,34 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+	accelerator,
+	childEnv,
+	cleanupAll,
+	create,
+	leftOver,
+	owned,
+	ROOT,
+	run,
+	services,
+	stop,
+	tempDirs,
+	teardown,
+	version,
+} from "../../chr/quickchr.ts";
+import {
+	GATEWAY,
+	GUEST,
+	PEER,
+	Router,
+	SETTLE,
+	type Step,
+	StepError,
+	snifferStream,
+} from "../../chr/router.ts";
 
-const ROOT = join(import.meta.dir, "..", "..", "..");
 const EVIDENCE = join(import.meta.dir, "evidence");
 const FAILED = join(ROOT, ".scratch", "tzsp-lab");
-/** Where pings go: SLIRP's DNS address, which answers ICMP echo. */
-const PEER = "10.0.2.3";
-/** The CHR's address on its SLIRP NIC. */
-const GUEST = "10.0.2.15";
-const GATEWAY = "10.0.2.2";
 /** `sniff-id` used for the mangle experiments: 0x1234, easy to spot in hex. */
 export const SNIFF_ID = 4660;
 /** How long to wait after a step for late datagrams before the next label. */
@@ -57,20 +76,8 @@ const DRAIN_MS = 1500;
 /** Datagrams kept per experiment; the rest are counted (`Experiment.summary`). */
 const KEEP = 8;
 
-/**
- * Deadlines. `quickchr start` keeps quickchr's own boot budget (its
- * BOOT_TIMEOUT), so the lab adds none. A RouterOS command answers in
- * milliseconds on KVM and seconds under TCG; its budget is a base for that
- * plus the time the command itself waits (`commandBudget`). Teardown waits
- * for quickchr, which itself waits for a `start` of the same machine still
- * in progress. A file copy of under 1 KiB gets a minute.
- */
-const REST_BASE_MS = 20_000;
-const TEARDOWN_MS = 180_000;
+/** A file copy of under 1 KiB gets a minute. */
 const SCP_MS = 60_000;
-const QUICKCHR_MS = 30_000;
-/** quickchr 0.5.2 for a name it does not know: `Machine "<name>" not found.`, exit 1. */
-const NOT_FOUND = /Machine "[^"]+" not found/;
 
 type Target = { channel: "stable" | "long-term"; arch: "x86" | "arm64" };
 
@@ -79,12 +86,6 @@ export interface Datagram {
 	t: number;
 	length: number;
 	hex: string;
-}
-
-interface Step {
-	command: string;
-	status: number;
-	output: string;
 }
 
 export interface Summary {
@@ -336,135 +337,22 @@ export function checkPcapng(file: Pcapng): string | undefined {
 	return file.packets.length === 0 ? "no packets" : undefined;
 }
 
-/* ------------------------------------------------------------ processes */
-
-/** Child processes get an allowlisted env, never a copy of process.env (tikoci-testing). */
-function childEnv(extra: Record<string, string> = {}): Record<string, string> {
-	const env: Record<string, string> = {};
-	for (const [key, value] of Object.entries(process.env)) {
-		if (value === undefined) continue;
-		if (
-			["PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "LANG"].includes(key) ||
-			key.startsWith("XDG_") ||
-			key.startsWith("QUICKCHR_")
-		)
-			env[key] = value;
-	}
-	return { ...env, QUICKCHR_NO_TIPS: "1", ...extra };
-}
-
-interface Ran {
-	code: number;
-	stdout: string;
-	stderr: string;
-	timedOut: boolean;
-}
-
-/** Children still running, so a signal can stop them. */
-const children = new Set<ChildProcess>();
-
-/** Run a child; past `timeoutMs` it is killed. No deadline when undefined. */
-function run(
-	argv: string[],
-	opts: { env?: Record<string, string>; timeoutMs?: number } = {},
-): Promise<Ran> {
-	return new Promise((resolve) => {
-		const [cmd, ...args] = argv as [string, ...string[]];
-		const child = spawn(cmd, args, {
-			env: opts.env ?? childEnv(),
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-		children.add(child);
-		let stdout = "";
-		let stderr = "";
-		let timedOut = false;
-		const timer =
-			opts.timeoutMs === undefined
-				? undefined
-				: setTimeout(() => {
-						timedOut = true;
-						child.kill("SIGKILL");
-					}, opts.timeoutMs);
-		child.stdout.on("data", (b: Buffer) => {
-			stdout += b.toString();
-		});
-		child.stderr.on("data", (b: Buffer) => {
-			stderr += b.toString();
-		});
-		child.on("close", (code) => {
-			children.delete(child);
-			clearTimeout(timer);
-			resolve({ code: code ?? -1, stdout, stderr, timedOut });
-		});
-		child.on("error", (e) => {
-			children.delete(child);
-			clearTimeout(timer);
-			resolve({ code: -1, stdout, stderr: String(e), timedOut });
-		});
-	});
-}
-
-/* ------------------------------------------------- ownership and cleanup */
-
-/** Machines this run created, by name. Nothing else is configured or removed. */
-const owned = new Set<string>();
-/** Temporary directories to remove on exit (the askpass helper's). */
-const tempDirs = new Set<string>();
-const removals = new Map<string, Promise<boolean>>();
-/** `create` calls still running, so cleanup waits for a machine mid-`add`. */
-const provisioning = new Set<Promise<unknown>>();
-
-/** Remove one owned machine and confirm `quickchr list` no longer knows it. */
-function teardown(name: string): Promise<boolean> {
-	const pending = removals.get(name);
-	if (pending) return pending;
-	const p = (async () => {
-		await run(["quickchr", "remove", name], { timeoutMs: TEARDOWN_MS });
-		const left = await run(["quickchr", "list", name, "--json"], {
-			timeoutMs: QUICKCHR_MS,
-		});
-		const gone =
-			left.code !== 0 &&
-			!left.timedOut &&
-			NOT_FOUND.test(left.stdout + left.stderr);
-		if (gone) owned.delete(name);
-		return gone;
-	})();
-	removals.set(name, p);
-	return p;
-}
-
-/** Remove every owned machine and temp dir; return the machines still present. */
-async function cleanupAll(): Promise<string[]> {
-	// A machine whose `add` is still running joins `owned` when it settles;
-	// each `run` has a deadline, so this wait is bounded.
-	await Promise.allSettled([...provisioning]);
-	const names = [...owned];
-	const results = await Promise.all(names.map((n) => teardown(n)));
-	for (const dir of tempDirs) {
-		await rm(dir, { recursive: true, force: true });
-		tempDirs.delete(dir);
-	}
-	return names.filter((_, i) => !results[i]);
-}
+/* -------------------------------------------------------------- signals */
 
 /**
- * A signal stops work; the main task then removes machines and exits, so
- * removal never races a step still using a machine. The handler stops the
- * running children and REST calls, and `experiment` checks between steps.
- * A second signal exits at once and names what is left.
+ * A signal stops work (`stop`); the main task then removes machines and
+ * exits, so removal never races a step still using a machine. `experiment`
+ * checks between steps. A second signal exits at once and names what is left.
  */
 let interrupted: "SIGINT" | "SIGTERM" | undefined;
-const stopping = new AbortController();
 function onSignal(signal: "SIGINT" | "SIGTERM"): void {
 	if (interrupted) {
-		for (const n of owned) console.error(`NOT REMOVED: ${n}`);
+		for (const n of owned.keys()) console.error(`NOT REMOVED: ${n}`);
 		process.exit(signal === "SIGINT" ? 130 : 143);
 	}
 	interrupted = signal;
 	console.error(`${signal}: stopping, then removing this run's machines`);
-	stopping.abort();
-	for (const child of children) child.kill("SIGTERM");
+	stop();
 }
 
 /* ------------------------------------------------------------- listener */
@@ -554,97 +442,7 @@ class Listener {
 	}
 }
 
-/* --------------------------------------------------------------- router */
-
-/**
- * RouterOS reports a failed command in the text, with HTTP 200, ending in
- * its position: "bad parameter bogus (line 1 column 26)", "no such item
- * (/file/get; line 1)" (7.25.1 x86 CHR, by hand, 2026-11-19 UTC).
- */
-const ROUTEROS_ERROR = /\((?:[^()]*; )?line \d+(?: column \d+)?\)$/;
-
-/** How long a command may take: a base, plus what it waits for itself. */
-function commandBudget(command: string): number {
-	let ms = REST_BASE_MS;
-	const count = /\/ping .*count=(\d+)/.exec(command)?.[1];
-	if (count) ms += Number(count) * 1000;
-	for (const m of command.matchAll(/:delay (\d+)s/g)) ms += Number(m[1]) * 1000;
-	return ms;
-}
-
-class StepError extends Error {}
-
-class Router {
-	readonly url: string;
-	private readonly auth: string;
-	constructor(url: string, auth: string) {
-		this.url = url;
-		this.auth = auth;
-	}
-	private async rest(
-		path: string,
-		init: { method?: string; body?: unknown; timeoutMs?: number } = {},
-	): Promise<{ status: number; body: unknown }> {
-		try {
-			const res = await fetch(`${this.url}${path}`, {
-				method: init.method ?? "GET",
-				headers: {
-					authorization: `Basic ${btoa(this.auth)}`,
-					"content-type": "application/json",
-				},
-				...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
-				signal: AbortSignal.any([
-					AbortSignal.timeout(init.timeoutMs ?? REST_BASE_MS),
-					stopping.signal,
-				]),
-			});
-			const text = await res.text();
-			let body: unknown = text;
-			try {
-				body = JSON.parse(text);
-			} catch {}
-			return { status: res.status, body };
-		} catch {
-			return { status: 0, body: undefined };
-		}
-	}
-	/** A GET that must succeed; returns the parsed body. */
-	async read(path: string): Promise<unknown> {
-		const r = await this.rest(path);
-		if (r.status !== 200)
-			throw new StepError(`GET ${path}: status ${r.status}`);
-		return r.body;
-	}
-	/** Run one RouterOS CLI command; a timeout, a non-200 or a RouterOS error fails it. */
-	async exec(command: string): Promise<Step> {
-		const { status, body } = await this.rest("/execute", {
-			method: "POST",
-			body: { script: command, "as-string": true },
-			timeoutMs: commandBudget(command),
-		});
-		const output =
-			typeof body === "object" && body !== null && "ret" in body
-				? String((body as { ret: unknown }).ret)
-				: "";
-		const step = {
-			command,
-			status,
-			output: withoutComments(output.replaceAll("\r\n", "\n")),
-		};
-		if (status !== 200 || ROUTEROS_ERROR.test(step.output.trim()))
-			throw Object.assign(new StepError(`step failed: ${command}`), { step });
-		return step;
-	}
-}
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Drop export header comments: they carry the CHR's software id. */
-const withoutComments = (s: string) =>
-	s
-		.split("\n")
-		.filter((l) => !l.startsWith("#"))
-		.join("\n");
 
 /* ---------------------------------------------------------- experiments */
 
@@ -739,19 +537,11 @@ const sniffing =
 			throw new StepError(`${exp.name}: sniffer did not start`);
 	};
 
-/** The sniffer settings the ICMP streaming experiments start from. */
-const snifferBase = (port: number) =>
-	`/tool/sniffer/set streaming-enabled=yes streaming-server=${GATEWAY}:${port} ` +
-	`filter-ip-address=${PEER}/32 filter-ip-protocol=icmp filter-operator-between-entries=and ` +
-	`filter-stream=yes only-headers=no file-name=""`;
-
 const mangleState = [
 	"/ip/firewall/mangle/print stats where comment=tzsp-lab",
 	"/ip/firewall/mangle/print detail where comment=tzsp-lab",
 ];
 const mangleClean = "/ip/firewall/mangle/remove [find comment=tzsp-lab]";
-/** A precaution after adding a rule over REST, so the ping meets a rule in effect. */
-const settle = ":delay 2s";
 
 async function experiments(c: Ctx, full: boolean): Promise<void> {
 	const P = c.listener.port;
@@ -759,7 +549,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 		`action=sniff-tzsp sniff-target=${GATEWAY} sniff-target-port=${P} comment=tzsp-lab${extra ? ` ${extra}` : ""}`;
 
 	const stream = await experiment(c, "sniffer-stream", [
-		snifferBase(P),
+		snifferStream(P),
 		"/tool/sniffer/start",
 		sniffing(c),
 		`/ping ${PEER} count=3`,
@@ -773,7 +563,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	if (!full) return;
 
 	const headers = await experiment(c, "sniffer-only-headers", [
-		snifferBase(P),
+		snifferStream(P),
 		"/tool/sniffer/set only-headers=yes",
 		"/tool/sniffer/start",
 		sniffing(c),
@@ -796,7 +586,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	] as const) {
 		const exp = await experiment(c, `mangle-${chain}`, [
 			`/ip/firewall/mangle/add chain=${chain} protocol=icmp ${match} ${sniff()}`,
-			settle,
+			SETTLE,
 			`/ping ${PEER} count=2`,
 			...mangleState,
 			readCounters(c),
@@ -808,7 +598,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	const id = await experiment(c, "mangle-sniff-id", [
 		`/ip/firewall/mangle/add chain=output protocol=icmp dst-address=${PEER} ${sniff(`sniff-id=${SNIFF_ID}`)}`,
 		readRule(c),
-		settle,
+		SETTLE,
 		`/ping ${PEER} count=2`,
 		...mangleState,
 		"/ip/firewall/mangle/export where comment=tzsp-lab",
@@ -821,7 +611,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	const pc = await experiment(c, "mangle-sniff-pc", [
 		`/ip/firewall/mangle/add chain=output protocol=icmp dst-address=${PEER} action=sniff-pc sniff-target=${GATEWAY} sniff-target-port=${P} sniff-id=${SNIFF_ID} comment=tzsp-lab`,
 		readRule(c),
-		settle,
+		SETTLE,
 		`/ping ${PEER} count=2`,
 		...mangleState,
 		readCounters(c),
@@ -834,7 +624,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 		const exp = await experiment(c, `mangle-self-${chain}`, [
 			`/ip/firewall/mangle/add chain=output protocol=icmp dst-address=${PEER} ${sniff()}`,
 			`/ip/firewall/mangle/add chain=${chain} protocol=udp dst-address=${GATEWAY} dst-port=${P} ${sniff()}`,
-			settle,
+			SETTLE,
 			`/ping ${PEER} count=2`,
 			...mangleState,
 			readCounters(c),
@@ -847,8 +637,8 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	// Does a broad mangle rule mirror the sniffer's own stream?
 	const cross = await experiment(c, "mangle-mirrors-sniffer", [
 		`/ip/firewall/mangle/add chain=postrouting protocol=udp dst-address=${GATEWAY} dst-port=${P} ${sniff()}`,
-		settle,
-		snifferBase(P),
+		SETTLE,
+		snifferStream(P),
 		"/tool/sniffer/start",
 		sniffing(c),
 		`/ping ${PEER} count=2`,
@@ -864,7 +654,7 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
 	);
 
 	const file = await experiment(c, "sniffer-file", [
-		snifferBase(P),
+		snifferStream(P),
 		"/tool/sniffer/set streaming-enabled=no file-name=tzsp-lab-capture file-limit=100",
 		"/tool/sniffer/start",
 		sniffing(c),
@@ -950,19 +740,9 @@ async function experiments(c: Ctx, full: boolean): Promise<void> {
  */
 async function scpPull(machine: string, remote: string): Promise<Buffer> {
 	if (!/^[\w.-]+$/.test(remote)) throw new StepError("unexpected file name");
-	const inspect = await run(["quickchr", "inspect", machine, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	const info = JSON.parse(inspect.stdout) as {
-		services: Record<
-			string,
-			{ port?: number; auth?: { username: string; password: string } }
-		>;
-	};
-	const ssh = info.services.ssh?.port;
-	const auth = info.services["rest-api"]?.auth;
+	const { sshPort: ssh, auth } = await services(machine);
 	if (!ssh || !auth)
-		throw new StepError("no SSH port or login in quickchr inspect");
+		throw new StepError("no SSH port or login in quickchr's descriptor");
 	const dir = await mkdtemp(join(tmpdir(), "tzsp-lab-"));
 	tempDirs.add(dir);
 	try {
@@ -1017,112 +797,30 @@ async function scpPull(machine: string, remote: string): Promise<Buffer> {
 	}
 }
 
-/** The `-accel` QEMU was started with, read from its command line (Linux /proc). */
-async function accelerator(machine: string): Promise<string> {
-	const listed = await run(["quickchr", "list", machine, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	try {
-		const { pid } = JSON.parse(listed.stdout) as { pid?: number };
-		const argv = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
-		const i = argv.indexOf("-accel");
-		return i >= 0 ? (argv[i + 1] ?? "unknown") : "unknown";
-	} catch {
-		return "unknown";
-	}
-}
-
-/** Create a machine this run owns, or throw having touched nothing. */
-function create(target: Target): Promise<string> {
-	const p = provision(target);
-	provisioning.add(p);
-	p.finally(() => provisioning.delete(p)).catch(() => {});
-	return p;
-}
-
-async function provision(target: Target): Promise<string> {
-	if (interrupted) throw new Error("interrupted; not creating a machine");
-	const name = `tzsp-lab-${target.channel}-${target.arch}-${randomBytes(4).toString("hex")}`;
-	const exists = await run(["quickchr", "list", name, "--json"], {
-		timeoutMs: QUICKCHR_MS,
-	});
-	// Only quickchr's own "not found" proves the name is free; a timeout or
-	// any other failure stops here, before `add`.
-	if (exists.code === 0)
-		throw new Error(`${name} already exists; not touching it`);
-	if (exists.timedOut || !NOT_FOUND.test(exists.stdout + exists.stderr))
-		throw new Error(
-			`quickchr list ${name} ${exists.timedOut ? "timed out" : `exited ${exists.code}`}; not creating a machine`,
-		);
-	if (interrupted) throw new Error("interrupted; not creating a machine");
-	// Owned from here: the name was absent and is random, and `add` refuses
-	// an existing name, so what `add` leaves behind is this run's.
-	owned.add(name);
-	const added = await run(
-		[
-			"quickchr",
-			"add",
-			"--name",
-			name,
-			"--channel",
-			target.channel,
-			"--arch",
-			target.arch,
-		],
-		{ timeoutMs: QUICKCHR_MS },
-	);
-	if (added.code !== 0) {
-		if (/MACHINE_EXISTS/.test(added.stdout + added.stderr)) owned.delete(name);
-		throw new Error(`quickchr add ${name} exited ${added.code}`);
-	}
-	return name;
-}
-
 async function lab(target: Target): Promise<boolean> {
-	const version = await run(["quickchr", "--version"], {
-		timeoutMs: QUICKCHR_MS,
-	});
 	const ev: Evidence = {
 		target,
 		machine: "",
 		date: new Date().toISOString(),
 		accelerator: "",
-		quickchr: version.stdout.split("\n")[0]?.trim() ?? "",
+		quickchr: await version(),
 		experiments: [],
 	};
 	const listener = new Listener();
 	const ctx: Partial<Ctx> = {};
 	let ok = false;
 	try {
-		ev.machine = await create(target);
-		ev.listenerPort = await listener.open();
-		const t0 = Date.now();
-		const started = await run(["quickchr", "start", ev.machine]);
-		ev.bootMs = Date.now() - t0;
-		if (started.code !== 0)
-			throw new Error(`quickchr start exited ${started.code}`);
-		ev.accelerator = await accelerator(ev.machine);
-		const inspect = await run(["quickchr", "inspect", ev.machine, "--json"], {
-			timeoutMs: QUICKCHR_MS,
+		const made = await create(`tzsp-lab-${target.channel}-${target.arch}`, {
+			routeros: target.channel,
+			arch: target.arch,
 		});
-		const rest = (
-			JSON.parse(inspect.stdout) as {
-				services: Record<string, { url: string; auth: { basic: string } }>;
-			}
-		).services["rest-api"];
-		if (!rest) throw new Error("quickchr inspect has no rest-api service");
-		const router = new Router(rest.url, rest.auth.basic);
-		const res = (await router.read("/system/resource")) as Record<
-			string,
-			string
-		>;
-		ev.router = {
-			// "7.24.6 (long-term)": the number, then the channel the router names.
-			version: (res.version ?? "").split(" ")[0] ?? "",
-			versionString: res.version ?? "",
-			architecture: res["architecture-name"] ?? "",
-			board: res["board-name"] ?? "",
-		};
+		ev.machine = made.name;
+		if (made.bootMs !== undefined) ev.bootMs = made.bootMs;
+		ev.listenerPort = await listener.open();
+		ev.accelerator = accelerator(ev.machine);
+		const rest = await services(ev.machine);
+		const router = new Router(rest.restUrl, rest.basic);
+		ev.router = await router.identity();
 		ev.snifferDefaults = (await router.read("/tool/sniffer")) as Record<
 			string,
 			string
@@ -1137,7 +835,7 @@ async function lab(target: Target): Promise<boolean> {
 			listener.close();
 		} catch {}
 		if (ev.machine && owned.has(ev.machine) && !(await teardown(ev.machine)))
-			console.error(`NOT REMOVED: ${ev.machine}`);
+			console.error(leftOver(ev.machine));
 	}
 	const stem = `${ev.router?.version || target.channel}-${target.arch}`;
 	const dir = ok ? EVIDENCE : FAILED;
@@ -1190,7 +888,7 @@ if (import.meta.main) {
 		Promise.all(arm.map((t) => lab(t))),
 	]);
 	const left = await cleanupAll();
-	for (const n of left) console.error(`NOT REMOVED: ${n}`);
+	for (const n of left) console.error(leftOver(n));
 	const failed = results.some(
 		(r) => r.status === "rejected" || r.value.includes(false),
 	);

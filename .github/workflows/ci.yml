@@ -2,11 +2,12 @@
 # each block). Every job runs a package script, so a red job reproduces with
 # one local command.
 #
-#   lint ──────┐
-#   unit ──────┤
-#   node ──────┤
-#   audit ─────┴─→ gate  (the one required check)
-#                    └─→ report  (a scheduled run opens or updates its issue)
+#   changes ───┐
+#   lint ──────┤
+#   unit ──────┼─→ smoke  (a CHR, integration.yml; skipped for docs-only diffs)
+#   node ──────┤     │
+#   audit ─────┴─────┴─→ gate  (the one required check)
+#                         └─→ report  (a scheduled run opens or updates its issue)
 name: CI
 
 on:
@@ -48,6 +49,62 @@ env:
   BUN_VERSION: ${{ github.event_name == 'schedule' && 'latest' || inputs.bun-version }}
 
 jobs:
+  # Is this diff docs-only? Only the CHR smoke skips on the answer
+  # (tikoci-ci, "Docs-only classification"): any error, a list at GitHub's
+  # cap, a schedule or a dispatch runs everything.
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # the PR's file list
+    outputs:
+      heavy: ${{ steps.classify.outputs.heavy }}
+    steps:
+      - name: Classify the diff
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          # Paths only people, agents and the always-run lint job read.
+          DOCS_ONLY: '^([^/]*\.md|LICENSE)$'
+        run: |
+          # One line per changed file: its name and, for a rename, the old
+          # name too, since either may be code. GitHub lists at most 3000
+          # files for a PR and 300 for a compare; a list at the cap may be
+          # partial, so it runs everything. A push compare counts only when
+          # it is `ahead`: after a force push it is `diverged`, and the jq
+          # error runs everything.
+          records=""
+          cap=0
+          case "$GITHUB_EVENT_NAME" in
+            pull_request)
+              cap=3000
+              records=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+                --jq '.[] | [.filename, .previous_filename // empty] | join("\t")') || records="" ;;
+            push)
+              cap=300
+              records=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$AFTER" \
+                --jq 'if .status == "ahead" then .files[] | [.filename, .previous_filename // empty] | join("\t")
+                      else error("compare is \(.status), not ahead") end') || records="" ;;
+          esac
+          count=$(grep -c . <<< "$records" || true)
+          names=$(tr '\t' '\n' <<< "$records")
+          # A here-string, not a pipe: under pipefail an early `grep -q` exit
+          # can fail the writer. Only grep's 1 ("no line outside DOCS_ONLY")
+          # skips; 0 is code, and 2 (a bad pattern) runs everything too.
+          rc=0
+          grep -qvE "$DOCS_ONLY" <<< "$names" || rc=$?
+          heavy=true
+          if [ "$count" -gt 0 ] && [ "$count" -lt "$cap" ] && [ "$rc" -eq 1 ]; then
+            heavy=false
+          fi
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "Heavy jobs: $heavy ($GITHUB_EVENT_NAME, $count files)" >> "$GITHUB_STEP_SUMMARY"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -225,13 +282,28 @@ jobs:
           # (audit.example.ts), which the release workflow runs too.
           bun run audit
 
+  # The integration tier on a `stable` CHR, after lint and unit passed, so a
+  # lint failure never boots a CHR (tikoci-ci, "A device smoke job").
+  # integration.yml owns the QEMU setup; it only restores the image cache,
+  # which the nightly sweep saves.
+  smoke:
+    name: Smoke
+    needs: [changes, lint, unit]
+    if: >-
+      ${{ !cancelled() && needs.lint.result == 'success' && needs.unit.result == 'success'
+      && needs.changes.outputs.heavy != 'false' }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      routeros: stable
+      bun-version: ${{ github.event_name == 'schedule' && 'latest' || inputs.bun-version }}
+
   # One stable name to require in branch protection, whatever the matrix holds.
   # A skipped job (a docs-only skip) counts as passed; a failed or cancelled
   # one fails the gate. Add each new job to `needs`.
   gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [lint, unit, node, audit]
+    needs: [changes, lint, unit, node, audit, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
