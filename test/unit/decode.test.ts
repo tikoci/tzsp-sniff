@@ -1032,6 +1032,13 @@ describe("cross-review of 7d0d428: structure the readers must refuse or keep", (
 });
 
 describe("CodeRabbit review of 64ff141", () => {
+	/** The reader's private state, for what it holds. */
+	const inside = (reader: ByteReader) =>
+		reader as unknown as {
+			buffered: number;
+			chunks: Uint8Array[];
+			head: number;
+		};
 	const n = pcapngBuilder();
 	const ok = n.section() + n.iface(128);
 	const errorOf = async (
@@ -1058,7 +1065,9 @@ describe("CodeRabbit review of 64ff141", () => {
 		const reader = new ByteReader([huge]);
 		expect(await reader.readLine(MAX_HEX_LINE)).toBe("too-long");
 		// What the reader holds, not the 8 MiB the source gave.
-		expect(reader["buffered"]).toBeLessThanOrEqual(MAX_HEX_LINE + 64 * 1024);
+		expect(inside(reader).buffered).toBeLessThanOrEqual(
+			MAX_HEX_LINE + 64 * 1024,
+		);
 		// Lines inside a huge chunk still split right.
 		const text = new TextEncoder().encode(
 			`${"ab".repeat(200_000)}\n`.repeat(5),
@@ -1078,8 +1087,8 @@ describe("CodeRabbit review of 64ff141", () => {
 			Array.from({ length: 100 }, () => new Uint8Array(100)),
 		);
 		for (let i = 0; i < 100; i++) await reader.read(100);
-		const chunks = reader["chunks"] as Uint8Array[];
-		const head = reader["head"] as number;
+		const { chunks, head } = inside(reader);
+		expect(head).toBeGreaterThan(0);
 		expect(chunks.slice(0, head).every((c) => c.length === 0)).toBe(true);
 	});
 
