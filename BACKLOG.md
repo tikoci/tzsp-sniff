@@ -64,6 +64,9 @@ Small items, one or two sentences each, deleted when done or declined
 - `decode --format pcapng` (refused in slice 5): filter a TZSP file down to
   a smaller one; inputs with no TZSP datagram (a file RouterOS saved) would
   still be refused.
+- `decode <named pipe>` (refused in slice 5, since a `FileHandle` read on
+  it cannot be cancelled and Ctrl-C would wait on the producer): read a
+  FIFO through a cancellable stream, if `<(...)` is asked for.
 - A filter on a decoded file's `interface` (`ether1 rx`), if a lab asks for
   the direction.
 - `decode`: reassemble IP fragments of UDP to the TZSP port, so a TZSP

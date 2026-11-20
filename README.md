@@ -98,7 +98,9 @@ warnings and the summary go to stderr.
 
 `tzsp-sniff decode <file>` (or `-` for stdin) runs the same pipeline over a
 capture file: the same records, filters, `--fields`, `--detail`, `--stats`,
-`--count` and `--expect`, and text or JSONL.
+`--count` and `--expect`, and text or JSONL. The path must be a regular
+file; pipe anything else (a named pipe, `<(...)`) to `decode -`, where
+Ctrl-C can always stop the read.
 
 ```sh
 tzsp-sniff --duration 30s --write cmr.pcapng --stats        # capture once

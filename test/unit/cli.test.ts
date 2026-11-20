@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1327,6 +1328,62 @@ describe("decode", () => {
 		expect(await main(["decode", "-", "--count", "1"], m.io)).toBe(0);
 		expect(cleaned).toBe(true);
 	});
+
+	test("stdin with no destroy(): an abort does not wait on a stalled return(), and a throwing one is dropped (final review of 71d400c)", async () => {
+		const source =
+			(onReturn: () => Promise<IteratorResult<Uint8Array>>) => () => ({
+				[Symbol.asyncIterator]() {
+					let sent = false;
+					return {
+						next(): Promise<IteratorResult<Uint8Array>> {
+							if (sent) return new Promise(() => {});
+							sent = true;
+							return Promise.resolve({
+								done: false,
+								value: new TextEncoder().encode(`${REQUEST}\n${REQUEST}\n`),
+							});
+						},
+						return: onReturn,
+					};
+				},
+			});
+		const controller = new AbortController();
+		const m = memoryIo({ signal: controller.signal });
+		const write = m.io.stdout.write;
+		m.io.stdout = {
+			async write(data) {
+				await write(data);
+				if (String(data).includes('"type":"packet"')) controller.abort();
+			},
+		};
+		m.io.stdin = source(() => new Promise(() => {}));
+		// main settles: the summary is written and nothing waits on return().
+		await main(["decode", "-", "--input", "hex", "--format", "jsonl"], m.io);
+		expect(lines(m.stdout()).at(-1)).toMatchObject({ status: "interrupted" });
+
+		const thrown = memoryIo();
+		thrown.io.stdin = source(() => {
+			throw new Error("the source's own cleanup failed");
+		});
+		expect(
+			await main(["decode", "-", "--input", "hex", "--count", "1"], thrown.io),
+		).toBe(0);
+	}, 2000);
+
+	test.skipIf(process.platform === "win32")(
+		"a named pipe is refused before it is opened, and the fix says to pipe it to - (final review of 71d400c)",
+		async () => {
+			const fifo = join(dir, "pipe");
+			expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+			const m = memoryIo();
+			// Opening it would wait for a writer: refused from its kind first.
+			expect(await main(["decode", fifo], m.io)).toBe(1);
+			expect(m.stderr()).toStartWith("error decode/read-failed: ");
+			expect(m.stderr()).toContain("not a regular file");
+			expect(m.stderr()).toContain("decode -");
+		},
+		2000,
+	);
 
 	test("an input it cannot read or tell: exit 1 with the code on stderr, nothing on stdout", async () => {
 		const notCapture = join(dir, "notes.txt");

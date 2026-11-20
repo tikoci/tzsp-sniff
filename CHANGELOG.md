@@ -24,7 +24,9 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   section), and the structure is checked: pcap magic, version and snap
   length, simple packet block sizes, a section's declared length, and
   timestamps a Date can hold. Ctrl-C ends `decode -` even while the
-  producer keeps stdin open. A flag of
+  producer keeps stdin open; a path that is not a regular file (a named
+  pipe, a device) is refused with `decode/read-failed`, whose fix says to
+  pipe it to `decode -`. A flag of
   `listen` under `decode`, and the reverse, is refused with
   `cli/wrong-command`, which names the command it belongs to.
 - `openDecode(input, options)` in the library, with `DecodeOptions`,
@@ -36,6 +38,9 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   `decode`); `stoppedBy` gains `end`; a decode's sender rows may lack
   `listener` or `peer`. `packetRecord()`, `datagramRecord()`, filters and `summarize()`
   take an `Entry`, which a listener's `Capture` is.
+- `--write` refuses listeners whose labels pass what one pcapng section
+  holds and `decode` reads back (4,096 interfaces, 1 MiB of names), with
+  `write/invalid-option` before the file is touched.
 - `--write <file>`: save every datagram the capture reads, as received,
   before filters and whatever `--format`, `--detail` or `--stats` print
   (the summary's `dropped` and `unread` count what it never read), as pcapng with link

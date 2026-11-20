@@ -10,7 +10,7 @@
  * cannot mistake a capture that never started for an empty one.
  */
 import { statSync } from "node:fs";
-import { type FileHandle, open } from "node:fs/promises";
+import { type FileHandle, open, stat } from "node:fs/promises";
 import { isIP } from "node:net";
 import {
 	type CaptureOptions,
@@ -662,13 +662,25 @@ const CHUNK_BYTES = 64 * 1024;
 
 async function openFile(path: string): Promise<FileInput> {
 	let handle: FileHandle | undefined;
+	// Only a regular file: a read from a named pipe or a device cannot be
+	// cancelled, so Ctrl-C would print its summary and then wait for the
+	// producer. Checked before opening, which for a pipe waits for a writer.
+	const notFile = () =>
+		new TzspSniffError(
+			"decode/read-failed",
+			`Cannot read ${path}: it is not a regular file (a pipe or a device).`,
+			`Pipe it to stdin instead: ... | tzsp-sniff decode -`,
+		);
 	try {
+		const kind = await stat(path);
+		if (!kind.isFile() && !kind.isDirectory()) throw notFile();
 		handle = await open(path, "r");
-		if ((await handle.stat()).isDirectory()) {
-			throw new Error(`${path} is a directory`);
-		}
+		const opened = await handle.stat();
+		if (opened.isDirectory()) throw new Error(`${path} is a directory`);
+		if (!opened.isFile()) throw notFile();
 	} catch (error) {
 		await handle?.close().catch(() => {});
+		if (error instanceof TzspSniffError) throw error;
 		throw new TzspSniffError(
 			"decode/read-failed",
 			`Cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`,
@@ -713,6 +725,7 @@ async function openFile(path: string): Promise<FileInput> {
  */
 function streamInput(
 	stream: AsyncIterable<Uint8Array> & { destroy?(): void },
+	signal: AbortSignal | undefined,
 ): FileInput {
 	const iterator = stream[Symbol.asyncIterator]();
 	let closed: Promise<void> | undefined;
@@ -724,14 +737,16 @@ function streamInput(
 				stream.destroy();
 				return;
 			}
-			// No destroy (an async generator): its return() runs its cleanup,
-			// waited for unless a read is pending, which it would queue behind.
-			const returned = Promise.resolve(iterator.return?.()).then(
+			// No destroy (an async generator): its return() runs its cleanup.
+			// It is waited for on a normal stop, not after an abort, and not
+			// while a read is pending, which it would queue behind. A throw
+			// from it, sync or not, is the source's own and is dropped.
+			const returned = (async () => iterator.return?.())().then(
 				() => {},
 				() => {},
 			);
-			if (!pending) await returned;
-		})();
+			if (!pending && !signal?.aborted) await returned;
+		})().catch(() => {});
 		return closed;
 	};
 	const done = { done: true, value: undefined } as const;
@@ -777,7 +792,7 @@ async function runDecode(
 					"Give a file path instead of -.",
 				);
 			}
-			file = streamInput(io.stdin());
+			file = streamInput(io.stdin(), io.signal);
 			input = file;
 		} else {
 			file = await openFile(decode.input);

@@ -24,19 +24,19 @@
  * to the TZSP parser and the dissector, which never throw.
  */
 import { TzspSniffError } from "./errors.ts";
-import { LINKTYPE_TZSP } from "./pcapng.ts";
+import {
+	LINKTYPE_TZSP,
+	MAX_INTERFACE_NAME_BYTES,
+	MAX_INTERFACES,
+} from "./pcapng.ts";
 import type { InputFormat } from "./records.ts";
 import { toHex } from "./tzsp.ts";
 
 /** The longest pcapng block or pcap record read (1 MiB); a longer one is `decode/malformed`. */
 export const MAX_BLOCK_BYTES = 1024 * 1024;
-/**
- * What one pcapng section may hold in interfaces, which are kept until the
- * section ends: 4,096 of them, with 1 MiB of names. Past either is
- * `decode/malformed`; a new section starts again.
- */
-export const MAX_INTERFACES = 4096;
-export const MAX_INTERFACE_NAME_BYTES = 1024 * 1024;
+// The interface budget is the writer's too (src/pcapng.ts): a file
+// `--write` saves always decodes.
+export { MAX_INTERFACE_NAME_BYTES, MAX_INTERFACES };
 /** The longest hex line read, in bytes (128 KiB, a UDP datagram's 65,535 bytes as hex with room to spare). */
 export const MAX_HEX_LINE = 128 * 1024;
 
@@ -148,6 +148,9 @@ export class ByteReader {
 			} finally {
 				signal.removeEventListener("abort", onAbort);
 			}
+			// A pull that settled as the signal fired (a chunk or the end):
+			// the abort still wins.
+			if (signal.aborted) throw new InputAborted();
 		} else {
 			result = await next;
 		}
@@ -247,15 +250,16 @@ export class ByteReader {
 		for (;;) {
 			for (; index < this.chunks.length; index++, from = 0) {
 				const chunk = this.chunks[index] as Uint8Array;
-				const i = chunk.indexOf(0x0a, from);
-				if (i >= 0) {
-					const length = scanned + i - from;
-					if (length > max) return "too-long";
-					const line = this.take(length);
+				// No further than the line may run, plus one byte for its
+				// newline: a huge input in one piece is not scanned whole.
+				const end = Math.min(chunk.length, from + max - scanned + 1);
+				const found = chunk.subarray(from, end).indexOf(0x0a);
+				if (found >= 0) {
+					const line = this.take(scanned + found);
 					this.skip(1);
 					return line;
 				}
-				scanned += chunk.length - from;
+				scanned += end - from;
 				if (scanned > max) return "too-long";
 			}
 			if (!(await this.more())) {
@@ -673,13 +677,20 @@ async function* pcap(
 				`The record at byte ${start} declares ${captured} bytes, more than the file's snap length of ${snapLength}.`,
 			);
 		}
+		const seconds = v.getUint32(0, little);
+		const fraction = v.getUint32(4, little);
+		// A whole second or more in the fraction is not a time to round.
+		const perSecond = nano ? 1e9 : 1e6;
+		if (fraction >= perSecond) {
+			throw malformed(
+				`The record at byte ${start} has a fraction of ${fraction}, not under the ${perSecond} ${nano ? "ns" : "µs"} in a second.`,
+			);
+		}
 		const data = await reader.read(captured);
 		if (data.length < captured) {
 			state.truncatedAt = start;
 			return;
 		}
-		const seconds = v.getUint32(0, little);
-		const fraction = v.getUint32(4, little);
 		yield {
 			linkType,
 			// The fraction rounds down on its own: added first, 999,999 ns

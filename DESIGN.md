@@ -447,7 +447,11 @@ pins that version).
   `close` runs when that call settles, never alongside it, so a slow
   open's file is closed too (final review of ecd23b1), and `written` counts only
   blocks the sink acknowledged in time. An option over 65535 bytes (a
-  long label) is `write/invalid-option` before the sink is touched. Sink
+  long label), or listeners past what one section holds and `decode`
+  reads back (`MAX_INTERFACES`, `MAX_INTERFACE_NAME_BYTES`: one budget
+  for writer and reader, so a file `--write` saved always decodes; final
+  review of 71d400c), is `write/invalid-option` before the sink is
+  touched. Sink
   calls run one at a time in the order made, so a library caller that
   writes without awaiting still gets whole blocks in order, and the first
   failure sticks whatever its value, `undefined` included (Copilot review
@@ -614,25 +618,40 @@ open, it was made in the slice, and each is tested in
   chunk only once this one is used up, so one huge chunk costs what a
   block or a line needs, not its size. Used chunks are released as they
   are passed. A `Uint8Array` input is read in place. A hex line is
-  scanned once however it is chunked. `--count` and an early stop close
-  the input. An abort ends a read waiting on the input, whatever the pull
-  returned (a promise from another realm, any thenable) and also when
-  the source aborts from inside `next()`: the stream ends `interrupted`
-  (or `openDecode` rejects, during detection). An abort seen when the
-  input has ended is `interrupted` too, not `end`. On an abort the
-  source's `return()` is called but not awaited: a source slow to clean
-  up cannot hold the summary, and an async generator queues `return()`
-  behind a read still pending. The CLI's stdin adapter destroys the
+  scanned once however it is chunked, and no further than the cap plus
+  its newline, so a huge buffer with no newline is not searched whole.
+  `--count` and an early stop close the input. An abort ends a read
+  waiting on the input, whatever the pull returned (a promise from
+  another realm, any thenable), also when the source aborts from inside
+  `next()`, and also when that pull settled as the signal fired (a chunk
+  or the end): the stream ends `interrupted` (or `openDecode` rejects,
+  during detection, rather than call the input empty). The signal is
+  checked before each packet is asked for, so bytes already buffered (a
+  bad hex line) cannot turn an abort into `decode/malformed`, and an
+  abort seen when the input has ended is `interrupted` too, not `end`;
+  a `count` already reached stays the reason. On an abort the source's
+  `return()` is called but not awaited, during detection too: a source
+  slow to clean up cannot hold the summary, and an async generator
+  queues `return()` behind a read still pending. The CLI's stdin adapter destroys the
   stream there, so Ctrl-C ends `decode -` while the producer still holds
   the pipe open (`bin.test.ts` under Bun, `test/node/` under Node;
   cross-review of 7d0d428); a stdin with no `destroy()` (an async
-  generator, in tests) has its `return()` called instead, awaited unless
-  a read is pending (CodeRabbit review of 64ff141).
+  generator, in tests) has its `return()` called instead (CodeRabbit
+  review of 64ff141), awaited only on a normal stop with no read pending,
+  and a throw from it is dropped (final review of 71d400c).
   Options, and an input whose first bytes name no format, are refused
   before the first record (`decode/invalid-option`,
   `decode/unknown-format`, whose fix names `--input hex` when the bytes
   look like hex); a file that cannot be opened is `decode/read-failed`
   (exit 1), as is a read that fails part way.
+- **A path must be a regular file.** A `FileHandle` read on a named pipe
+  or a device cannot be cancelled, so Ctrl-C printed the interrupted
+  summary and then waited for the producer to close the pipe (final
+  review of 71d400c, on Node with a FIFO held open). The path's kind is
+  checked before it is opened (opening a FIFO waits for a writer) and
+  again after; anything else is `decode/read-failed`, whose fix says to
+  pipe it to `decode -`, where stdin is a stream that can be destroyed.
+  Reading a FIFO through a cancellable stream is in BACKLOG.md.
 - **pcapng** is read in either byte order, with new sections resetting
   the interfaces; enhanced, simple and obsolete packet blocks are read,
   other blocks skipped by their length. A section that declares its
@@ -656,7 +675,9 @@ open, it was made in the slice, and each is tested in
   over the header's snap length (when it sets one), or over 1 MiB with its
   16-byte header, is malformed. The link type is the low 16 bits of the
   header's field. The fraction is rounded down to the ms before the
-  seconds are added: in the sum, 999,999 ns would round up a ms.
+  seconds are added: in the sum, 999,999 ns would round up a ms. A
+  fraction of a whole second or more (1e9 ns, 1e6 µs) is malformed,
+  rather than moving the time on by a second.
 - **A UDP header marked malformed is not unwrapped** (its length
   contradicts the packet, so its payload cannot be trusted): an Ethernet
   frame is reported as it is, with its `udp/length` problem, and a raw IP

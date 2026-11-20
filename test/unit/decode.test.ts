@@ -109,6 +109,20 @@ function pcapngBuilder(little = true) {
 					options((o.comments ?? []).map((c) => option(1, text(c)))),
 			);
 		},
+		/** An obsolete packet block (type 2): a 16-bit interface id and drops count. */
+		obsolete: (id: number, dataHex: string, o: { units?: bigint } = {}) => {
+			const units = o.units ?? 0n;
+			return block(
+				2,
+				u16(id) +
+					u16(0) +
+					u32(Number(units >> 32n)) +
+					u32(Number(units & 0xffffffffn)) +
+					u32(dataHex.length / 2) +
+					u32(dataHex.length / 2) +
+					pad4(dataHex),
+			);
+		},
 		/** A simple packet block; `original` may contradict the data, for tests. */
 		simple: (dataHex: string, original = dataHex.length / 2) =>
 			block(3, u32(original) + pad4(dataHex)),
@@ -1202,5 +1216,128 @@ describe("CodeRabbit review of 64ff141", () => {
 			p.header() + p.record(REQUEST, 1_700_000_000, 999_999),
 		);
 		expect(packetsOf(records)[0]?.time).toBe("2023-11-14T22:13:20.000Z");
+	});
+});
+
+describe("final review of 71d400c", () => {
+	const n = pcapngBuilder();
+	const errorOf = async (
+		input: string | Uint8Array,
+		options: DecodeOptions = {},
+	) => summaryOf(await decode(input, options)).error?.code;
+
+	test("an abort during detection: a settled pull still loses, and return() is not waited for", async () => {
+		const controller = new AbortController();
+		let entered = false;
+		const source = {
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					controller.abort();
+					return { done: false, value: new Uint8Array(0) };
+				},
+				return(): Promise<IteratorResult<Uint8Array>> {
+					entered = true;
+					return new Promise(() => {});
+				},
+			}),
+		};
+		const error = await openDecode(source, { signal: controller.signal }).then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect(error).toMatchObject({ name: "AbortError" });
+		expect(entered).toBe(true);
+
+		// A sync source that aborts and ends: the abort, not decode/unknown-format.
+		const sync = new AbortController();
+		const ended = {
+			[Symbol.iterator]: () => ({
+				next(): IteratorResult<Uint8Array> {
+					sync.abort();
+					return { done: true, value: undefined };
+				},
+			}),
+		};
+		const second = await openDecode(ended, { signal: sync.signal }).then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect(second).toMatchObject({ name: "AbortError" });
+	}, 2000);
+
+	test("an abort before a bad line already buffered is interrupted, not decode/malformed", async () => {
+		const controller = new AbortController();
+		const stream = await openDecode(new TextEncoder().encode("zz\n"), {
+			format: "hex",
+			signal: controller.signal,
+		});
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "header") controller.abort();
+		}
+		expect(summaryOf(records)).toMatchObject({
+			status: "interrupted",
+			stoppedBy: "interrupt",
+		});
+	});
+
+	test("a hex line in one huge buffer is searched no further than the cap", async () => {
+		let widest = 0;
+		class Watched extends Uint8Array {
+			override indexOf(value: number, from = 0): number {
+				widest = Math.max(widest, this.length - from);
+				return super.indexOf(value, from);
+			}
+		}
+		const huge = new Watched(8 * 1024 * 1024).fill(0x30);
+		expect(await new ByteReader(huge).readLine(MAX_HEX_LINE)).toBe("too-long");
+		expect(widest).toBeLessThanOrEqual(MAX_HEX_LINE + 1);
+		// A line exactly at the cap is read; one byte more is too long.
+		const text = (length: number) =>
+			new TextEncoder().encode(`${"0".repeat(length)}\n${KEEPALIVE}\n`);
+		const atCap = new ByteReader(text(16));
+		expect((await atCap.readLine(16)) as Uint8Array).toHaveLength(16);
+		expect(
+			new TextDecoder().decode((await atCap.readLine(16)) as Uint8Array),
+		).toBe(KEEPALIVE);
+		expect(await new ByteReader(text(17)).readLine(16)).toBe("too-long");
+	});
+
+	test("pcap: a fraction of a whole second or more is malformed", async () => {
+		for (const [nano, top] of [
+			[true, 1_000_000_000],
+			[false, 1_000_000],
+		] as const) {
+			const p = pcapBuilder({ linkType: 128, nano });
+			const at = (fraction: number) =>
+				p.header() + p.record(KEEPALIVE, 1_700_000_000, fraction);
+			expect({
+				nano,
+				time: entriesOf(await decode(at(top - 1)))[0]?.time,
+			}).toEqual({ nano, time: "2023-11-14T22:13:20.999Z" });
+			expect({ nano, code: await errorOf(at(top)) }).toEqual({
+				nano,
+				code: "decode/malformed",
+			});
+		}
+	});
+
+	test("obsolete packet blocks: the record, its time and interface; over the snap length is malformed", async () => {
+		const input =
+			n.section() +
+			n.iface(128, { name: "edge", tsresol: 3 }) +
+			n.obsolete(0, KEEPALIVE, { units: 1500n });
+		const records = entriesOf(await decode(input));
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({
+			type: "record",
+			kind: "control",
+			listener: "edge",
+			time: "1970-01-01T00:00:01.500Z",
+		});
+		const snapped =
+			n.section() + n.iface(128, { snapLength: 2 }) + n.obsolete(0, KEEPALIVE);
+		expect(await errorOf(snapped)).toBe("decode/malformed");
 	});
 });

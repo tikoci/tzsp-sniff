@@ -341,8 +341,10 @@ export async function openDecode(
 		try {
 			head = await reader.peek(4);
 		} catch (error) {
-			await reader.close().catch(() => {});
-			if (error instanceof InputAborted) throw signal?.reason ?? error;
+			const aborted = error instanceof InputAborted;
+			// Aborted: the source's return() is started, not waited for.
+			await reader.close(!aborted).catch(() => {});
+			if (aborted) throw signal?.reason ?? error;
 			throw readFailure(error);
 		}
 		format = detectFormat(head);
@@ -403,8 +405,14 @@ export async function openDecode(
 		try {
 			yield header;
 			try {
-				for await (const p of readPackets(reader, inputFormat, state)) {
+				const packets = readPackets(reader, inputFormat, state);
+				for (;;) {
+					// Before each packet is asked for: bytes already buffered
+					// (a bad hex line) must not turn an abort into an error.
 					if (signal?.aborted) throw new InputAborted();
+					const next = await packets.next();
+					if (next.done) break;
+					const p = next.value;
 					const seq = counters.datagrams + 1;
 					const decoded = decodePacket(p, seq, ports);
 					counters.datagrams = seq;
@@ -448,7 +456,10 @@ export async function openDecode(
 					if (count !== undefined && counters.packets >= count)
 						stoppedBy = "count";
 					if (record) yield record;
-					if (stoppedBy) break;
+					if (stoppedBy) {
+						await packets.return(undefined);
+						break;
+					}
 				}
 				// The input ended while the consumer held a record, and the
 				// signal fired then: that is an interrupt, not the end.
