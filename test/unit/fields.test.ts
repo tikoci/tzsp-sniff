@@ -52,6 +52,7 @@ describe("selectFields", () => {
 		filtered: 0,
 		dropped: 0,
 		unread: 0,
+		unsaved: 0,
 	};
 
 	test("only the named fields, in that order, after type; absent ones left out", () => {

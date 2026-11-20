@@ -1,9 +1,14 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import {
+	closeSync,
 	existsSync,
 	lstatSync,
+	mkdirSync,
 	mkdtempSync,
+	openSync,
+	readdirSync,
 	readFileSync,
+	readSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -325,22 +330,21 @@ describe("fileSink", () => {
 		if (POSIX) expect(statSync(path).mode & 0o777).toBe(0o600);
 	});
 
-	test.skipIf(!POSIX)(
-		"overwrite never follows a symbolic link: write/failed, the target untouched",
-		async () => {
-			const target = fresh();
-			writeFileSync(target, "target", { mode: 0o644 });
-			const link = fresh();
-			symlinkSync(target, link);
-			const error = (await rejection(
-				fileSink(link, { overwrite: true }).open(),
-			)) as TzspSniffError;
-			expect(error.code).toBe("write/failed");
-			expect(readFileSync(target, "utf8")).toBe("target");
-			expect(statSync(target).mode & 0o777).toBe(0o644);
-			expect(lstatSync(link).isSymbolicLink()).toBe(true);
-		},
-	);
+	// Windows too: CI's runners may create symbolic links.
+	test("overwrite never follows a symbolic link: write/failed, the target untouched", async () => {
+		const target = fresh();
+		writeFileSync(target, "target", { mode: 0o644 });
+		const link = fresh();
+		symlinkSync(target, link);
+		const error = (await rejection(
+			fileSink(link, { overwrite: true }).open(),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/failed");
+		expect(readFileSync(target, "utf8")).toBe("target");
+		if (POSIX) expect(statSync(target).mode & 0o777).toBe(0o644);
+		expect(lstatSync(link).isSymbolicLink()).toBe(true);
+		expect(error.message).toContain("a symbolic link");
+	});
 
 	test("a directory that is not there: write/failed naming the path", async () => {
 		const path = join(dir, "missing", "x.pcapng");
@@ -349,18 +353,82 @@ describe("fileSink", () => {
 		expect(error.message).toContain(path);
 	});
 
-	// /dev/full fails every write with ENOSPC: a full disk.
-	test.skipIf(process.platform !== "linux")(
-		"a full disk: write/failed with the cause",
-		async () => {
-			const sink = fileSink("/dev/full", { overwrite: true });
+	test("a full disk: write/failed with the cause", async () => {
+		const enospc = Object.assign(new Error("ENOSPC: no space left on device"), {
+			code: "ENOSPC",
+		});
+		let closed = 0;
+		const sink = fileSink(
+			fresh(),
+			{},
+			{
+				open: (async () => ({
+					write: async () => {
+						throw enospc;
+					},
+					close: async () => {
+						closed += 1;
+					},
+				})) as never,
+			},
+		);
+		await sink.open();
+		const error = (await rejection(
+			sink.write(Uint8Array.of(1)),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/failed");
+		expect(error.cause).toBe(enospc);
+		await sink.close();
+		expect(closed).toBe(1);
+	});
+
+	test("overwrite: a reader that had the old file open never sees the capture", async () => {
+		const path = fresh();
+		writeFileSync(path, "old", { mode: 0o644 });
+		const fd = openSync(path, "r");
+		try {
+			const sink = fileSink(path, { overwrite: true });
 			await sink.open();
+			await sink.write(Uint8Array.of(7, 7, 7, 7, 7));
+			await sink.close();
+			const buffer = Buffer.alloc(16);
+			const n = readSync(fd, buffer, 0, 16, 0);
+			expect(buffer.subarray(0, n).toString()).toBe("old");
+			expect([...readFileSync(path)]).toEqual([7, 7, 7, 7, 7]);
+			if (POSIX) expect(statSync(path).mode & 0o777).toBe(0o600);
+			// No temporary file is left beside it.
+			expect(readdirSync(dir).filter((f) => f.endsWith(".tzsp-sniff"))).toEqual(
+				[],
+			);
+		} finally {
+			closeSync(fd);
+		}
+	});
+
+	test("overwrite refuses a directory, naming the path", async () => {
+		const path = join(dir, `d-${++n}`);
+		mkdirSync(path);
+		const error = (await rejection(
+			fileSink(path, { overwrite: true }).open(),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/failed");
+		expect(error.message).toContain("a directory");
+	});
+
+	// mkfifo: Linux and macOS.
+	test.skipIf(!POSIX)(
+		"overwrite refuses a named pipe at once, without opening it",
+		async () => {
+			const path = fresh();
+			expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+			const started = performance.now();
 			const error = (await rejection(
-				sink.write(Uint8Array.of(1)),
+				fileSink(path, { overwrite: true }).open(),
 			)) as TzspSniffError;
 			expect(error.code).toBe("write/failed");
-			expect((error.cause as { code?: string }).code).toBe("ENOSPC");
-			await sink.close();
+			expect(error.message).toContain("not a regular file");
+			expect(performance.now() - started).toBeLessThan(1000);
+			expect(lstatSync(path).isFIFO()).toBe(true);
 		},
 	);
 });
@@ -499,10 +567,11 @@ describe("openCapture with writers", () => {
 		expect(summary.status).toBe("error");
 		expect(summary.stoppedBy).toBe("error");
 		expect(summary.error?.code).toBe("write/failed");
-		// The first packet was saved and printed; the second was counted,
-		// its write failed, and it was not handed over.
+		// The first packet was saved and printed; the second's save failed,
+		// so it is counted as unsaved and not handed over.
 		expect(records.filter((r) => r.type === "packet")).toHaveLength(1);
-		expect(summary.counters.packets).toBe(2);
+		expect(summary.counters.packets).toBe(1);
+		expect(summary.counters.unsaved).toBe(1);
 		const c = summary.counters;
 		expect(
 			c.packets +
@@ -511,7 +580,8 @@ describe("openCapture with writers", () => {
 				c.invalid +
 				c.filtered +
 				c.dropped +
-				c.unread,
+				c.unread +
+				c.unsaved,
 		).toBe(c.datagrams);
 		expect(summary.written?.datagrams).toBe(1);
 		expect(m.calls.at(-1)).toBe("close");
@@ -601,4 +671,211 @@ test("a capture nobody reads closes its writer when its limit closes the sockets
 	for await (const r of stream) records.push(r);
 	expect(summaryOf(records).stoppedBy).toBe("duration");
 	expect(m.calls.filter((c) => c === "close")).toHaveLength(1);
+});
+
+/** A promise and the function that resolves it. */
+function deferred() {
+	let resolve: () => void = () => {};
+	const promise = new Promise<void>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
+describe("writer limits and late calls", () => {
+	test("an option too long for pcapng is refused before the sink is touched", async () => {
+		const m = memorySink();
+		const w = pcapngWriter(m.sink);
+		const error = (await rejection(
+			w.open([{ address: "0.0.0.0", port: 1, label: "é".repeat(32_768) }]),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/invalid-option");
+		expect(m.calls).toEqual([]);
+	});
+
+	test("stallMs above the timer maximum is refused", () => {
+		const code = (stallMs: number) => {
+			try {
+				pcapngWriter(memorySink().sink, { stallMs });
+			} catch (error) {
+				return (error as TzspSniffError).code;
+			}
+			return undefined;
+		};
+		expect(code(2_147_483_648)).toBe("write/invalid-option");
+		expect(code(2_147_483_647)).toBeUndefined();
+	});
+
+	test("an open that times out and finishes late is still closed", async () => {
+		const late = deferred();
+		const calls: string[] = [];
+		let held = false;
+		const w = pcapngWriter(
+			{
+				async open() {
+					await late.promise;
+					held = true;
+					calls.push("open");
+				},
+				async write() {},
+				async close() {
+					calls.push(`close held=${held}`);
+					held = false;
+				},
+			},
+			{ stallMs: 30 },
+		);
+		const error = (await rejection(w.open([LISTENER_A]))) as TzspSniffError;
+		expect(error.code).toBe("write/stalled");
+		const closing = w.close().catch(() => {});
+		setTimeout(late.resolve, 5);
+		await closing;
+		expect(calls).toEqual(["open", "close held=true"]);
+		expect(held).toBe(false);
+	});
+
+	test("a write that times out and finishes late does not change what was written", async () => {
+		const late = deferred();
+		let writes = 0;
+		const w = pcapngWriter(
+			{
+				async write() {
+					writes += 1;
+					if (writes === 3) await late.promise;
+				},
+			},
+			{ stallMs: 30 },
+		);
+		await w.open([LISTENER_A]);
+		const before = { ...w.written };
+		expect(
+			((await rejection(w.write(capture(REQUEST)))) as TzspSniffError).code,
+		).toBe("write/stalled");
+		late.resolve();
+		await new Promise((r) => setTimeout(r, 10));
+		expect(w.written).toEqual(before);
+	});
+});
+
+describe("capture shutdown with writers", () => {
+	test("the limits run from the bind, while a writer is still opening", async () => {
+		const slow = deferred();
+		setTimeout(slow.resolve, 150);
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			durationMs: 20,
+			write: pcapngWriter({
+				open: () => slow.promise,
+				async write() {},
+			}),
+		});
+		const summary = summaryOf(await drain(stream, []));
+		expect(summary.stoppedBy).toBe("duration");
+		expect(summary.durationMs).toBeLessThan(120);
+	});
+
+	test("a reader paused at the header: the writer closes when the limit ends intake", async () => {
+		const m = memorySink();
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			durationMs: 30,
+			write: pcapngWriter(m.sink),
+		});
+		const iterator = stream[Symbol.asyncIterator]();
+		expect((await iterator.next()).value?.type).toBe("header");
+		await stream.listener.closed;
+		await until(() => m.calls.at(-1) === "close");
+		// Read on later: the summary still comes.
+		let last: StreamRecord | undefined;
+		for (;;) {
+			const r = await iterator.next();
+			if (r.done) break;
+			last = r.value;
+		}
+		expect(last?.type).toBe("summary");
+		expect(m.calls.filter((c) => c === "close")).toHaveLength(1);
+	});
+
+	test("throw() while a write is pending: the writer closes after it", async () => {
+		// A bare CaptureWriter, not pcapngWriter (which waits for its own last
+		// call), so this checks the capture's own ordering.
+		const held = deferred();
+		const order: string[] = [];
+		let writing = false;
+		const writer: CaptureWriter = {
+			target: "bare",
+			written: { datagrams: 0, bytes: 0 },
+			async open() {},
+			async write() {
+				writing = true;
+				await held.promise;
+				order.push("write finished");
+			},
+			async close() {
+				order.push("close");
+			},
+		};
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			durationMs: 3000,
+			write: writer,
+		});
+		const iterator = stream[Symbol.asyncIterator]();
+		const header = (await iterator.next()).value as {
+			listeners: { port: number }[];
+		};
+		const pending = iterator.next();
+		await send(header.listeners[0]?.port as number, [REQUEST]);
+		await until(() => writing);
+		const thrown = iterator.throw?.(new Error("stop"));
+		setTimeout(held.resolve, 20);
+		await pending;
+		await thrown?.catch(() => {});
+		expect(order).toEqual(["write finished", "close"]);
+	});
+
+	test("a write failure after the duration ended intake keeps duration as the reason", async () => {
+		let writes = 0;
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			durationMs: 60,
+			write: pcapngWriter(
+				{
+					write: async () => {
+						writes += 1;
+						if (writes === 3) await new Promise(() => {});
+					},
+				},
+				{ stallMs: 150 },
+			),
+		});
+		const summary = summaryOf(await drain(stream, [REQUEST]));
+		expect(summary.stoppedBy).toBe("duration");
+		expect(summary.status).toBe("error");
+		expect(summary.error?.code).toBe("write/stalled");
+	});
+
+	test("a writer another capture holds is refused, and that capture keeps it", async () => {
+		const m = memorySink();
+		const w = pcapngWriter(m.sink);
+		const first = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			count: 1,
+			durationMs: 3000,
+			write: w,
+		});
+		const error = (await rejection(
+			openCapture({ ports: [{ port: 0 }], bind: "127.0.0.1", write: w }),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/invalid-option");
+		expect(m.calls).not.toContain("close");
+		const summary = summaryOf(await drain(first, [REQUEST]));
+		expect(summary.status).toBe("complete");
+		expect(summary.written?.datagrams).toBe(1);
+	});
 });

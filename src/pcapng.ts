@@ -19,6 +19,9 @@ import { TzspSniffError } from "./errors.ts";
 import type { BoundListener, Capture } from "./listen.ts";
 import { VERSION } from "./version.ts";
 
+/** The longest delay timers take on Node and Bun (2^31 - 1 ms); as `MAX_TIMER_MS` in capture.ts. */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** tcpdump's `LINKTYPE_TZSP` (https://www.tcpdump.org/linktypes.html). */
 export const LINKTYPE_TZSP = 128;
 
@@ -89,6 +92,13 @@ const pad4 = (n: number) => (n + 3) & ~3;
 
 /** An option: code, length, value, padded to 32 bits. */
 function option(code: number, value: Uint8Array): Uint8Array {
+	if (value.length > 0xffff) {
+		throw new TzspSniffError(
+			"write/invalid-option",
+			`A pcapng option holds at most 65535 bytes; this one has ${value.length}.`,
+			"Use a shorter listener label.",
+		);
+	}
 	const out = new Uint8Array(4 + pad4(value.length));
 	const view = new DataView(out.buffer);
 	view.setUint16(0, code, true);
@@ -208,17 +218,19 @@ export function packetBlock(interfaceId: number, capture: Capture): Uint8Array {
  * time, each a whole block, so a file cut short by an interrupt or a full
  * disk ends at a block boundary or inside the last block, never before
  * one that was acknowledged. After the first failure every call rejects
- * with that failure, and `close` still closes the sink.
+ * with that failure, and `close` still closes the sink, once any sink call
+ * that timed out has settled (for up to another `stallMs`), so a late open
+ * is closed too. `written` counts only what the sink acknowledged in time.
  */
 export function pcapngWriter(
 	sink: ByteSink,
 	options: PcapngWriterOptions = {},
 ): CaptureWriter {
 	const stallMs = options.stallMs ?? DEFAULT_WRITE_STALL_MS;
-	if (!Number.isInteger(stallMs) || stallMs < 0) {
+	if (!Number.isInteger(stallMs) || stallMs < 0 || stallMs > MAX_TIMER_MS) {
 		throw new TzspSniffError(
 			"write/invalid-option",
-			`stallMs must be a whole number of 0 or more, not ${stallMs}.`,
+			`stallMs must be a whole number from 0 to ${MAX_TIMER_MS}, not ${stallMs}.`,
 			"Leave stallMs unset for 30 s, or 0 to turn the timer off.",
 		);
 	}
@@ -227,9 +239,12 @@ export function pcapngWriter(
 	const interfaces = new Map<BoundListener, number>();
 	let state: "new" | "open" | "closed" = "new";
 	let failure: unknown;
-	let opened = false;
+	/** The sink was asked to open, so it must be asked to close. */
+	let touched = false;
+	/** The last sink call, settled or not: close waits for one that timed out. */
+	let inflight: Promise<void> | undefined;
 
-	/** A call out of order: the caller's mistake, not the sink's. */
+	/** A call out of order, or an option too long: the caller's mistake, not the sink's. */
 	const misuse = (message: string) =>
 		new TzspSniffError(
 			"write/invalid-option",
@@ -237,44 +252,52 @@ export function pcapngWriter(
 			"Open a writer once, write, then close it; a writer writes one capture.",
 		);
 
-	/** One sink call, timed; its failure is the writer's failure from now on. */
-	async function call(what: string, run: () => Promise<void>): Promise<void> {
-		if (failure !== undefined) throw failure;
+	/** Wait for `work`, or reject with write/stalled after `ms` (0: no limit). */
+	async function timed(work: Promise<void>, ms: number, what: string) {
+		if (ms === 0) return work;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		try {
-			const work = run();
-			if (stallMs === 0) await work;
-			else {
-				await Promise.race([
-					work,
-					new Promise<never>((_, reject) => {
-						timer = setTimeout(
-							() =>
-								reject(
-									new TzspSniffError(
-										"write/stalled",
-										`${target} took no data for ${stallMs / 1000}s while ${what}.`,
-										"Write to a local disk, or read --format pcapng's stdout as it comes.",
-									),
+			await Promise.race([
+				work,
+				new Promise<never>((_, reject) => {
+					timer = setTimeout(
+						() =>
+							reject(
+								new TzspSniffError(
+									"write/stalled",
+									`${target} took no data for ${ms / 1000}s while ${what}.`,
+									"Write to a local disk, or read --format pcapng's stdout as it comes.",
 								),
-							stallMs,
-						);
-					}),
-				]);
-			}
-		} catch (error) {
-			failure ??= error;
-			throw failure;
+							),
+						ms,
+					);
+				}),
+			]);
 		} finally {
 			clearTimeout(timer);
 		}
 	}
 
-	const put = (chunk: Uint8Array, what: string) =>
-		call(what, async () => {
-			await sink.write(chunk);
-			written.bytes += chunk.length;
-		});
+	/** One sink call, timed; its failure is the writer's failure from now on. */
+	async function call(what: string, run: () => Promise<void>): Promise<void> {
+		if (failure !== undefined) throw failure;
+		const work = run();
+		inflight = work.then(
+			() => {},
+			() => {},
+		);
+		try {
+			await timed(work, stallMs, what);
+		} catch (error) {
+			failure ??= error;
+			throw failure;
+		}
+	}
+
+	const put = async (chunk: Uint8Array, what: string) => {
+		await call(what, () => sink.write(chunk));
+		written.bytes += chunk.length;
+	};
 
 	return {
 		target,
@@ -283,21 +306,27 @@ export function pcapngWriter(
 			if (state !== "new") {
 				throw misuse(`${target} was already opened.`);
 			}
+			// Every block that open writes is made first: an option too long
+			// for pcapng is refused before the sink is touched.
+			const headers = [
+				sectionHeaderBlock(`tzsp-sniff ${VERSION}`),
+				...listeners.map(interfaceBlock),
+			];
 			state = "open";
 			listeners.forEach((l, i) => {
 				interfaces.set(l, i);
 			});
+			touched = true;
 			if (sink.open) {
 				const open = sink.open;
 				await call("opening it", () => open.call(sink));
 			}
-			opened = true;
-			await put(
-				sectionHeaderBlock(`tzsp-sniff ${VERSION}`),
-				"writing the section header",
-			);
-			for (const l of listeners)
-				await put(interfaceBlock(l), "writing an interface block");
+			for (const [i, block] of headers.entries()) {
+				await put(
+					block,
+					i === 0 ? "writing the section header" : "writing an interface block",
+				);
+			}
 		},
 		async write(capture) {
 			if (state !== "open") {
@@ -323,11 +352,19 @@ export function pcapngWriter(
 		},
 		async close() {
 			if (state === "closed") return;
-			const wasOpen = opened;
 			state = "closed";
-			if (!wasOpen || !sink.close) {
+			if (!touched || !sink.close) {
 				if (failure !== undefined) throw failure;
 				return;
+			}
+			// A call that timed out may still be running (a slow open that
+			// will hold a file): let it settle before closing the sink.
+			if (inflight) {
+				await timed(inflight, stallMs, "finishing its last call").catch(
+					(error: unknown) => {
+						failure ??= error;
+					},
+				);
 			}
 			const close = sink.close;
 			// After a failure the sink is still closed, but the first failure is

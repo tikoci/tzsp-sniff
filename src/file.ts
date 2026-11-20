@@ -1,19 +1,28 @@
 /**
  * The file `--write` saves to (DESIGN.md, "Requirement, file lifecycle"):
- * created exclusively, owner-only where the OS has permissions, and written
- * block by block with no buffer in the process, so whatever the capture
- * handed over is in the OS when it stops, however it stops.
+ * a new inode, owner-only where the OS has permissions, written block by
+ * block with no buffer in the process, so whatever the capture handed over
+ * is in the OS when it stops, however it stops.
  */
-import { constants } from "node:fs";
-import { type FileHandle, open } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import {
+	type FileHandle,
+	lstat,
+	open as openFile,
+	rename,
+	unlink,
+} from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { TzspSniffError } from "./errors.ts";
 import type { ByteSink } from "./pcapng.ts";
 
 export interface FileSinkOptions {
 	/**
-	 * Replace a file that is already there. It is truncated in place, made
-	 * owner-only first, and never followed through a symbolic link where the
-	 * OS can refuse one (`O_NOFOLLOW`).
+	 * Replace a regular file that is already there. The capture is written
+	 * to a new owner-only file beside it, which is renamed over the old one
+	 * before any packet is written: a reader that had the old file open keeps
+	 * reading the old contents, and a symbolic link, a pipe or a device at
+	 * the path is refused rather than written through.
 	 */
 	overwrite?: boolean;
 }
@@ -24,8 +33,15 @@ export interface FileSink extends ByteSink {
 	close(): Promise<void>;
 }
 
+/** For tests only, not part of the package's API: the file opener. */
+export interface FileSinkInternals {
+	open?: typeof openFile;
+}
+
 /** Owner read and write: captures can hold credentials and private traffic. */
 const OWNER_ONLY = 0o600;
+
+const codeOf = (error: unknown) => (error as { code?: unknown }).code;
 
 const failed = (message: string, cause: unknown) =>
 	new TzspSniffError(
@@ -44,44 +60,64 @@ const failed = (message: string, cause: unknown) =>
 export function fileSink(
 	path: string,
 	options: FileSinkOptions = {},
+	internals: FileSinkInternals = {},
 ): FileSink {
+	const open = internals.open ?? openFile;
 	let handle: FileHandle | undefined;
+
+	/** Create `at` new, owner-only; an existing file is `write/exists`. */
+	async function create(at: string): Promise<FileHandle> {
+		try {
+			return await open(at, "wx", OWNER_ONLY);
+		} catch (error) {
+			if (codeOf(error) === "EEXIST") {
+				throw new TzspSniffError(
+					"write/exists",
+					`${at} already exists; --write does not replace a file unless asked.`,
+					"Give another path, or add --overwrite to replace it.",
+					{ cause: error },
+				);
+			}
+			throw failed(`Could not create ${at}`, error);
+		}
+	}
+
+	/** A new file beside `path`, renamed over it: never the old inode. */
+	async function replace(): Promise<FileHandle> {
+		let stat: Awaited<ReturnType<typeof lstat>> | undefined;
+		try {
+			stat = await lstat(path);
+		} catch (error) {
+			if (codeOf(error) !== "ENOENT")
+				throw failed(`Could not check ${path}`, error);
+		}
+		if (stat && !stat.isFile()) {
+			throw new TzspSniffError(
+				"write/failed",
+				`${path} is ${stat.isSymbolicLink() ? "a symbolic link" : stat.isDirectory() ? "a directory" : "not a regular file"}; --overwrite replaces only a regular file.`,
+				"Give the path of a regular file, or a new one.",
+			);
+		}
+		const temp = join(
+			dirname(path),
+			`.${basename(path)}.${randomBytes(6).toString("hex")}.tzsp-sniff`,
+		);
+		const h = await create(temp);
+		try {
+			await rename(temp, path);
+		} catch (error) {
+			await h.close().catch(() => {});
+			await unlink(temp).catch(() => {});
+			throw failed(`Could not replace ${path}`, error);
+		}
+		return h;
+	}
+
 	return {
 		path,
 		async open() {
 			if (handle) return;
-			try {
-				if (options.overwrite) {
-					// Not O_TRUNC: the old contents go only once the file is
-					// owner-only, so they are never readable by others as new
-					// data arrives.
-					const flags =
-						constants.O_WRONLY |
-						constants.O_CREAT |
-						(constants.O_NOFOLLOW ?? 0);
-					handle = await open(path, flags, OWNER_ONLY);
-					const stat = await handle.stat();
-					if (stat.isFile()) {
-						await handle.chmod(OWNER_ONLY);
-						await handle.truncate(0);
-					}
-				} else {
-					handle = await open(path, "wx", OWNER_ONLY);
-				}
-			} catch (error) {
-				const h = handle;
-				handle = undefined;
-				await h?.close().catch(() => {});
-				if ((error as { code?: unknown }).code === "EEXIST") {
-					throw new TzspSniffError(
-						"write/exists",
-						`${path} already exists; --write does not replace a file unless asked.`,
-						"Give another path, or add --overwrite to replace it.",
-						{ cause: error },
-					);
-				}
-				throw failed(`Could not create ${path}`, error);
-			}
+			handle = options.overwrite ? await replace() : await create(path);
 		},
 		async write(chunk) {
 			const h = handle;

@@ -345,7 +345,9 @@ its `tools` commands return; `tools btest` has the same question there.
 control records, unsupported records, invalid datagrams (truncated or
 malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
 dropped by the queue, datagrams still queued when a limit stopped the
-capture (`unread`), and packets reported; all but the first add up to it.
+capture (`unread`), datagrams read whose save to `--write` or `--format
+pcapng` failed (`unsaved`, at most one: the capture ends there), and
+packets reported; all but the first add up to it.
 The summary also says what stopped the capture (`stoppedBy`: `count`,
 `duration`, `idle`, `interrupt` or `error`): whichever
 ended intake first, and nothing later changes it. `--count`
@@ -360,7 +362,7 @@ different fix:
 | Case | Warning | Tip names |
 | --- | --- | --- |
 | nothing arrived | `capture/no-datagrams` | `tzsp-sniff setup`, and checking the router's sniffer is running |
-| only control, unsupported or malformed records | `capture/no-frames` | `--detail full` to see them |
+| only control, unsupported or malformed records | `capture/no-frames` | `--detail full` (in text or jsonl) to see them |
 | frames arrived, filters removed all | `capture/all-filtered` | the filter flags in effect |
 
 **Decided:** `--expect N` turns fewer than N packets reported into exit 1
@@ -437,20 +439,33 @@ pins that version).
   capture loop and the bounded queue absorbs the burst (drops are
   counted); a sink call that takes longer than 30 s is `write/stalled`.
   stdout's own sink times itself out (`output/stalled`), so the writer
-  behind `--format pcapng` adds no timer.
+  behind `--format pcapng` adds no timer. A call that timed out may still
+  finish: `close` waits for it (up to another 30 s) before closing the
+  sink, so a slow open's file is closed too, and `written` counts only
+  blocks the sink acknowledged in time. An option over 65535 bytes (a
+  long label) is `write/invalid-option` before the sink is touched.
 - **The writers sit in `openCapture()`**: `write` (every datagram the
   capture reads, before filters) and `writeReported` (each datagram the
   stream reports: the frames the filters keep, and every control,
-  unsupported and invalid record). A datagram is counted, then written,
-  then handed over, so the counters add up when a write fails and a record
-  the caller sees is already in the file. A writer opens after the bind (a
-  port that fails leaves no file) and before the header (a file that
-  cannot be made opens no capture), and closes on every way out; a close
-  failure makes the summary an error, or rejects `return()` when the
-  caller stopped early. A sink error that is a `TzspSniffError` ends the
-  capture with it in the summary; any other is thrown from the iteration,
-  as a consumer's own error is (the CLI's closed stdout is one: it stops
-  quietly, as in text).
+  unsupported and invalid record). A datagram is saved, then counted, then
+  handed over: a record the caller sees is already in the file, and a
+  datagram whose save failed is counted once, as `unsaved` (cross-review
+  of 52e53d5). A write failure does not change `stoppedBy` when a limit or
+  signal had already ended intake. A writer opens after the bind (a port
+  that fails leaves no file) and before the header (a file that cannot be
+  made opens no capture), with the limits already running from the bind;
+  a failed open closes only the writers this capture opened, so a writer
+  another capture holds is left to it. Writers close on every way out:
+  when intake ends and the datagram being saved is saved, even while
+  nobody reads or the reader is paused, and at the end of the stream,
+  `return()` and `throw()`, each after a write in flight. A close failure
+  makes the summary an error, or rejects `return()` when the caller
+  stopped early. A sink error that is a `TzspSniffError` ends the capture
+  with it in the summary; any other is thrown from the iteration, as a
+  consumer's own error is (the CLI's closed stdout is one: it stops
+  quietly, as in text), unless a writer then fails to close, whose coded
+  error is thrown instead, so the CLI exits 1 for a file that is not
+  whole.
 - **The header names the file** (`write`), and the summary counts what
   was written (`written`: datagrams and bytes, headers included), so the
   first look says whether the file is worth reading.
@@ -458,7 +473,10 @@ pins that version).
   exit 2, before the bind), and with `--fields`, `--stats` or `--detail`
   (`cli/flag-conflict`): none of them changes a capture file, so they are
   refused rather than ignored. Its header, warnings, tips and summary go to
-  stderr as text. `--write -` is refused with a fix naming it.
+  stderr as text. `--write -` is refused with a fix naming it, and so is
+  a `--write` path that is the file stdout or stderr is redirected to
+  (`cli/write-to-output`, by device and inode), since both would write
+  the same inode.
 
 **Requirement, file lifecycle:** the file is created exclusively (an
 existing file is an error naming `--overwrite`), with owner-only
@@ -470,14 +488,19 @@ non-zero exit, even if packets were already printed. The examples use a
 path in the working directory, not a shared `/tmp`.
 
 How it is met (`src/file.ts`): created with `O_CREAT|O_EXCL` and mode
-0600 (`write/exists` when it is there); `--overwrite` opens it without
-truncating and with `O_NOFOLLOW` where the OS has it, makes a regular file
-0600, and only then truncates it, so old contents are never readable by
-others while new ones arrive, and a symbolic link is refused rather than
-followed. Each block goes to the OS with its own `write()`, with no
-buffer in the process, so whatever the capture handed over survives the
-process; the file is not `fsync`ed. Nothing touches the disk until the
-ports are bound. On Windows the mode is only the read-only bit.
+0600 (`write/exists` when it is there). `--overwrite` never opens the old
+file: it refuses anything at the path that is not a regular file (a
+symbolic link, a directory, a pipe, a device: `write/failed`), creates a
+new 0600 file beside it with `O_EXCL`, and renames it over the old one
+before the first block. A process that had the old file open keeps
+reading the old inode and never sees the capture, and a pipe cannot block
+the open (cross-review of 52e53d5: changing the mode does not revoke a
+descriptor opened before, and `O_NOFOLLOW` is missing on Windows). Each
+block goes to the OS with its own `write()`, with no buffer in the
+process, so whatever the capture handed over survives the process; the
+file is not `fsync`ed. Nothing touches the disk until the ports are bound.
+On Windows the mode is only the read-only bit, and the rename replaces the
+old file there too.
 
 ### `decode` input
 

@@ -5,6 +5,7 @@
  * `.env`, which Bun loads, changes nothing (DESIGN.md, "Decided: Node and
  * npx").
  */
+import { fstatSync } from "node:fs";
 import { type Io, main } from "./main.ts";
 import { streamSink, terminalStream } from "./sink.ts";
 
@@ -45,6 +46,14 @@ const io: Io = {
 	stderr,
 	signal: interrupt.signal,
 	stdoutTerminal: process.stdout.isTTY === true,
+	outputFiles: [1, 2].flatMap((fd) => {
+		try {
+			const s = fstatSync(fd, { bigint: true });
+			return s.isFile() ? [{ dev: s.dev, ino: s.ino }] : [];
+		} catch {
+			return [];
+		}
+	}),
 };
 
 let code = 1;

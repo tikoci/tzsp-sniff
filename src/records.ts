@@ -138,6 +138,11 @@ export interface Counters {
 	dropped: number;
 	/** Datagrams still queued when the capture stopped. */
 	unread: number;
+	/**
+	 * Datagrams read but neither counted above nor reported, because saving
+	 * them (`--write`, `--format pcapng`) failed; the capture ended there.
+	 */
+	unsaved: number;
 }
 
 export interface Ranked<T> {

@@ -8,16 +8,20 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 
 ### Added
 
-- `--write <file>`: save every datagram as received, before filters and
-  whatever `--format`, `--detail` or `--stats` print, as pcapng with link
+- `--write <file>`: save every datagram the capture reads, as received,
+  before filters and whatever `--format`, `--detail` or `--stats` print
+  (the summary's `dropped` and `unread` count what it never read), as pcapng with link
   type TZSP (128): one interface per listener (its label and port), the
   arrival time on each block, and the UDP peer as the block's comment
   (`peer=<address>:<port>`). Wireshark and TShark open it. The file is
   created new and owner-only (an existing one is `write/exists`;
-  `--overwrite` replaces it and makes it owner-only), written block by
-  block so Ctrl-C leaves a valid file, and named in the header; the summary
-  gains `written` (datagrams and bytes). A write or close failure ends the
-  capture with `write/failed` (or `write/stalled`) and exit 1.
+  `--overwrite` replaces a regular file with a new owner-only one), written
+  block by block so Ctrl-C leaves a valid file, and named in the header;
+  the summary gains `written` (datagrams and bytes). A write or close
+  failure ends the capture with `write/failed` (or `write/stalled`) and
+  exit 1, and the datagram being saved counts in the new `unsaved` counter.
+  The file stdout or stderr is redirected to is refused
+  (`cli/write-to-output`).
 - `--format pcapng`: the same format on stdout, with filters applied
   (control and invalid records included). Refused on a terminal
   (`cli/binary-to-terminal`) and with `--fields`, `--stats` or `--detail`.

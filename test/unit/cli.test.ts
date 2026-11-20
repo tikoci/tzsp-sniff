@@ -23,6 +23,7 @@ import {
 	until,
 } from "./helpers.ts";
 import { readPcapng } from "./pcapng-reader.ts";
+import type { ByteSink } from "../../src/pcapng.ts";
 
 const STREAM = fixture("7.25.1-x86-sniffer-stream");
 const REQUEST = STREAM[0] as string;
@@ -947,31 +948,91 @@ describe("--write and --format pcapng", () => {
 		expect(readPcapng(readFileSync(path)).packets).toHaveLength(1);
 	});
 
-	// /dev/full fails every write with ENOSPC: a full disk.
-	test.skipIf(process.platform !== "linux")(
-		"a write that fails after packets were printed: exit 1, write/failed on stderr",
-		async () => {
-			const m = memoryIo();
-			// --overwrite: /dev/full exists. The headers fail at once, so the
-			// capture never starts.
-			expect(
-				await main(
-					[
-						"--port",
-						"0",
-						"--count",
-						"1",
-						"--write",
-						"/dev/full",
-						"--overwrite",
-					],
-					m.io,
-				),
-			).toBe(1);
-			expect(m.stderr()).toContain("error write/failed");
-			expect(m.stderr()).toContain("/dev/full");
-		},
-	);
+	/** A --write sink in memory that fails its nth write, or its close. */
+	const failingSink = (o: { failAt?: number; closeFails?: boolean }) => {
+		let writes = 0;
+		const sink: ByteSink = {
+			async write() {
+				writes += 1;
+				if (writes === o.failAt) {
+					throw new TzspSniffError(
+						"write/failed",
+						"Writing c.pcapng failed: ENOSPC: no space left on device",
+						"Check the free space.",
+					);
+				}
+			},
+			async close() {
+				if (o.closeFails) {
+					throw new TzspSniffError(
+						"write/failed",
+						"Closing c.pcapng failed: EIO: i/o error",
+					);
+				}
+			},
+		};
+		return sink;
+	};
+
+	test("a write that fails after packets were printed: exit 1, write/failed on stderr", async () => {
+		const m = memoryIo();
+		// The section header, the interface and the first packet block pass.
+		m.io.writeSink = () => failingSink({ failAt: 4 });
+		const run = main(["--port", "0", "--follow", "--write", "c.pcapng"], m.io);
+		await until(() => m.err.length > 0);
+		const port = boundPort(m.stderr());
+		await send(port, [REQUEST]);
+		await until(() => m.out.length > 0);
+		await send(port, [REQUEST]);
+		expect(await run).toBe(1);
+		expect(m.out).toHaveLength(1);
+		expect(m.stderr()).toContain("error write/failed: Writing c.pcapng failed");
+		expect(m.stderr()).toMatch(/summary: error.* unsaved 1/s);
+		await expectPortFree(port);
+	});
+
+	test("a closed stdout does not hide a capture file that failed to close: exit 1", async () => {
+		const m = memoryIo({ stdoutFailsAfter: 2 });
+		m.io.writeSink = () => failingSink({ closeFails: true });
+		const run = main(
+			["--port", "0", "--follow", "--format", "pcapng", "--write", "c.pcapng"],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(1);
+		expect(m.stderr()).toContain("error write/failed: Closing c.pcapng failed");
+	});
+
+	test("--format pcapng with only control records: the warning's fix works with pcapng", async () => {
+		const m = memoryIo();
+		const run = main(
+			["--port", "0", "--idle", "200ms", "--format", "pcapng"],
+			m.io,
+		);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), ["01040000"]);
+		expect(await run).toBe(0);
+		expect(m.stderr()).toContain("warning capture/no-frames");
+		expect(m.stderr()).toContain(
+			"fix: Run again with --format text or jsonl and --detail full",
+		);
+	});
+
+	test("--write naming the file stdout goes to: exit 2 before the bind", async () => {
+		const path = fresh();
+		writeFileSync(path, "");
+		const { statSync } = await import("node:fs");
+		const s = statSync(path, { bigint: true });
+		const m = memoryIo();
+		m.io.outputFiles = [{ dev: s.dev, ino: s.ino }];
+		expect(
+			await main(["--count", "1", "--write", path, "--overwrite"], m.io),
+		).toBe(2);
+		expect(m.stderr()).toContain("error cli/write-to-output");
+		// Another file is fine.
+		expect(codeOf(() => planOf(["--write", fresh()]))).toBeUndefined();
+	});
 
 	test("--format pcapng: the reported datagrams on stdout; the start line and summary on stderr", async () => {
 		const m = memoryIo();

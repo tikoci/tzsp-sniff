@@ -11,7 +11,7 @@
  * other, so a runner image that moves TShark shows here first. CI's `tshark`
  * job sets both.
  */
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,6 +73,19 @@ describe.skipIf(!LIVE)("TShark reads tzsp-sniff's pcapng", () => {
 	afterAll(() => rmSync(dir, { recursive: true, force: true }));
 	const path = join(dir, "capture.pcapng");
 
+	// Made once, for every test, so any one of them runs alone.
+	beforeAll(async () => {
+		const w = pcapngWriter(fileSink(path), { target: path });
+		await w.open(LISTENERS);
+		await w.write(
+			capture(1, REQUEST, LISTENERS[0] as BoundListener, "10.0.2.15"),
+		);
+		await w.write(
+			capture(2, CONTROL, LISTENERS[1] as BoundListener, "fe80::1"),
+		);
+		await w.close();
+	});
+
 	test("as a non-root user, at the pinned version", async () => {
 		if (process.platform !== "win32") expect(process.getuid?.()).not.toBe(0);
 		const { stdout, code } = await tshark(["--version"]);
@@ -84,16 +97,6 @@ describe.skipIf(!LIVE)("TShark reads tzsp-sniff's pcapng", () => {
 	});
 
 	test("an inner field, TZSP's fields, the interface and the peer, per packet", async () => {
-		const w = pcapngWriter(fileSink(path), { target: path });
-		await w.open(LISTENERS);
-		await w.write(
-			capture(1, REQUEST, LISTENERS[0] as BoundListener, "10.0.2.15"),
-		);
-		await w.write(
-			capture(2, CONTROL, LISTENERS[1] as BoundListener, "fe80::1"),
-		);
-		await w.close();
-
 		const fields = [
 			"frame.number",
 			"frame.interface_name",

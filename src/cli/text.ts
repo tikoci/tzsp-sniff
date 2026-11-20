@@ -152,7 +152,7 @@ export function summaryText(s: SummaryRecord): string {
 	const c = s.counters;
 	const lines = [
 		`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
-		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
+		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}${c.unsaved ? `, unsaved ${c.unsaved}` : ""}`,
 	];
 	if (s.written) {
 		lines.push(

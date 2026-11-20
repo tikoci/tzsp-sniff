@@ -75,17 +75,20 @@ summary in JSONL or with `--stats`, raising `--detail` as far as they need. To t
 write, so a quiet `--follow | head` waits for the next datagram.
 `tzsp-sniff --help` has every flag.
 
-`--write <file>` saves every datagram as it arrived, before filters and
-whatever the output prints, as a pcapng file with link type TZSP (128):
+`--write <file>` saves every datagram the capture reads, as it arrived,
+before filters and whatever the output prints (the summary's `dropped` and
+`unread` count the ones it never read), as a pcapng file with link type TZSP (128):
 each packet block holds the whole TZSP datagram (tags, control and
 malformed records included), one interface per listener carries its label
 and port, and each packet's comment names its UDP peer
 (`peer=10.0.2.15:37008`). Wireshark and TShark open it as it is (checked in
-CI on TShark 4.2.2). The file must not exist (`--overwrite` replaces it), is
-owner-only where the OS has permissions, and is written block by block, so
-Ctrl-C leaves a valid file. The header names the file, the summary counts
+CI on TShark 4.2.2). The file must not exist (`--overwrite` replaces a
+regular file with a new one, so a reader of the old file never sees the
+capture), is owner-only where the OS has permissions, and is written block
+by block, so Ctrl-C leaves a valid file. It cannot be the file stdout or
+stderr is redirected to. The header names the file, the summary counts
 what was written, and a failed write ends the capture with
-`write/failed` and exit 1. `--format pcapng` writes the same format to
+`write/failed` and exit 1 (the datagram it was saving counts as `unsaved`). `--format pcapng` writes the same format to
 stdout with the filters applied, for a pipe or a redirect (it is refused on
 a terminal, and with `--fields`, `--stats` or `--detail`); the start line,
 warnings and the summary go to stderr.

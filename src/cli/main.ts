@@ -9,6 +9,7 @@
  * 130 on a second Ctrl-C). 130 is the shell's code for SIGINT, so a caller
  * cannot mistake a capture that never started for an empty one.
  */
+import { statSync } from "node:fs";
 import { isIP } from "node:net";
 import {
 	type CaptureOptions,
@@ -16,7 +17,7 @@ import {
 	openCapture,
 } from "../capture.ts";
 import { TzspSniffError } from "../errors.ts";
-import { fileSink } from "../file.ts";
+import { type FileSinkOptions, fileSink } from "../file.ts";
 import {
 	createFilter,
 	type FilterSpec,
@@ -24,7 +25,7 @@ import {
 	senderAddress,
 } from "../filter.ts";
 import type { ListenerSpec } from "../listen.ts";
-import { pcapngWriter } from "../pcapng.ts";
+import { type ByteSink, pcapngWriter } from "../pcapng.ts";
 import {
 	DETAILS,
 	type Detail,
@@ -63,6 +64,13 @@ export interface Io {
 	stderr: Sink;
 	/** stdout is a terminal: `--format pcapng` is refused there. */
 	stdoutTerminal?: boolean;
+	/**
+	 * The files stdout and stderr are redirected to, by device and inode:
+	 * `--write` refuses one of them.
+	 */
+	outputFiles?: readonly { dev: bigint; ino: bigint }[];
+	/** For tests: makes `--write`'s sink in place of {@link fileSink}. */
+	writeSink?: (path: string, options: FileSinkOptions) => ByteSink;
 	/** Interrupt: ends the capture as `interrupted`, with the summary written. */
 	signal?: AbortSignal;
 }
@@ -470,8 +478,10 @@ export async function main(argv: readonly string[], io: Io): Promise<number> {
 		return await run(argv, io);
 	} catch (error) {
 		if (error instanceof OutputClosedError) return 0;
-		// stdout failed or stalled: say so where it can still be read.
-		if (error instanceof TzspSniffError && error.code.startsWith("output/")) {
+		// stdout failed or stalled, or the capture file did not close whole
+		// while the stream had already ended without a summary: say so where
+		// it can still be read.
+		if (error instanceof TzspSniffError) {
 			await io.stderr.write(errorText(error));
 			return 1;
 		}
@@ -497,6 +507,24 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 				"Redirect it (> capture.pcapng), pipe it (| tshark -r -), or use --write capture.pcapng with a text format.",
 			);
 		}
+		if (checked.write && io.outputFiles?.length) {
+			let stat: { dev: bigint; ino: bigint } | undefined;
+			try {
+				stat = statSync(checked.write.path, { bigint: true });
+			} catch {
+				// Not there yet: nothing writes to it.
+			}
+			if (
+				stat &&
+				io.outputFiles.some((o) => o.dev === stat.dev && o.ino === stat.ino)
+			) {
+				throw new TzspSniffError(
+					"cli/write-to-output",
+					`--write ${checked.write.path} is the file stdout or stderr is redirected to; the capture and the output would overwrite each other.`,
+					"Redirect the output elsewhere, or give --write another path.",
+				);
+			}
+		}
 		planned = args.flags.has("version") ? "version" : checked;
 	} catch (error) {
 		if (!(error instanceof TzspSniffError)) throw error;
@@ -511,8 +539,10 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 	const { options, format, tips, fields, write } = planned;
 	if (io.signal) options.signal = io.signal;
 	if (write) {
+		const sinkOptions = { overwrite: write.overwrite };
 		options.write = pcapngWriter(
-			fileSink(write.path, { overwrite: write.overwrite }),
+			io.writeSink?.(write.path, sinkOptions) ??
+				fileSink(write.path, sinkOptions),
 			{ target: write.path },
 		);
 	}

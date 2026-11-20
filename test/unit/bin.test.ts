@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import {
 	closeSync,
 	mkdtempSync,
+	openSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -261,6 +262,39 @@ describe("tzsp-sniff executable", () => {
 				clearTimeout(killer);
 				proc.kill("SIGKILL");
 			}
+		});
+
+		test("--write naming the file stdout is redirected to: exit 2, the file left alone", async () => {
+			const path = join(dir, "redirected.pcapng");
+			const fd = openSync(path, "w");
+			try {
+				const proc = Bun.spawn(
+					[
+						process.execPath,
+						"--no-env-file",
+						BIN,
+						"--count",
+						"1",
+						"--write",
+						path,
+						"--overwrite",
+					],
+					{ env, stdout: fd, stderr: "pipe" },
+				);
+				const killer = setTimeout(() => proc.kill("SIGKILL"), CHILD_MS);
+				try {
+					expect(await proc.exited).toBe(2);
+					expect(await new Response(proc.stderr).text()).toContain(
+						"error cli/write-to-output",
+					);
+				} finally {
+					clearTimeout(killer);
+					proc.kill("SIGKILL");
+				}
+			} finally {
+				closeSync(fd);
+			}
+			expect(readFileSync(path).length).toBe(0);
 		});
 
 		// libc pseudo-terminals: Linux and macOS.

@@ -90,6 +90,11 @@ export const CODES = {
 		kind: "error",
 		summary: "A positional argument the command does not take.",
 	},
+	"cli/write-to-output": {
+		kind: "error",
+		summary:
+			"--write names the file stdout or stderr already goes to; the two would overwrite each other.",
+	},
 	"cli/binary-to-terminal": {
 		kind: "error",
 		summary: "--format pcapng would write binary to a terminal.",
