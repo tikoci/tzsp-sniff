@@ -14,7 +14,7 @@ rather than as a general sniffer.
 
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
-> ICMP, UDP and TCP, and saves captures as pcapng (`--write`, `--format
+> ICMP, UDP, TCP and LLDP, and saves captures as pcapng (`--write`, `--format
 > pcapng`); `decode` reads them again, and the files RouterOS saves;
 > `dissectors` lists what is decoded. `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
 
@@ -144,8 +144,9 @@ once the input is read.
 `tzsp-sniff dissectors` lists each protocol the tool decodes, how it is
 reached (the frame's link type, an EtherType, an IP protocol) and every field
 its layer carries at `--detail layers`, with its type and whether it can be
-absent. A field not marked optional is in every layer that has `fields`. A
-layer has no `fields` when the fixed part of its header is cut short or
+absent. A field not marked optional is in every layer that has `fields`,
+and a list item's field (`extensions[].header`) in every item of its list.
+A layer has no `fields` when the fixed part of its header is cut short or
 unreadable; one whose options are cut short keeps them, with a `problem`. It
 reads the same registry the decoder dispatches through, so the list is what
 runs. `--format jsonl` prints one `dissector` record per

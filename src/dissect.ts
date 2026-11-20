@@ -1,6 +1,6 @@
 /**
  * Frame dissectors: Ethernet, 802.1Q and 802.1ad, ARP, IPv4, IPv6, ICMP,
- * ICMPv6, UDP and TCP (DESIGN.md, "Dissectors", order 1; LLDP is next).
+ * ICMPv6, UDP, TCP and LLDP (DESIGN.md, "Dissectors", order 1).
  *
  * Pure and bounded, like `parseTzsp`: bytes in, layers out, no I/O, and it
  * never throws. Each layer keeps its span in the frame, so its bytes can be
@@ -46,6 +46,13 @@ export {
 	type Ipv6Layer,
 	MAX_IPV6_EXTENSIONS,
 } from "./dissect/ipv6.ts";
+export {
+	type LldpFields,
+	type LldpLayer,
+	type LldpManagementAddress,
+	type LldpOtherTlv,
+	MAX_LLDP_TLVS,
+} from "./dissect/lldp.ts";
 export {
 	type DissectorInfo,
 	type DissectorMatch,

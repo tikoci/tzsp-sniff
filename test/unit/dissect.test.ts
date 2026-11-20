@@ -7,6 +7,7 @@ import {
 	formatIpv6,
 	type Layer,
 	MAX_IPV6_EXTENSIONS,
+	MAX_LLDP_TLVS,
 	MAX_VLAN_TAGS,
 } from "../../src/dissect.ts";
 import { packetLine, viewPacket } from "../../src/records.ts";
@@ -23,10 +24,14 @@ import {
 	h16,
 	ipv4,
 	ipv6,
+	lldpFixture,
+	lldpFixtureIndex,
 	MAC_A,
 	MAC_B,
 	tcp,
+	tlv,
 	udp,
+	utf8,
 } from "./helpers.ts";
 
 /** Declared fields, as `name` or `name[].item`, with their type and whether they may be absent. */
@@ -297,8 +302,8 @@ describe("dissect: Ethernet and VLAN", () => {
 	});
 
 	test("an EtherType with no dissector is data, not a problem", () => {
-		const d = dissect(bytes(eth(0x88cc, "0207")));
-		expect(layer(d, "ethernet").fields?.etherType).toBe("0x88cc");
+		const d = dissect(bytes(eth(0x88b5, "0207")));
+		expect(layer(d, "ethernet").fields?.etherType).toBe("0x88b5");
 		expect(d.protocols).toEqual(["ethernet", "data"]);
 		expect(d.problem).toBeUndefined();
 	});
@@ -725,8 +730,8 @@ describe("dissect: cross-review vectors (#20)", () => {
 		expect(packetLine(dissect(bytes(eth(0x8100, "000a0003424203"))))).toBe(
 			`vlan 10 ${MAC_A} > ${MAC_B} llc len=21`,
 		);
-		expect(packetLine(dissect(bytes(eth(0x8100, "000a88cc0207"))))).toBe(
-			`vlan 10 ${MAC_A} > ${MAC_B} ethertype 0x88cc len=20`,
+		expect(packetLine(dissect(bytes(eth(0x8100, "000a88b50207"))))).toBe(
+			`vlan 10 ${MAC_A} > ${MAC_B} ethertype 0x88b5 len=20`,
 		);
 	});
 
@@ -993,10 +998,521 @@ describe("dissect: ICMP, UDP, TCP", () => {
 	});
 });
 
+const LLDP_MULTICAST = "01:80:c2:00:00:0e";
+const CHASSIS = tlv(1, "04020000000001");
+const PORT = tlv(2, `05${utf8("ether1")}`);
+const TTL = tlv(3, "0079");
+const END = tlv(0, "");
+const lldpFrame = (...tlvs: string[]) =>
+	bytes(eth(0x88cc, tlvs.join(""), LLDP_MULTICAST));
+const lldpOf = (...tlvs: string[]) => {
+	const d = dissect(lldpFrame(...tlvs));
+	return { d, l: layer(d, "lldp") };
+};
+
+describe("dissect: LLDP", () => {
+	// test/lab/lldp/ (REPORT.md): what RouterOS sends with discovery as
+	// booted, with lldp-vlan-info, lldp-mac-phy-config and
+	// lldp-max-frame-size on, and with identity "lab-café" (UTF8_IDENTITY).
+	test("RouterOS's own LLDPDUs decode whole, with no problem", () => {
+		const index = lldpFixtureIndex();
+		expect(index.map((e) => e.file).sort()).toEqual(
+			["7.24.6-arm64", "7.24.6-x86", "7.25.1-arm64", "7.25.1-x86"].flatMap(
+				(s) =>
+					["default", "identity-utf8", "optional-tlvs"].map(
+						(e) => `${s}-${e}.hex`,
+					),
+			),
+		);
+		for (const entry of index) {
+			for (const hex of lldpFixture(entry.file)) {
+				const frame = frameOf(hex);
+				const d = dissect(frame);
+				expect(d.protocols).toEqual(["ethernet", "lldp"]);
+				expect(d.problem).toBeUndefined();
+				expect(layer(d, "ethernet").fields?.dst).toBe(LLDP_MULTICAST);
+				const l = layer(d, "lldp");
+				// End is the last TLV RouterOS sends: nothing follows it.
+				expect(l.offset + l.length).toBe(frame.length);
+				const f = l.fields;
+				expect(f).toMatchObject({
+					chassisIdSubtype: "mac-address",
+					chassisId: entry.mac,
+					portIdSubtype: "interface-name",
+					portId: "ether1",
+					ttl: 121,
+					portDescription: "ether1",
+					systemName:
+						entry.experiment === "identity-utf8" ? "lab-café" : entry.identity,
+					capabilities: ["bridge", "router"],
+					enabledCapabilities: ["router"],
+				});
+				expect(f?.systemDescription).toStartWith(
+					`MikroTik RouterOS ${entry.routeros} `,
+				);
+				expect(f?.managementAddresses).toEqual([
+					expect.objectContaining({
+						familyName: "ipv4",
+						address: "10.0.2.15",
+						interfaceNumberingName: "ifIndex",
+					}),
+					expect.objectContaining({
+						familyName: "ipv6",
+						address: expect.stringMatching(/^fe80::/),
+						interfaceNumberingName: "ifIndex",
+					}),
+				]);
+				const named = f?.otherTlvs.map((t) => `${t.ouiName}/${t.subtypeName}`);
+				expect(named).toEqual(
+					entry.experiment === "default"
+						? ["tia-lldp-med/capabilities"]
+						: [
+								"tia-lldp-med/capabilities",
+								"ieee-802.3/mac-phy-config-status",
+								"ieee-802.3/max-frame-size",
+								"ieee-802.1/port-and-protocol-vlan-id",
+							],
+				);
+				expect(packetLine(d)).toEndWith(
+					`> ${LLDP_MULTICAST} lldp chassis ${entry.mac} port ether1 ttl 121 name ${f?.systemName}`,
+				);
+			}
+		}
+	});
+
+	test("each id subtype is read as its kind", () => {
+		const ids = (chassis: string, port: string) =>
+			lldpOf(tlv(1, chassis), tlv(2, port), TTL, END).l.fields;
+		expect(ids("05010a000001", "03020000000002")).toMatchObject({
+			chassisIdSubtype: "network-address",
+			chassisId: "10.0.0.1",
+			portIdSubtype: "mac-address",
+			portId: "02:00:00:00:00:02",
+		});
+		expect(
+			ids("050220010db8000000000000000000000001", `07${utf8("p1")}`),
+		).toMatchObject({
+			chassisId: "2001:db8::1",
+			portIdSubtype: "locally-assigned",
+			portId: "p1",
+		});
+		expect(ids(`01${utf8("slot 1")}`, "060102")).toMatchObject({
+			chassisIdSubtype: "chassis-component",
+			chassisId: "slot 1",
+			portIdSubtype: "agent-circuit-id",
+			portId: "0102",
+		});
+		// A family other than IPv4, IPv6 and MAC, and a reserved subtype, are hex.
+		expect(ids("0503aabb", "06aabb")).toMatchObject({
+			chassisId: "aabb",
+			portIdSubtype: "agent-circuit-id",
+			portId: "aabb",
+		});
+		expect(ids("09aabb", "00cc")).toMatchObject({
+			chassisIdSubtype: "subtype-9",
+			chassisId: "aabb",
+			portIdSubtype: "subtype-0",
+			portId: "cc",
+		});
+	});
+
+	test("a MAC or address whose length does not fit is malformed (tlv-length), and kept raw", () => {
+		const cases: [string, string][] = [
+			["chassisId", tlv(1, "0501")],
+			["chassisId", tlv(1, "05010a0000")],
+			["chassisId", tlv(1, "040200000001")],
+			["portId", tlv(2, "03aabb")],
+		];
+		for (const [field, bad] of cases) {
+			const tlvs = [CHASSIS, PORT, TTL, END];
+			tlvs[field === "chassisId" ? 0 : 1] = bad;
+			const { l } = lldpOf(...tlvs);
+			expect(l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+			expect(l.fields).not.toHaveProperty(field);
+			expect(l.fields?.otherTlvs).toEqual([
+				{
+					type: field === "chassisId" ? 1 : 2,
+					length: (bad.length - 4) / 2,
+					value: bad.slice(4),
+				},
+			]);
+		}
+		// A management address of 3 bytes in family IPv4.
+		const value = "04010a00000200000001" + "00";
+		const mgmt = lldpOf(CHASSIS, PORT, TTL, tlv(8, value), END);
+		expect(mgmt.l).toMatchObject({
+			problem: "malformed",
+			reason: "tlv-length",
+		});
+		expect(mgmt.l.fields?.managementAddresses).toEqual([]);
+		expect(mgmt.l.fields?.otherTlvs).toEqual([{ type: 8, length: 11, value }]);
+	});
+
+	test("a management address whose lengths run past it is read only inside its span", () => {
+		// The address length (0x20) puts the OID length past the TLV and the frame.
+		const frame = lldpFrame(
+			CHASSIS,
+			tlv(2, "03020000000002"),
+			TTL,
+			tlv(8, "20010a000001020000"),
+		);
+		let furthest = -1;
+		const watched = new Proxy(frame, {
+			get(target, key) {
+				if (typeof key === "string" && /^\d+$/.test(key))
+					furthest = Math.max(furthest, Number(key));
+				const v = Reflect.get(target, key, target);
+				return typeof v === "function" ? v.bind(target) : v;
+			},
+		});
+		const l = layer(dissect(watched), "lldp");
+		expect(furthest).toBeLessThan(frame.length);
+		expect(l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+	});
+
+	test("text that is not UTF-8 is malformed, and read with replacement characters", () => {
+		const { d, l } = lldpOf(CHASSIS, PORT, TTL, tlv(5, "61ff"), END);
+		expect(l.fields?.systemName).toBe("a�");
+		expect(d.problem).toEqual({
+			protocol: "lldp",
+			problem: "malformed",
+			reason: "text",
+		});
+		const id = lldpOf(tlv(1, "06ff"), PORT, TTL, END);
+		expect(id.l).toMatchObject({ problem: "malformed", reason: "text" });
+		expect(id.l.fields?.chassisId).toBe("�");
+	});
+
+	test("capabilities by name, an unnamed bit by number", () => {
+		const { l } = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(4, ""),
+			tlv(6, utf8("desc")),
+			tlv(7, "08140010"),
+			END,
+		);
+		expect(l.fields).toMatchObject({
+			portDescription: "",
+			systemDescription: "desc",
+			capabilities: ["bridge", "router", "bit-12"],
+			enabledCapabilities: ["router"],
+		});
+		expect(l.problem).toBeUndefined();
+	});
+
+	test("management addresses: families, numbering and the OID", () => {
+		// 1.3.6.1.4.1.14988 (MikroTik's enterprise number), BER-encoded.
+		const oid = "2b06010401f50c";
+		// An arc past 2^53 (2^54) still parses.
+		const big = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, "05010a000001" + "02" + "00000001" + "09" + "2ba080808080808000"),
+			END,
+		);
+		expect(big.l.problem).toBeUndefined();
+		expect(big.l.fields?.managementAddresses[0]?.oid).toBe(
+			"1.3.18014398509481984",
+		);
+		const { l } = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, `05010a000001030000000707${oid}`),
+			tlv(8, "0706020000000003010000000000"),
+			tlv(8, "036301ff090000000200"),
+			END,
+		);
+		expect(l.problem).toBeUndefined();
+		expect(l.fields?.managementAddresses).toEqual([
+			{
+				family: 1,
+				familyName: "ipv4",
+				address: "10.0.0.1",
+				interfaceNumbering: 3,
+				interfaceNumberingName: "system-port-number",
+				interfaceNumber: 7,
+				oid: "1.3.6.1.4.1.14988",
+			},
+			{
+				family: 6,
+				familyName: "mac",
+				address: "02:00:00:00:00:03",
+				interfaceNumbering: 1,
+				interfaceNumberingName: "unknown",
+				interfaceNumber: 0,
+			},
+			{
+				family: 0x63,
+				address: "01ff",
+				interfaceNumbering: 9,
+				interfaceNumber: 2,
+			},
+		]);
+	});
+
+	test("unknown interface numbering with a number other than 0 is malformed (interface-number)", () => {
+		// 802.1AB-2009, 8.5.9.6: with unknown numbering the number "shall be set to zero".
+		const { l } = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, "05010a000001010000000100"),
+			END,
+		);
+		expect(l).toMatchObject({
+			problem: "malformed",
+			reason: "interface-number",
+		});
+		expect(l.fields?.managementAddresses[0]).toMatchObject({
+			interfaceNumberingName: "unknown",
+			interfaceNumber: 1,
+		});
+	});
+
+	test("a capability enabled but not supported is malformed (capabilities), and kept raw", () => {
+		// 802.1AB-2009, 8.5.8.3: such a TLV "shall be discarded".
+		const { l } = lldpOf(CHASSIS, PORT, TTL, tlv(7, "00000010"), END);
+		expect(l).toMatchObject({ problem: "malformed", reason: "capabilities" });
+		expect(l.fields).not.toHaveProperty("capabilities");
+		expect(l.fields).not.toHaveProperty("enabledCapabilities");
+		expect(l.fields?.otherTlvs).toEqual([
+			{ type: 7, length: 4, value: "00000010" },
+		]);
+	});
+
+	test("a frame in a Uint8Array subclass decodes, text included", () => {
+		// subarray() would call the subclass's constructor, which takes an array here.
+		class CaptureBytes extends Uint8Array {
+			constructor(values: number[]) {
+				super(values.map((b) => b));
+			}
+		}
+		const plain = lldpFrame(CHASSIS, PORT, TTL, tlv(5, utf8("a")), END);
+		const d = dissect(new CaptureBytes([...plain]));
+		expect(d.problem).toBeUndefined();
+		expect(layer(d, "lldp").fields).toMatchObject({
+			portId: "ether1",
+			systemName: "a",
+		});
+		const bad = lldpFrame(CHASSIS, PORT, TTL, tlv(5, "ff"), END);
+		expect(
+			layer(dissect(new CaptureBytes([...bad])), "lldp").fields?.systemName,
+		).toBe("\uFFFD");
+	});
+
+	test("a management address with an OID that does not parse, or lengths that disagree, is malformed", () => {
+		const badOid = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, "05010a0000010200000001022b86"),
+			END,
+		);
+		expect(badOid.l).toMatchObject({ problem: "malformed", reason: "oid" });
+		expect(badOid.l.fields?.managementAddresses[0]).not.toHaveProperty("oid");
+		// The address length runs past the OID length's place.
+		const value = "09010a00000102000000010000";
+		const bad = lldpOf(CHASSIS, PORT, TTL, tlv(8, value), END);
+		expect(bad.l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+		expect(bad.l.fields?.managementAddresses).toEqual([]);
+		expect(bad.l.fields?.otherTlvs).toEqual([{ type: 8, length: 13, value }]);
+	});
+
+	test("organizationally specific and reserved TLVs are kept as hex", () => {
+		const { l } = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(127, "aabbcc01ff"),
+			tlv(127, "0080c26300"),
+			tlv(127, "00120f05aabb"),
+			tlv(127, "00120f07cc"),
+			tlv(9, "abcd"),
+			END,
+		);
+		expect(l.problem).toBeUndefined();
+		expect(l.fields?.otherTlvs).toEqual([
+			{ type: 127, length: 5, value: "ff", oui: "aa-bb-cc", subtype: 1 },
+			{
+				type: 127,
+				length: 5,
+				value: "00",
+				oui: "00-80-c2",
+				ouiName: "ieee-802.1",
+				subtype: 0x63,
+			},
+			{
+				type: 127,
+				length: 6,
+				value: "aabb",
+				oui: "00-12-0f",
+				ouiName: "ieee-802.3",
+				subtype: 5,
+				subtypeName: "eee",
+			},
+			{
+				type: 127,
+				length: 5,
+				value: "cc",
+				oui: "00-12-0f",
+				ouiName: "ieee-802.3",
+				subtype: 7,
+				subtypeName: "additional-ethernet-capabilities",
+			},
+			{ type: 9, length: 2, value: "abcd" },
+		]);
+	});
+
+	test("a TLV past the frame is truncated, with the TLVs before it kept", () => {
+		const { d, l } = lldpOf(CHASSIS, PORT, "060a", "616263");
+		expect(l).toMatchObject({
+			offset: 14,
+			length: d.frame.length - 14,
+			problem: "truncated",
+			reason: "tlv",
+		});
+		expect(l.fields).toMatchObject({
+			chassisId: "02:00:00:00:00:01",
+			portId: "ether1",
+		});
+		// A TLV header cut short is the same.
+		expect(lldpOf(CHASSIS, PORT, TTL, "02").l).toMatchObject({
+			problem: "truncated",
+			reason: "tlv",
+		});
+	});
+
+	test("no End is truncated (end), with every TLV kept", () => {
+		const { d, l } = lldpOf(CHASSIS, PORT, TTL);
+		expect(l).toMatchObject({
+			length: d.frame.length - 14,
+			problem: "truncated",
+			reason: "end",
+		});
+		expect(l.fields?.ttl).toBe(121);
+		const empty = dissect(bytes(eth(0x88cc, "", LLDP_MULTICAST)));
+		expect(layer(empty, "lldp")).toMatchObject({
+			length: 0,
+			fields: { managementAddresses: [], otherTlvs: [] },
+			problem: "truncated",
+			reason: "end",
+		});
+	});
+
+	test("chassis id, port id and TTL not first and in order is malformed (order)", () => {
+		const swapped = lldpOf(PORT, CHASSIS, TTL, END);
+		expect(swapped.l).toMatchObject({ problem: "malformed", reason: "order" });
+		expect(swapped.l.fields).toMatchObject({
+			chassisId: "02:00:00:00:00:01",
+			portId: "ether1",
+			ttl: 121,
+		});
+		const short = lldpOf(CHASSIS, END);
+		expect(short.l).toMatchObject({ problem: "malformed", reason: "order" });
+		expect(short.l.fields).not.toHaveProperty("portId");
+		expect(short.l.length).toBe(9 + 2);
+	});
+
+	test("a second chassis id, port id or TTL is malformed (repeated); a second optional TLV is only kept raw", () => {
+		const name = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(5, utf8("a")),
+			tlv(5, utf8("b")),
+			END,
+		);
+		// 802.1AB: "should not" appear more than once, not "shall".
+		expect(name.l.problem).toBeUndefined();
+		expect(name.l.fields?.systemName).toBe("a");
+		expect(name.l.fields?.otherTlvs).toEqual([
+			{ type: 5, length: 1, value: utf8("b") },
+		]);
+		const chassis = lldpOf(CHASSIS, PORT, TTL, tlv(1, "04020000000009"), END);
+		expect(chassis.l).toMatchObject({
+			problem: "malformed",
+			reason: "repeated",
+		});
+		expect(chassis.l.fields?.chassisId).toBe("02:00:00:00:00:01");
+		expect(chassis.l.fields?.otherTlvs).toEqual([
+			{ type: 1, length: 7, value: "04020000000009" },
+		]);
+	});
+
+	test("a TLV whose length is wrong for its type is malformed, and kept raw", () => {
+		const ttl = lldpOf(CHASSIS, PORT, tlv(3, "007900"), END);
+		expect(ttl.l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+		expect(ttl.l.fields).not.toHaveProperty("ttl");
+		expect(ttl.l.fields?.otherTlvs).toEqual([
+			{ type: 3, length: 3, value: "007900" },
+		]);
+		for (const bad of [tlv(1, "04"), tlv(7, "0014"), tlv(127, "0080c2")]) {
+			const { l } = lldpOf(CHASSIS, PORT, TTL, bad, END);
+			expect(l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+		}
+		// An End with a length still ends the LLDPDU.
+		const end = lldpOf(CHASSIS, PORT, TTL, tlv(0, "00"), tlv(5, utf8("x")));
+		expect(end.l).toMatchObject({ problem: "malformed", reason: "tlv-length" });
+		expect(end.l.fields).not.toHaveProperty("systemName");
+		expect(end.l.fields?.otherTlvs).toEqual([
+			{ type: 0, length: 1, value: "00" },
+		]);
+	});
+
+	test(`at most ${MAX_LLDP_TLVS} TLVs are read, then unsupported (tlv-limit)`, () => {
+		const reserved = (n: number) => Array(n).fill(tlv(9, "")).join("");
+		const fits = lldpOf(CHASSIS, PORT, TTL, reserved(MAX_LLDP_TLVS - 4), END);
+		expect(fits.l.problem).toBeUndefined();
+		const over = lldpOf(CHASSIS, PORT, TTL, reserved(MAX_LLDP_TLVS - 3), END);
+		expect(over.l).toMatchObject({
+			length: 9 + 9 + 4 + 2 * (MAX_LLDP_TLVS - 3),
+			problem: "unsupported",
+			reason: "tlv-limit",
+		});
+		expect(over.l.fields?.otherTlvs).toHaveLength(MAX_LLDP_TLVS - 3);
+	});
+
+	test("bytes after End are not LLDP's, as Ethernet padding is not", () => {
+		const { d, l } = lldpOf(CHASSIS, PORT, TTL, END, "ffffffff");
+		expect(d.protocols).toEqual(["ethernet", "lldp"]);
+		expect(d.problem).toBeUndefined();
+		expect(l.length).toBe(9 + 9 + 4 + 2);
+	});
+
+	test("the line names chassis, port, TTL and system name, quoting text with spaces", () => {
+		const { d } = lldpOf(CHASSIS, PORT, TTL, tlv(5, utf8("core sw")), END);
+		expect(packetLine(d)).toBe(
+			`${MAC_A} > ${LLDP_MULTICAST} lldp chassis 02:00:00:00:00:01 port ether1 ttl 121 name "core sw"`,
+		);
+		// Line and paragraph separators JSON leaves as they are are escaped too.
+		const odd = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(5, utf8("a\u0085b\u2028c")),
+			END,
+		);
+		expect(packetLine(odd.d)).toEndWith(String.raw`name "a\u0085b\u2028c"`);
+		expect(packetLine(lldpOf(PORT, END).d)).toBe(
+			`${MAC_A} > ${LLDP_MULTICAST} lldp port ether1 [malformed lldp/order]`,
+		);
+		expect(viewPacket(d)).toMatchObject({
+			protocol: "lldp",
+			src: MAC_A,
+			dst: LLDP_MULTICAST,
+		});
+	});
+});
+
 describe("dissect: never throws, spans stay inside the frame", () => {
 	test("every cut of real and built frames", () => {
 		const frames = [
 			frameOf(fixture("7.25.1-x86-sniffer-stream")[0] as string),
+			frameOf(lldpFixture("7.25.1-x86-optional-tlvs.hex")[0] as string),
 			bytes(
 				eth(
 					0x8100,
@@ -1024,7 +1540,7 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 			seed = (seed * 1103515245 + 12345) % 2 ** 31;
 			return seed / 2 ** 31;
 		};
-		for (const type of [0x0800, 0x86dd, 0x0806, 0x8100, 0x88a8]) {
+		for (const type of [0x0800, 0x86dd, 0x0806, 0x8100, 0x88a8, 0x88cc]) {
 			for (let i = 0; i < 300; i++) {
 				const body = Uint8Array.from(
 					{ length: Math.floor(random() * 120) },

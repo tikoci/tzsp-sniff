@@ -15,6 +15,7 @@ import type { EthernetLayer } from "./ethernet.ts";
 import type { IcmpLayer } from "./icmp.ts";
 import type { Ipv4Layer } from "./ipv4.ts";
 import type { Ipv6Layer } from "./ipv6.ts";
+import type { LldpLayer } from "./lldp.ts";
 import type { TcpLayer } from "./tcp.ts";
 import type { UdpLayer } from "./udp.ts";
 import type { VlanLayer } from "./vlan.ts";
@@ -46,6 +47,7 @@ export type Layer =
 	| EthernetLayer
 	| VlanLayer
 	| ArpLayer
+	| LldpLayer
 	| Ipv4Layer
 	| Ipv6Layer
 	| IcmpLayer
@@ -159,8 +161,9 @@ export interface FieldInfo {
 	/**
 	 * May be absent from a layer's `fields` (or an `object[]` item); the
 	 * description says when. A field not optional is in every layer that has
-	 * `fields`. A layer has none when the fixed part of its header is cut
-	 * short or unreadable; one whose options are cut short keeps them.
+	 * `fields` or, for an `object[]` field's item, in every item of the list.
+	 * A layer has no `fields` when the fixed part of its header is cut short
+	 * or unreadable; one whose options are cut short keeps them.
 	 */
 	optional: boolean;
 	description: string;

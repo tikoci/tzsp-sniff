@@ -30,6 +30,7 @@ describe("dissectors()", () => {
 			"ethernet",
 			"vlan",
 			"arp",
+			"lldp",
 			"ipv4",
 			"ipv6",
 			"icmp",
@@ -118,7 +119,7 @@ describe("dispatch follows the registry", () => {
 				seen++;
 			}
 		}
-		expect(seen).toBe(5);
+		expect(seen).toBe(6);
 	});
 
 	test("each declared IP protocol reaches its dissector, in IPv4 and IPv6", () => {

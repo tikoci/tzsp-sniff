@@ -8,6 +8,20 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 
 ### Added
 
+- LLDP (IEEE 802.1AB, EtherType 0x88cc): chassis id and port id with their
+  subtypes (a MAC, an address or text), TTL, port description, system name
+  and description, capabilities and those enabled, every management
+  address (family, interface numbering and number, OID), and every other
+  TLV as type and hex, an organizationally specific one with its OUI and
+  subtype named for IEEE 802.1, IEEE 802.3 and LLDP-MED. At most 64 TLVs
+  are read (`unsupported/tlv-limit`); a TLV past the frame or no End is
+  `truncated`; chassis id, port id and TTL out of order or repeated, a TLV
+  of the wrong length, text that is not UTF-8, a capability enabled but not
+  supported, or a non-zero interface number with unknown numbering is
+  `malformed`. The text
+  line names chassis, port, TTL and system name. Checked against what
+  RouterOS 7.25.1 and 7.24.6 send, on x86_64 and arm64 CHRs.
+
 - `dissectors` and `dissectors()`: each protocol decoded, how it is reached
   (link type, EtherType, IP protocol) and its layer's fields, with type and
   whether each can be absent; text, or one `dissector` record per protocol

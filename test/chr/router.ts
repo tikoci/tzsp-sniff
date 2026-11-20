@@ -146,5 +146,16 @@ export const snifferStream = (port: number) =>
 	`filter-ip-address=${PEER}/32 filter-ip-protocol=icmp filter-operator-between-entries=and ` +
 	`filter-stream=yes only-headers=no file-name=""`;
 
+/**
+ * `/tool/sniffer` streaming every frame on the router toward the gateway at
+ * `port`, with `filter-stream=yes` so the stream does not capture itself
+ * (#5). The LLDP lab (test/lab/lldp/, 7.25.1 and 7.24.6 x86_64, 7.25.1
+ * arm64 CHRs, 2026-11-20) saw the router's own LLDPDUs this way.
+ */
+export const snifferStreamAll = (port: number) =>
+	`/tool/sniffer/set streaming-enabled=yes streaming-server=${GATEWAY}:${port} ` +
+	`filter-mac-protocol="" filter-ip-address="" filter-ip-protocol="" ` +
+	`filter-stream=yes only-headers=no file-name=""`;
+
 /** A precaution after adding a mangle rule over REST, so the ping meets a rule in effect. */
 export const SETTLE = ":delay 2s";

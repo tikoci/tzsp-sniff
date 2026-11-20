@@ -1,0 +1,64 @@
+{
+	"target": {
+		"channel": "stable",
+		"arch": "arm64"
+	},
+	"machine": "tzsp-lab-lldp-stable-arm64-d4edc252",
+	"date": "2026-11-20T20:32:24.300Z",
+	"accelerator": "tcg",
+	"quickchr": "quickchr 0.6.0",
+	"other": 63,
+	"experiments": [
+		{
+			"name": "default",
+			"setup": [],
+			"datagrams": [
+				{
+					"at": 13459,
+					"hex": "01000001010180c200000e02a25e57186788cc02070402a25e571867040705657468657231060200790a034348520c304d696b726f54696b20526f757465724f5320372e32352e3120323032362d31312d30322031323a33393a3533204348520e04001400100806657468657231fe070012bb01000104100c05010a00020f02000000020010181102fe8000000000000000a25efffe5718670200000002000000"
+				},
+				{
+					"at": 43466,
+					"hex": "01000001010180c200000e02a25e57186788cc02070402a25e571867040705657468657231060200790a034348520c304d696b726f54696b20526f757465724f5320372e32352e3120323032362d31312d30322031323a33393a3533204348520e04001400100806657468657231fe070012bb01000104100c05010a00020f02000000020010181102fe8000000000000000a25efffe5718670200000002000000"
+				}
+			]
+		},
+		{
+			"name": "optional-tlvs",
+			"setup": [
+				"/ip/neighbor/discovery-settings/set lldp-vlan-info=yes lldp-mac-phy-config=yes lldp-max-frame-size=yes"
+			],
+			"datagrams": [
+				{
+					"at": 646,
+					"hex": "01000001010180c200000e02a25e57186788cc02070402a25e571867040705657468657231060200790a034348520c304d696b726f54696b20526f757465724f5320372e32352e3120323032362d31312d30322031323a33393a3533204348520e04001400100806657468657231fe070012bb01000104fe0900120f010115000000fe0600120f0405eefe070080c202000000100c05010a00020f02000000020010181102fe8000000000000000a25efffe5718670200000002000000"
+				}
+			]
+		},
+		{
+			"name": "identity-utf8",
+			"setup": [
+				"/system/identity/set name=\"lab-café\""
+			],
+			"datagrams": [
+				{
+					"at": 195,
+					"hex": "01000001010180c200000e02a25e57186788cc02070402a25e571867040705657468657231060200790a096c61622d636166c3a90c304d696b726f54696b20526f757465724f5320372e32352e3120323032362d31312d30322031323a33393a3533204348520e04001400100806657468657231fe070012bb01000104fe0900120f010115000000fe0600120f0405eefe070080c202000000100c05010a00020f02000000020010181102fe8000000000000000a25efffe5718670200000002000000"
+				}
+			]
+		}
+	],
+	"bootMs": 38946,
+	"listenerPort": 55418,
+	"router": {
+		"version": "7.25.1",
+		"versionString": "7.25.1",
+		"architecture": "arm64",
+		"board": "CHR QEMU QEMU Virtual Machine"
+	},
+	"discovery": "/ip neighbor discovery-settings\nset add-dns-entries=no add-dns-entries-suffix=lan discover-interface-list=\\\n    static discover-interval=30s dying-gasp=no lldp-mac-phy-config=no \\\n    lldp-max-frame-size=no lldp-med=yes lldp-med-net-policy-vlan=disabled \\\n    lldp-vlan-info=no mode=tx-and-rx protocol=cdp,lldp,mndp",
+	"mac": "02:a2:5e:57:18:67",
+	"identity": "CHR",
+	"addresses": "Flags: D - DYNAMIC\n0 D address=10.0.2.15/24 network=10.0.2.0 interface=ether1\n    actual-interface=ether1 vrf=main",
+	"ipv6": "Flags: D - DYNAMIC; L - LINK-LOCAL\n0 D  address=::1/128 from-pool=\"\" interface=lo actual-interface=lo vrf=main\n     eui-64=no advertise=no no-dad=no auto-link-local=yes\n \n1 DL address=fe80::a2:5eff:fe57:1867/64 from-pool=\"\" interface=ether1\n     actual-interface=ether1 vrf=main eui-64=no advertise=no no-dad=no\n     auto-link-local=yes"
+}

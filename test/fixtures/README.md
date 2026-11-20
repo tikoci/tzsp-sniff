@@ -55,3 +55,31 @@ bun test/lab/tzsp-senders/fixtures.ts  # fixtures from evidence/, on any checkou
 A new lab run changes ICMP ids, timestamps, MACs and ports, so the unit
 test asserts the shape (header bytes, tags, MACs, lengths, nesting,
 counters), and checks each fixture against its own run's evidence.
+
+## `lldp/`: the LLDP RouterOS sends
+
+The router's own LLDPDUs, captured by the lab in
+[`test/lab/lldp/`](../lab/lldp/) for issue #26; what they show is in its
+[REPORT.md](../lab/lldp/REPORT.md). The LLDP tests in
+[`test/unit/dissect.test.ts`](../unit/dissect.test.ts) decode each one and
+check it against what its router reported.
+
+| File pattern | What it is |
+| --- | --- |
+| `<version>-<arch>-<experiment>.hex` | One TZSP datagram from `/tool/sniffer` streaming per line, in arrival order, as hex |
+| `index.json` | Each file's experiment, RouterOS version and architecture, channel, accelerator, UTC date, ether1's MAC, the identity as booted, and the run's evidence file |
+
+Experiments: `default` (discovery as booted, two LLDPDUs), `optional-tlvs`
+(`lldp-vlan-info`, `lldp-mac-phy-config` and `lldp-max-frame-size` on) and
+`identity-utf8` (identity `lab-café`). Captured with quickchr 0.6.0 on a
+Linux x86_64 host, the same SLIRP setup as above. Only frames with
+EtherType 0x88cc are stored; they carry the CHR's random MAC, its SLIRP
+address and link-local IPv6 address, and its RouterOS version, nothing
+from the host.
+
+Regenerate:
+
+```sh
+bun test/lab/lldp/lab.ts       # new evidence, on CHRs
+bun test/lab/lldp/fixtures.ts  # fixtures from evidence/, on any checkout
+```
