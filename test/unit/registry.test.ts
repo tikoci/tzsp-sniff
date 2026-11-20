@@ -60,6 +60,7 @@ describe("dissectors()", () => {
 	});
 
 	test("returns a new copy each call", () => {
+		const before = structuredClone(dissectors());
 		const a = dissectors();
 		const first = a[0] as DissectorInfo;
 		first.protocol = "changed";
@@ -68,7 +69,7 @@ describe("dissectors()", () => {
 		const ipv6Fields = a.find((d) => d.protocol === "ipv6")?.fields;
 		const ext = ipv6Fields?.find((f) => f.name === "extensions");
 		if (ext?.items?.[0]) ext.items[0].name = "changed";
-		expect(dissectors()).toEqual(list);
+		expect(dissectors()).toEqual(before);
 	});
 
 	test("an object[] field lists its items", () => {
@@ -236,6 +237,16 @@ describe("field declarations", () => {
 			// @ts-expect-error: a list of numbers has no declaration
 			numbers: { type: "string[]", description: "" },
 		};
+		interface Nullable {
+			label: string | null;
+			note?: string | null;
+		}
+		const nullable: FieldDecls<Nullable> = {
+			// @ts-expect-error: null has no field type
+			label: { type: "string", description: "" },
+			// @ts-expect-error: null has no field type, optional or not
+			note: { type: "string", optional: true, description: "" },
+		};
 		expect([
 			missing,
 			extra,
@@ -243,6 +254,7 @@ describe("field declarations", () => {
 			notOptional,
 			nestedMissing,
 			nestedWrong,
-		]).toHaveLength(6);
+			nullable,
+		]).toHaveLength(7);
 	});
 });

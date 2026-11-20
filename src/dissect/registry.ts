@@ -88,7 +88,11 @@ export interface DissectorInfo {
 	/** Where its layout comes from. */
 	reference: string;
 	matches: DissectorMatch[];
-	/** The layer's fields, as records carry them at `--detail layers`. */
+	/**
+	 * The layer's fields, as records carry them at `--detail layers`. A field
+	 * not `optional` is in every layer that has `fields`; a layer whose
+	 * header is cut short has none.
+	 */
 	fields: FieldInfo[];
 }
 

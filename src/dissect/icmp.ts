@@ -15,7 +15,7 @@ export interface IcmpFields {
 	code: number;
 	/** A name from {@link ICMP_TYPES} or {@link ICMPV6_TYPES}, when it has one. */
 	typeName?: string;
-	/** The ICMP message length: header and body. */
+	/** ICMP bytes in this packet or first fragment, as captured: header and body. */
 	length: number;
 	/** Echo request and reply only. */
 	id?: number;
@@ -153,7 +153,8 @@ const ICMP_FIELDS: FieldDecls<Omit<IcmpFields, "targetAddress">> = {
 	},
 	length: {
 		type: "number",
-		description: "The message length: header and body.",
+		description:
+			"ICMP bytes in this packet or first fragment, as captured: header and body.",
 	},
 	id: {
 		type: "number",

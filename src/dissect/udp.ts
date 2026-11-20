@@ -73,7 +73,8 @@ const FIELDS: FieldDecls<UdpFields> = {
 	},
 	payloadLength: {
 		type: "number",
-		description: "Payload bytes in this packet.",
+		description:
+			"Payload bytes captured, header excluded: up to the declared length, or those there are when the capture or a first fragment ends first; 0 when the declared length is under 8.",
 	},
 };
 

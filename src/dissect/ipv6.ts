@@ -39,7 +39,11 @@ export interface Ipv6Fields {
 	dst: string;
 	/** Extension headers walked, in order (at most {@link MAX_IPV6_EXTENSIONS}). */
 	extensions: Ipv6Extension[];
-	/** The upper-layer protocol after the extension headers. */
+	/**
+	 * The last next-header value reached: the upper-layer protocol, unless
+	 * the walk stopped at an extension header (a problem there, or a later
+	 * fragment, whose fragment header's next header is given).
+	 */
 	protocol: number;
 	protocolName?: string;
 	/** From a fragment header, in bytes. */
@@ -200,12 +204,14 @@ const FIELDS: FieldDecls<Ipv6Fields> = {
 	},
 	protocol: {
 		type: "number",
-		description: "The upper-layer protocol after the extension headers.",
+		description:
+			"The last next-header value reached: the upper-layer protocol, unless the walk stopped at an extension header (a problem there, or a later fragment, whose fragment header's next header is given).",
 	},
 	protocolName: {
 		type: "string",
 		optional: true,
-		description: "The upper-layer protocol's name, when it has one.",
+		description:
+			"protocol's name, when it has one; absent when the walk stopped at a problem.",
 	},
 	fragmentOffset: {
 		type: "number",

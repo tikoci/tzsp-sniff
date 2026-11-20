@@ -144,7 +144,8 @@ once the input is read.
 `tzsp-sniff dissectors` lists each protocol the tool decodes, how it is
 reached (the frame's link type, an EtherType, an IP protocol) and every field
 its layer carries at `--detail layers`, with its type and whether it can be
-absent. It reads the same registry the decoder dispatches through, so the
+absent. A field not marked optional is in every layer that has `fields`; a
+layer whose header is cut short or unreadable has no `fields` at all. It reads the same registry the decoder dispatches through, so the
 list is what runs. `--format jsonl` prints one `dissector` record per
 protocol, and nothing else:
 

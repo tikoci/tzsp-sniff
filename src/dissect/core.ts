@@ -156,29 +156,37 @@ export type FieldType =
 export interface FieldInfo {
 	name: string;
 	type: FieldType;
-	/** Absent from some layers of this protocol; the description says when. */
+	/**
+	 * May be absent from a layer's `fields` (or an `object[]` item); the
+	 * description says when. A field not optional is in every layer that has
+	 * `fields`: a layer whose header is cut short or unreadable has none.
+	 */
 	optional: boolean;
 	description: string;
 	/** An `object[]` field's own fields. */
 	items?: FieldInfo[];
 }
 
-type FieldDecl<T> = { description: string } & ([NonNullable<T>] extends [string]
-	? { type: "string" }
-	: [NonNullable<T>] extends [number]
-		? { type: "number" }
-		: [NonNullable<T>] extends [boolean]
-			? { type: "boolean" }
-			: [NonNullable<T>] extends [string[]]
-				? { type: "string[]" }
-				: [NonNullable<T>] extends [(infer E)[]]
-					? [E] extends [readonly unknown[]]
-						? never
-						: [E] extends [object]
-							? { type: "object[]"; items: FieldDecls<E> }
-							: never
-					: never) &
-	(undefined extends T ? { optional: true } : { optional?: never });
+// `null` has no JSON type here (records leave a field out instead), so a
+// field that may be null has no declaration.
+type FieldDecl<T> = null extends T
+	? never
+	: { description: string } & ([NonNullable<T>] extends [string]
+			? { type: "string" }
+			: [NonNullable<T>] extends [number]
+				? { type: "number" }
+				: [NonNullable<T>] extends [boolean]
+					? { type: "boolean" }
+					: [NonNullable<T>] extends [string[]]
+						? { type: "string[]" }
+						: [NonNullable<T>] extends [(infer E)[]]
+							? [E] extends [readonly unknown[]]
+								? never
+								: [E] extends [object]
+									? { type: "object[]"; items: FieldDecls<E> }
+									: never
+							: never) &
+			(undefined extends T ? { optional: true } : { optional?: never });
 
 /**
  * A declaration for every field of `F`, keyed by its name: a field missing
