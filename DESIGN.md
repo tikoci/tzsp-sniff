@@ -607,8 +607,17 @@ open, it was made in the slice, and each is tested in
   `capture/all-filtered` keep their meaning. Senders count entries that
   name a listener or a peer.
 - **Input is pulled a block at a time** (`ByteReader`), so stdin and large
-  files hold one block plus one chunk; `--count` and an early stop close
-  the input, and an abort ends a read waiting on stdin as `interrupted`.
+  files hold one block plus one chunk, besides the section's interfaces
+  (below). Chunks from an iterable are copied as they arrive, since a
+  source may reuse its buffer; a `Uint8Array` input is read in place. A
+  hex line is scanned once however it is chunked. `--count` and an early
+  stop close the input. An abort ends a read waiting on the input: the
+  stream ends `interrupted` (or `openDecode` rejects, during detection),
+  and the source's `return()` is called but not awaited, since an async
+  generator queues it behind the read still pending. The CLI's stdin
+  adapter destroys the stream there, so Ctrl-C ends `decode -` while the
+  producer still holds the pipe open (`bin.test.ts` under Bun,
+  `test/node/` under Node; cross-review of 7d0d428).
   Options, and an input whose first bytes name no format, are refused
   before the first record (`decode/invalid-option`,
   `decode/unknown-format`, whose fix names `--input hex` when the bytes
@@ -616,11 +625,33 @@ open, it was made in the slice, and each is tested in
   (exit 1), as is a read that fails part way.
 - **pcapng** is read in either byte order, with new sections resetting
   the interfaces; enhanced, simple and obsolete packet blocks are read,
-  other blocks skipped by their length, and `if_tsresol` (both bases) and
-  `if_tsoffset` applied. An option list that runs past its block is read
-  up to where it stops: options annotate a packet that is still whole.
-  **pcap** in either byte order, microsecond or nanosecond; the link type
-  is the low 16 bits of the header's field.
+  other blocks skipped by their length. A section that declares its
+  length is held to it: a block crossing its end, or a section header
+  that does not start there, is malformed, and an input that ends before
+  it is cut short. A section holds at most 4,096 interfaces with 1 MiB of
+  names (`MAX_INTERFACES`, `MAX_INTERFACE_NAME_BYTES`), since they are
+  kept until it ends. A simple packet block must hold its original length,
+  cut to the snap length, padded, and nothing else. Timestamps apply
+  `if_tsresol` (both bases) and the signed `if_tsoffset` exactly, in
+  BigInt, rounding down to the ms; one outside what a Date holds is
+  malformed. Names and comments keep a leading U+FEFF, so a label round
+  trips byte for byte. An option list that runs past its block is read up
+  to where it stops: options annotate a packet that is still whole.
+- **pcap** in either byte order, microsecond or nanosecond, version 2
+  only; the magic number is checked also under `--input pcap`. A record
+  over the header's snap length (when it sets one), or over 1 MiB with its
+  16-byte header, is malformed. The link type is the low 16 bits of the
+  header's field.
+- **A UDP header marked malformed is not unwrapped** (its length
+  contradicts the packet, so its payload cannot be trusted): an Ethernet
+  frame is reported as it is, with its `udp/length` problem, and a raw IP
+  or cooked packet is `link/not-tzsp`. A payload cut short (a snap length,
+  a first fragment) is still unwrapped.
+- **A live capture's records keep their types**: `openCapture()` yields
+  `CaptureRecord`, whose packets and records always have `time` and
+  `listener`, and whose summary's sender rows always have both; only
+  `decode`'s types make them optional (`test/unit/types.test.ts`, checked
+  by `tsc`).
 
 ### Filters
 

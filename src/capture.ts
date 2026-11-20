@@ -15,15 +15,16 @@ import {
 } from "./listen.ts";
 import {
 	type Counters,
-	type DatagramRecord,
 	type Detail,
 	datagramRecord,
 	type HeaderRecord,
 	isoTime,
-	type PacketRecord,
 	packetRecord,
 	SCHEMA_VERSION,
+	type CaptureDatagramRecord,
+	type CapturePacketRecord,
 	type CaptureRecord,
+	type CaptureSummaryRecord,
 	type StopReason,
 	type SummaryRecord,
 	type SummaryStatus,
@@ -313,14 +314,21 @@ export async function openCapture(
 						}
 					}
 					stats.addDatagram(capture);
-					let record: PacketRecord | DatagramRecord | undefined;
+					// A Capture has its time and listener, so its records do too.
+					let record: CapturePacketRecord | CaptureDatagramRecord | undefined;
 					if (d) {
 						if (kept) {
 							const view = viewPacket(d);
 							counters.packets += 1;
 							stats.addPacket(d, view);
 							if (!statsOnly)
-								record = packetRecord(capture, d, detail, undefined, view);
+								record = packetRecord(
+									capture,
+									d,
+									detail,
+									undefined,
+									view,
+								) as CapturePacketRecord;
 						} else {
 							counters.filtered += 1;
 						}
@@ -330,7 +338,8 @@ export async function openCapture(
 							"packet"
 						>;
 						counters[kind] += 1;
-						if (!statsOnly) record = datagramRecord(capture, detail);
+						if (!statsOnly)
+							record = datagramRecord(capture, detail) as CaptureDatagramRecord;
 					}
 					// A limit met by this entry stops intake now, before the entry
 					// is handed over: nothing more is received while the caller
@@ -475,7 +484,8 @@ export async function openCapture(
 				summary.error.case = caseCode;
 			}
 		}
-		yield summary;
+		// Every datagram read came with a listener and a peer.
+		yield summary as CaptureSummaryRecord;
 	}
 
 	const view: CaptureListener = {

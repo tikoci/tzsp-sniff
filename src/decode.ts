@@ -155,6 +155,10 @@ function unwrap(
 ): { payload: Uint8Array; peer: Peer; port: number } | undefined {
 	const udp = d.layers.find((l): l is UdpLayer => l.protocol === "udp");
 	if (!udp?.fields || !ports.has(udp.fields.dstPort)) return undefined;
+	// A UDP length that contradicts the packet leaves no payload to trust:
+	// the packet is reported as it is. One cut short (a snap length, a first
+	// fragment) still unwraps what is there.
+	if (udp.problem === "malformed") return undefined;
 	const ip = d.layers.findLast(
 		(l): l is Ipv4Layer | Ipv6Layer =>
 			(l.protocol === "ipv4" || l.protocol === "ipv6") && l.offset < udp.offset,

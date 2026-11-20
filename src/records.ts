@@ -284,8 +284,35 @@ export type StreamRecord =
 	| TipRecord
 	| SummaryRecord;
 
-/** What a capture yields: its header is `listen`'s. */
-export type CaptureRecord = Exclude<StreamRecord, DecodeHeaderRecord>;
+/**
+ * A packet from a live capture: it always has its arrival time and the
+ * listener that received it (and, from `summary` detail, its peer).
+ */
+export type CapturePacketRecord = PacketRecord & {
+	time: string;
+	listener: string;
+};
+/** A non-frame record from a live capture, with the same guarantees. */
+export type CaptureDatagramRecord = DatagramRecord & {
+	time: string;
+	listener: string;
+};
+/** A live capture's summary: every sender row has a listener and a peer. */
+export type CaptureSummaryRecord = SummaryRecord & {
+	senders: Ranked<{ listener: string; peer: string; datagrams: number }>;
+};
+
+/**
+ * What a capture yields: `listen`'s header, and packets, records and a
+ * summary with the fields a live capture always has.
+ */
+export type CaptureRecord =
+	| HeaderRecord
+	| CapturePacketRecord
+	| CaptureDatagramRecord
+	| WarningRecord
+	| TipRecord
+	| CaptureSummaryRecord;
 /** What a decode yields: its header is `decode`'s. */
 export type DecodeRecord = Exclude<StreamRecord, HeaderRecord>;
 

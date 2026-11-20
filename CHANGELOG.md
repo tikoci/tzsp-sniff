@@ -19,15 +19,22 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   end with `decode/link-type`; a corrupt file with `decode/malformed` and
   exit 1, after the records before the damage; a file cut inside a block
   warns `decode/truncated` and is `incomplete`. Lengths are capped before
-  anything is allocated (1 MiB per block, 128 KiB per hex line). A flag of
+  anything is allocated (1 MiB per block or pcap record with its header,
+  128 KiB per hex line, 4,096 interfaces and 1 MiB of names per pcapng
+  section), and the structure is checked: pcap magic, version and snap
+  length, simple packet block sizes, a section's declared length, and
+  timestamps a Date can hold. Ctrl-C ends `decode -` even while the
+  producer keeps stdin open. A flag of
   `listen` under `decode`, and the reverse, is refused with
   `cli/wrong-command`, which names the command it belongs to.
 - `openDecode(input, options)` in the library, with `DecodeOptions`,
-  `DecodeStream`, `MAX_BLOCK_BYTES` and `MAX_HEX_LINE`. Records may now
-  lack `time`, `listener` and `peer` (decoded files that do not say them),
-  and gain `interface` and `comment`; headers carry `command` (`listen` or
-  `decode`); `stoppedBy` gains `end`; sender rows may lack `listener` or
-  `peer`. `packetRecord()`, `datagramRecord()`, filters and `summarize()`
+  `DecodeStream`, `MAX_BLOCK_BYTES`, `MAX_HEX_LINE`, `MAX_INTERFACES` and
+  `MAX_INTERFACE_NAME_BYTES`. Decoded records may lack `time`, `listener`
+  and `peer` (files that do not say them); `openCapture()` yields
+  `CaptureRecord`, which keeps them required. Records gain `interface` and
+  `comment`; headers carry `command` (`listen` or
+  `decode`); `stoppedBy` gains `end`; a decode's sender rows may lack
+  `listener` or `peer`. `packetRecord()`, `datagramRecord()`, filters and `summarize()`
   take an `Entry`, which a listener's `Capture` is.
 - `--write <file>`: save every datagram the capture reads, as received,
   before filters and whatever `--format`, `--detail` or `--stats` print

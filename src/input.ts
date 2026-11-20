@@ -30,6 +30,13 @@ import { toHex } from "./tzsp.ts";
 
 /** The longest pcapng block or pcap record read (1 MiB); a longer one is `decode/malformed`. */
 export const MAX_BLOCK_BYTES = 1024 * 1024;
+/**
+ * What one pcapng section may hold in interfaces, which are kept until the
+ * section ends: 4,096 of them, with 1 MiB of names. Past either is
+ * `decode/malformed`; a new section starts again.
+ */
+export const MAX_INTERFACES = 4096;
+export const MAX_INTERFACE_NAME_BYTES = 1024 * 1024;
 /** The longest hex line read, in bytes (128 KiB, a UDP datagram's 65,535 bytes as hex with room to spare). */
 export const MAX_HEX_LINE = 128 * 1024;
 
@@ -53,15 +60,24 @@ const isAsync = (x: object): x is AsyncIterable<Uint8Array> =>
 /**
  * Pulls bytes from the input as they are needed, holding at most what the
  * current block needs plus one chunk.
+ *
+ * A `Uint8Array` input is read in place, as `parseTzsp` reads a datagram.
+ * Chunks from an iterable are copied as they arrive, since a source may
+ * reuse its buffer for the next chunk.
  */
 export class ByteReader {
-	private readonly chunks: Uint8Array[] = [];
+	/** Chunks not yet taken start at `head`, from `offset` in it. */
+	private chunks: Uint8Array[] = [];
+	private head = 0;
+	private offset = 0;
 	private buffered = 0;
 	private iterator:
 		| AsyncIterator<Uint8Array>
 		| Iterator<Uint8Array>
 		| undefined;
 	private ended = false;
+	/** A pull from the input has not settled (an abort stopped waiting for it). */
+	private pulling = false;
 	private readonly signal: AbortSignal | undefined;
 	/** Bytes taken so far: where the next read starts. */
 	position = 0;
@@ -90,6 +106,17 @@ export class ByteReader {
 		if (signal?.aborted) throw new InputAborted();
 		const next = this.iterator.next();
 		let result: IteratorResult<Uint8Array>;
+		if (next instanceof Promise) {
+			this.pulling = true;
+			next.then(
+				() => {
+					this.pulling = false;
+				},
+				() => {
+					this.pulling = false;
+				},
+			);
+		}
 		if (signal && next instanceof Promise) {
 			let onAbort = () => {};
 			try {
@@ -118,7 +145,7 @@ export class ByteReader {
 				"Pass a Uint8Array, or an iterable of them (a file or stdin stream without an encoding set).",
 			);
 		}
-		if (chunk.length) this.push(chunk);
+		if (chunk.length) this.push(chunk.slice());
 		return true;
 	}
 
@@ -128,40 +155,56 @@ export class ByteReader {
 		return this.buffered;
 	}
 
-	/** Take `n` bytes from the buffer (n ≤ buffered), into one array. */
-	private take(n: number): Uint8Array {
-		const first = this.chunks[0];
-		let out: Uint8Array;
-		if (first && first.length >= n) {
-			out = first.subarray(0, n);
-			if (first.length === n) this.chunks.shift();
-			else this.chunks[0] = first.subarray(n);
-		} else {
-			out = new Uint8Array(n);
-			let at = 0;
-			while (at < n) {
-				const chunk = this.chunks[0] as Uint8Array;
-				const part = Math.min(chunk.length, n - at);
-				out.set(chunk.subarray(0, part), at);
-				at += part;
-				if (part === chunk.length) this.chunks.shift();
-				else this.chunks[0] = chunk.subarray(part);
-			}
-		}
+	/** Move past `n` buffered bytes, dropping chunks used up. */
+	private skip(n: number) {
 		this.buffered -= n;
 		this.position += n;
+		this.offset += n;
+		for (;;) {
+			const chunk = this.chunks[this.head];
+			if (!chunk || this.offset < chunk.length) break;
+			this.offset -= chunk.length;
+			this.head += 1;
+		}
+		// Many small chunks: drop the used ones now and then, not one by one.
+		if (this.head > 64 && this.head * 2 > this.chunks.length) {
+			this.chunks = this.chunks.slice(this.head);
+			this.head = 0;
+		}
+	}
+
+	/** Copy up to `n` buffered bytes from the front, without taking them. */
+	private copy(n: number): Uint8Array {
+		const out = new Uint8Array(Math.min(n, this.buffered));
+		let at = 0;
+		let offset = this.offset;
+		for (let i = this.head; at < out.length; i++) {
+			const chunk = this.chunks[i] as Uint8Array;
+			const part = Math.min(chunk.length - offset, out.length - at);
+			out.set(chunk.subarray(offset, offset + part), at);
+			at += part;
+			offset = 0;
+		}
+		return out;
+	}
+
+	/** Take `n` bytes from the buffer (n ≤ buffered), into one array. */
+	private take(n: number): Uint8Array {
+		const first = this.chunks[this.head];
+		if (first && first.length - this.offset >= n) {
+			const out = first.subarray(this.offset, this.offset + n);
+			this.skip(n);
+			return out;
+		}
+		const out = this.copy(n);
+		this.skip(n);
 		return out;
 	}
 
 	/** Up to `n` bytes without taking them. */
 	async peek(n: number): Promise<Uint8Array> {
-		const have = Math.min(await this.fill(n), n);
-		const out = this.take(have);
-		// Put them back in front.
-		if (have) this.chunks.unshift(out.slice());
-		this.buffered += have;
-		this.position -= have;
-		return out;
+		await this.fill(n);
+		return this.copy(n);
 	}
 
 	/**
@@ -174,40 +217,54 @@ export class ByteReader {
 
 	/**
 	 * The next line without its end of line, `undefined` at the end, or
-	 * `too-long` when `max` bytes pass with no newline.
+	 * `too-long` when `max` bytes pass with no newline. Each byte is scanned
+	 * once, however the input is chunked.
 	 */
 	async readLine(max: number): Promise<Uint8Array | undefined | "too-long"> {
-		let searched = 0;
+		let index = this.head;
+		let from = this.offset;
+		let scanned = 0;
 		for (;;) {
-			let at = 0;
-			for (const chunk of this.chunks) {
-				const from = Math.max(0, searched - at);
-				const i = from < chunk.length ? chunk.indexOf(0x0a, from) : -1;
+			for (; index < this.chunks.length; index++, from = 0) {
+				const chunk = this.chunks[index] as Uint8Array;
+				const i = chunk.indexOf(0x0a, from);
 				if (i >= 0) {
-					const length = at + i;
+					const length = scanned + i - from;
 					if (length > max) return "too-long";
 					const line = this.take(length);
-					this.take(1);
+					this.skip(1);
 					return line;
 				}
-				at += chunk.length;
+				scanned += chunk.length - from;
+				if (scanned > max) return "too-long";
 			}
-			searched = this.buffered;
-			if (this.buffered > max) return "too-long";
 			if (!(await this.more())) {
 				return this.buffered ? this.take(this.buffered) : undefined;
 			}
 		}
 	}
 
-	/** Stop reading: the input's iterator is told to finish (a file closes). */
+	/**
+	 * Stop reading: the input's iterator is told to finish (a file closes).
+	 * After an abort a pull may still be waiting on the input (stdin with
+	 * nothing to read), and an async generator queues `return()` behind it,
+	 * so then `return()` is called but not waited for: the source releases
+	 * itself (the CLI destroys stdin there).
+	 */
 	async close(): Promise<void> {
 		const iterator = this.iterator;
 		this.iterator = undefined;
 		this.ended = true;
-		this.chunks.length = 0;
+		this.chunks = [];
+		this.head = 0;
+		this.offset = 0;
 		this.buffered = 0;
-		await iterator?.return?.();
+		if (!iterator?.return) return;
+		const done = (async () => iterator.return?.())().then(
+			() => {},
+			() => {},
+		);
+		if (!this.pulling) await done;
 	}
 }
 
@@ -268,7 +325,13 @@ export function detectFormat(
 	return undefined;
 }
 
+/** For hex lines: a leading byte-order mark is dropped, as an editor may add one. */
 const decoder = new TextDecoder();
+/** For pcapng names and comments: kept byte for byte, a leading U+FEFF included. */
+const metadata = new TextDecoder("utf-8", { ignoreBOM: true });
+
+/** The ms range a JavaScript Date holds (ECMA-262, "Time Values and Time Range"). */
+const MAX_TIME_MS = 8_640_000_000_000_000n;
 
 interface Options {
 	options: Map<number, Uint8Array[]>;
@@ -310,18 +373,20 @@ interface Interface {
 	offset: bigint;
 }
 
-/** A pcapng timestamp in ms since the epoch, whole. */
-function pcapngTime(units: bigint, iface: Interface): number {
-	const exponent = iface.resolution & 0x7f;
-	let ms: number;
-	if (iface.resolution & 0x80) {
-		ms = (Number(units) * 1000) / 2 ** exponent;
-	} else if (exponent >= 3) {
-		ms = Number(units / 10n ** BigInt(exponent - 3));
-	} else {
-		ms = Number(units * 10n ** BigInt(3 - exponent));
-	}
-	return Math.trunc(ms + Number(iface.offset) * 1000);
+/**
+ * A pcapng timestamp in whole ms since the epoch, or undefined when it is
+ * outside what a Date holds. Exact: the scale and the signed offset are
+ * applied in BigInt, and the result rounds down.
+ */
+function pcapngTime(units: bigint, iface: Interface): number | undefined {
+	const exponent = BigInt(iface.resolution & 0x7f);
+	const perSecond = iface.resolution & 0x80 ? 2n ** exponent : 10n ** exponent;
+	// Units and the offset as one count of units, then to ms, rounding down.
+	const total = units + iface.offset * perSecond;
+	let ms = (total * 1000n) / perSecond;
+	if (total * 1000n < 0n && ms * perSecond !== total * 1000n) ms -= 1n;
+	if (ms > MAX_TIME_MS || ms < -MAX_TIME_MS) return undefined;
+	return Number(ms);
 }
 
 async function* pcapng(
@@ -330,10 +395,19 @@ async function* pcapng(
 ): AsyncGenerator<FilePacket> {
 	let little = true;
 	let interfaces: Interface[] | undefined;
+	/** Name bytes the section's interfaces hold. */
+	let nameBytes = 0;
+	/** Where the section ends, when its header says (-1 is unknown). */
+	let sectionEnd: number | undefined;
 	for (;;) {
 		const start = reader.position;
 		const head = await reader.read(8);
-		if (head.length === 0) return;
+		if (head.length === 0) {
+			// A section that said how long it is and stopped short was cut.
+			if (sectionEnd !== undefined && start < sectionEnd)
+				state.truncatedAt = start;
+			return;
+		}
 		if (head.length < 8) {
 			state.truncatedAt = start;
 			return;
@@ -369,6 +443,18 @@ async function* pcapng(
 					: `The block at byte ${start} declares a length of ${length}, which is not a multiple of 4 of at least ${least}.`,
 			);
 		}
+		if (sectionEnd !== undefined) {
+			if (isSection && start !== sectionEnd) {
+				throw malformed(
+					`A section header starts at byte ${start}, and the section before it declared its end at byte ${sectionEnd}.`,
+				);
+			}
+			if (!isSection && start + length > sectionEnd) {
+				throw malformed(
+					`The block at byte ${start} runs past the end of its section, which its header puts at byte ${sectionEnd}.`,
+				);
+			}
+		}
 		const consumed = isSection ? 12 : 8;
 		const rest = await reader.read(length - consumed);
 		if (rest.length < length - consumed) {
@@ -395,7 +481,17 @@ async function* pcapng(
 					`The section header at byte ${start} is pcapng version ${major}; only version 1 is read.`,
 				);
 			}
+			const declared = body.getBigInt64(4, little);
+			if (declared < -1n) {
+				throw malformed(
+					`The section header at byte ${start} declares a section length of ${declared}.`,
+				);
+			}
+			// The length counts what follows the section header.
+			sectionEnd =
+				declared === -1n ? undefined : reader.position + Number(declared);
 			interfaces = [];
+			nameBytes = 0;
 			continue;
 		}
 		const list = interfaces as Interface[];
@@ -411,7 +507,16 @@ async function* pcapng(
 				offset: 0n,
 			};
 			const name = options.get(IF_NAME)?.[0];
-			if (name) iface.name = decoder.decode(name);
+			nameBytes += name?.length ?? 0;
+			if (
+				list.length >= MAX_INTERFACES ||
+				nameBytes > MAX_INTERFACE_NAME_BYTES
+			) {
+				throw malformed(
+					`The interface block at byte ${start} passes the ${MAX_INTERFACES} interfaces or ${MAX_INTERFACE_NAME_BYTES} bytes of names one section may hold.`,
+				);
+			}
+			if (name) iface.name = metadata.decode(name);
 			const offset = options.get(IF_TSOFFSET)?.[0];
 			if (offset?.length === 8) {
 				iface.offset = new DataView(
@@ -442,12 +547,14 @@ async function* pcapng(
 		}
 		let captured: number;
 		if (type === SPB) {
+			// The block holds the original length, cut to the snap length, padded.
 			const original = body.getUint32(0, little);
-			captured = Math.min(
-				original,
-				iface.snapLength || original,
-				body.byteLength - 4,
-			);
+			captured = Math.min(original, iface.snapLength || original);
+			if (body.byteLength !== 4 + ((captured + 3) & ~3)) {
+				throw malformed(
+					`The simple packet block at byte ${start} holds ${body.byteLength - 4} bytes of data for a packet of ${captured}.`,
+				);
+			}
 		} else {
 			captured = body.getUint32(12, little);
 			if (captured > body.byteLength - 20) {
@@ -467,10 +574,16 @@ async function* pcapng(
 			const units =
 				(BigInt(body.getUint32(4, little)) << 32n) |
 				BigInt(body.getUint32(8, little));
-			packet.time = pcapngTime(units, iface);
+			const time = pcapngTime(units, iface);
+			if (time === undefined) {
+				throw malformed(
+					`The packet block at byte ${start} has a timestamp outside the dates a record can hold.`,
+				);
+			}
+			packet.time = time;
 			const options = readOptions(body, 20 + ((captured + 3) & ~3), little);
 			for (const c of options.get(OPT_COMMENT) ?? [])
-				packet.comments.push(decoder.decode(c));
+				packet.comments.push(metadata.decode(c));
 		}
 		yield packet;
 	}
@@ -486,9 +599,25 @@ async function* pcap(
 		return;
 	}
 	const h = new DataView(header.buffer, header.byteOffset, 24);
-	const little =
-		h.getUint32(0, true) === PCAP_MICRO || h.getUint32(0, true) === PCAP_NANO;
+	const magicLe = h.getUint32(0, true);
+	const magicBe = h.getUint32(0, false);
+	const isMagic = (m: number) => m === PCAP_MICRO || m === PCAP_NANO;
+	// Checked here too: --input pcap skips detection.
+	if (!isMagic(magicLe) && !isMagic(magicBe)) {
+		throw malformed(
+			`The input starts with ${toHex(header.subarray(0, 4))}, which is not a pcap magic number.`,
+		);
+	}
+	const little = isMagic(magicLe);
 	const nano = h.getUint32(0, little) === PCAP_NANO;
+	const major = h.getUint16(4, little);
+	if (major !== 2) {
+		throw malformed(
+			`The pcap header is version ${major}.${h.getUint16(6, little)}; only version 2 is read.`,
+		);
+	}
+	/** 0 sets no limit. */
+	const snapLength = h.getUint32(16, little);
 	// The link type is the low 16 bits; the high bits can carry FCS details.
 	const linkType = h.getUint32(20, little) & 0xffff;
 	for (;;) {
@@ -501,9 +630,15 @@ async function* pcap(
 		}
 		const v = new DataView(head.buffer, head.byteOffset, 16);
 		const captured = v.getUint32(8, little);
-		if (captured > MAX_BLOCK_BYTES) {
+		// The cap counts the record's header, as a pcapng block's length does.
+		if (captured + 16 > MAX_BLOCK_BYTES) {
 			throw malformed(
-				`The record at byte ${start} declares ${captured} bytes, over the ${MAX_BLOCK_BYTES}-byte limit.`,
+				`The record at byte ${start} declares ${captured} bytes, which with its header passes the ${MAX_BLOCK_BYTES}-byte limit.`,
+			);
+		}
+		if (snapLength && captured > snapLength) {
+			throw malformed(
+				`The record at byte ${start} declares ${captured} bytes, more than the file's snap length of ${snapLength}.`,
 			);
 		}
 		const data = await reader.read(captured);

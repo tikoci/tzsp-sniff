@@ -18,6 +18,8 @@ export {
 	type DecodeInput,
 	MAX_BLOCK_BYTES,
 	MAX_HEX_LINE,
+	MAX_INTERFACE_NAME_BYTES,
+	MAX_INTERFACES,
 } from "./input.ts";
 export {
 	type ArpFields,
@@ -88,7 +90,10 @@ export {
 } from "./listen.ts";
 export {
 	type AnyHeaderRecord,
+	type CaptureDatagramRecord,
+	type CapturePacketRecord,
 	type CaptureRecord,
+	type CaptureSummaryRecord,
 	type Counters,
 	DETAILS,
 	type DatagramRecord,

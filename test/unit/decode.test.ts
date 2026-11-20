@@ -5,7 +5,12 @@ import { join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
 import { type DecodeOptions, openDecode } from "../../src/decode.ts";
 import { TzspSniffError } from "../../src/errors.ts";
-import { MAX_BLOCK_BYTES, MAX_HEX_LINE } from "../../src/input.ts";
+import {
+	ByteReader,
+	MAX_BLOCK_BYTES,
+	MAX_HEX_LINE,
+	MAX_INTERFACES,
+} from "../../src/input.ts";
 import { type ByteSink, pcapngWriter } from "../../src/pcapng.ts";
 import type {
 	DatagramRecord,
@@ -48,6 +53,10 @@ const le32 = (n: number) => h32(n).match(/../g)?.reverse().join("") as string;
 function pcapngBuilder(little = true) {
 	const u16 = little ? le16 : h16;
 	const u32 = little ? le32 : h32;
+	const u64 = (n: bigint) => {
+		const hex = BigInt.asUintN(64, n).toString(16).padStart(16, "0");
+		return little ? (hex.match(/../g)?.reverse().join("") as string) : hex;
+	};
 	const option = (code: number, valueHex: string) =>
 		u16(code) + u16(valueHex.length / 2) + pad4(valueHex);
 	const options = (list: string[]) =>
@@ -58,19 +67,29 @@ function pcapngBuilder(little = true) {
 	};
 	const text = (s: string) => Buffer.from(s).toString("hex");
 	return {
-		section: () =>
-			block(0x0a0d0d0a, u32(0x1a2b3c4d) + u16(1) + u16(0) + "ffffffffffffffff"),
-		iface: (linkType: number, o: { name?: string; tsresol?: number } = {}) =>
+		/** A section header; `length` is the section's, -1 for unknown. */
+		section: (length = -1n) =>
+			block(0x0a0d0d0a, u32(0x1a2b3c4d) + u16(1) + u16(0) + u64(length)),
+		iface: (
+			linkType: number,
+			o: {
+				name?: string;
+				tsresol?: number;
+				tsoffset?: bigint;
+				snapLength?: number;
+			} = {},
+		) =>
 			block(
 				1,
 				u16(linkType) +
 					u16(0) +
-					u32(0) +
+					u32(o.snapLength ?? 0) +
 					options([
 						...(o.name ? [option(2, text(o.name))] : []),
 						...(o.tsresol !== undefined
 							? [option(9, h16(o.tsresol).slice(2))]
 							: []),
+						...(o.tsoffset !== undefined ? [option(14, u64(o.tsoffset))] : []),
 					]),
 			),
 		packet: (
@@ -90,8 +109,9 @@ function pcapngBuilder(little = true) {
 					options((o.comments ?? []).map((c) => option(1, text(c)))),
 			);
 		},
-		simple: (dataHex: string) =>
-			block(3, u32(dataHex.length / 2) + pad4(dataHex)),
+		/** A simple packet block; `original` may contradict the data, for tests. */
+		simple: (dataHex: string, original = dataHex.length / 2) =>
+			block(3, u32(original) + pad4(dataHex)),
 		other: (type: number, bodyHex: string) => block(type, bodyHex),
 	};
 }
@@ -101,18 +121,21 @@ function pcapBuilder(o: {
 	little?: boolean;
 	nano?: boolean;
 	linkType: number;
+	magic?: number;
+	major?: number;
+	snapLength?: number;
 }) {
 	const little = o.little ?? true;
 	const u16 = little ? le16 : h16;
 	const u32 = little ? le32 : h32;
 	return {
 		header: () =>
-			u32(o.nano ? 0xa1b23c4d : 0xa1b2c3d4) +
-			u16(2) +
+			u32(o.magic ?? (o.nano ? 0xa1b23c4d : 0xa1b2c3d4)) +
+			u16(o.major ?? 2) +
 			u16(4) +
 			u32(0) +
 			u32(0) +
-			u32(65535) +
+			u32(o.snapLength ?? 65535) +
 			u32(o.linkType),
 		record: (dataHex: string, seconds = 0, fraction = 0) =>
 			u32(seconds) +
@@ -179,18 +202,26 @@ describe("format detection", () => {
 		const pcapng = n.section() + n.iface(128) + n.packet(0, REQUEST);
 		const big = pcapngBuilder(false);
 		const pcapngBig = big.section() + big.iface(128) + big.packet(0, REQUEST);
-		const cases: [string, string][] = [
+		const cases: [string, string, string?][] = [
 			[pcapng, "pcapng"],
 			[pcapngBig, "pcapng"],
 		];
+		// 125 ms after a whole second, at either resolution: a reader that
+		// takes nanoseconds for microseconds is off by a factor of 1000.
 		for (const little of [true, false]) {
 			for (const nano of [true, false]) {
 				const p = pcapBuilder({ little, nano, linkType: 128 });
-				cases.push([p.header() + p.record(REQUEST), "pcap"]);
+				cases.push([
+					p.header() +
+						p.record(REQUEST, 1_700_000_000, nano ? 125_000_000 : 125_000),
+					"pcap",
+					"2023-11-14T22:13:20.125Z",
+				]);
 			}
 		}
-		for (const [input, format] of cases) {
+		for (const [input, format, time] of cases) {
 			const records = await decode(input);
+			if (time) expect(packetsOf(records)[0]?.time).toBe(time);
 			const header = records[0];
 			expect(header).toMatchObject({
 				type: "header",
@@ -330,7 +361,8 @@ describe("round trip: --write, then decode", () => {
 		};
 		const datagrams = [...STREAM, KEEPALIVE, NOT_TZSP, "01"];
 		const stream = await openCapture({
-			ports: [{ port: 0, label: "router-a" }],
+			// A label that starts with U+FEFF must survive the file (cross-review).
+			ports: [{ port: 0, label: "\uFEFFedge" }],
 			count: STREAM.length,
 			durationMs: 5000,
 			detail: "full",
@@ -348,7 +380,7 @@ describe("round trip: --write, then decode", () => {
 		// The capture stopped at its count, so the decode holds what it read.
 		expect(listened.length).toBeGreaterThanOrEqual(STREAM.length);
 		expect(entriesOf(decoded)).toEqual(listened);
-		expect(listened[0]).toMatchObject({ listener: "router-a" });
+		expect(listened[0]).toMatchObject({ listener: "\uFEFFedge" });
 		expect(listened[0]?.peer).toMatch(/^127\.0\.0\.1:\d+$/);
 	});
 
@@ -752,4 +784,234 @@ describe("limits, signals and stopping early", () => {
 		expect(closed).toBe(true);
 		expect(() => stream[Symbol.asyncIterator]()).toThrow(TzspSniffError);
 	});
+});
+
+describe("cross-review of 7d0d428: structure the readers must refuse or keep", () => {
+	const n = pcapngBuilder();
+	const ok = n.section() + n.iface(128);
+	const errorOf = async (
+		input: string | Uint8Array,
+		options: DecodeOptions = {},
+	) => summaryOf(await decode(input, options)).error?.code;
+
+	test("--input pcap checks the magic number and the version", async () => {
+		const bad = pcapBuilder({ linkType: 128, magic: 0 });
+		expect(
+			await errorOf(bad.header() + bad.record(REQUEST), { format: "pcap" }),
+		).toBe("decode/malformed");
+		const v99 = pcapBuilder({ linkType: 128, major: 99 });
+		expect(await errorOf(v99.header() + v99.record(REQUEST))).toBe(
+			"decode/malformed",
+		);
+	});
+
+	test("pcap: a record over the snap length, or over 1 MiB with its header, is malformed", async () => {
+		const snap = pcapBuilder({ linkType: 128, snapLength: 1 });
+		expect(await errorOf(snap.header() + snap.record(REQUEST))).toBe(
+			"decode/malformed",
+		);
+		const p = pcapBuilder({ linkType: 1, snapLength: 0 });
+		const fits = "00".repeat(MAX_BLOCK_BYTES - 16);
+		const fitting = await decode(p.header() + p.record(fits));
+		expect(summaryOf(fitting).status).toBe("complete");
+		expect(await errorOf(p.header() + p.record(`${fits}00`))).toBe(
+			"decode/malformed",
+		);
+	});
+
+	test("a simple packet block must hold its packet, cut to the snap length, padded", async () => {
+		// The original length says 16 bytes more than the block holds.
+		const short =
+			n.section() + n.iface(128) + n.simple(REQUEST, REQUEST.length / 2 + 16);
+		expect(await errorOf(short)).toBe("decode/malformed");
+		// More bytes than the packet needs.
+		const long =
+			n.section() +
+			n.iface(128) +
+			n.simple(`${REQUEST}00000000`, REQUEST.length / 2);
+		expect(await errorOf(long)).toBe("decode/malformed");
+		// A snap length cuts it: what is held is the packet's first bytes.
+		const cut =
+			n.section() +
+			n.iface(128, { snapLength: 8 }) +
+			n.simple(REQUEST.slice(0, 16), REQUEST.length / 2);
+		const records = entriesOf(await decode(cut));
+		expect(records).toHaveLength(1);
+		expect(summaryOf(await decode(cut)).status).toBe("complete");
+	});
+
+	test("a section's declared length: blocks past it are malformed, a section cut short is incomplete", async () => {
+		const iface = n.iface(128);
+		const packet = n.packet(0, REQUEST);
+		const size = (hex: string) => BigInt(hex.length / 2);
+		// Room for the interface only, then a packet.
+		expect(await errorOf(n.section(size(iface)) + iface + packet)).toBe(
+			"decode/malformed",
+		);
+		// Room for two packets, one there.
+		const cut = await decode(
+			n.section(size(iface + packet + packet)) + iface + packet,
+		);
+		expect(packetsOf(cut)).toHaveLength(1);
+		expect(summaryOf(cut).status).toBe("incomplete");
+		// Exact, then a new section with its own length unknown.
+		const exact = await decode(
+			n.section(size(iface + packet)) +
+				iface +
+				packet +
+				n.section() +
+				iface +
+				packet,
+		);
+		expect(packetsOf(exact)).toHaveLength(2);
+		expect(summaryOf(exact).status).toBe("complete");
+	});
+
+	test("a UDP length that contradicts its packet is not unwrapped", async () => {
+		const badUdp = ipv4({
+			proto: 17,
+			src: "192.0.2.1",
+			dst: "10.0.2.2",
+			payload: udp(40000, 37008, REQUEST, 7),
+		});
+		const raw = pcapBuilder({ linkType: 101 });
+		const [record] = entriesOf(
+			await decode(raw.header() + raw.record(badUdp), { detail: "summary" }),
+		);
+		expect(record).toMatchObject({ type: "record", reason: "link/not-tzsp" });
+		const ether = pcapBuilder({ linkType: 1 });
+		const [frame] = packetsOf(
+			await decode(ether.header() + ether.record(eth(0x0800, badUdp)), {
+				detail: "summary",
+			}),
+		);
+		expect(frame).toMatchObject({ problem: "malformed", reason: "udp/length" });
+		expect(frame?.listener).toBeUndefined();
+	});
+
+	test("timestamps are exact, and one past a Date's range is malformed whatever the output", async () => {
+		// 1 Hz units with an offset of -2^53 s: the epoch, then one second on.
+		const exact =
+			n.section() +
+			n.iface(128, { tsresol: 0, tsoffset: -(2n ** 53n) }) +
+			n.packet(0, REQUEST, { units: 2n ** 53n }) +
+			n.packet(0, REQUEST, { units: 2n ** 53n + 1n });
+		expect(packetsOf(await decode(exact)).map((p) => p.time)).toEqual([
+			"1970-01-01T00:00:00.000Z",
+			"1970-01-01T00:00:01.000Z",
+		]);
+		// 2^-10 s units: 1023/1024 s rounds down to 999 ms, not up to 1000.
+		const binary =
+			n.section() +
+			n.iface(128, { tsresol: 0x8a }) +
+			n.packet(0, REQUEST, { units: 1023n });
+		expect(packetsOf(await decode(binary))[0]?.time).toBe(
+			"1970-01-01T00:00:00.999Z",
+		);
+		const far =
+			n.section() +
+			n.iface(128, { tsresol: 0, tsoffset: 8_640_000_000_001n }) +
+			n.packet(0, REQUEST);
+		for (const stats of [false, true]) {
+			expect({ stats, code: await errorOf(far, { stats }) }).toEqual({
+				stats,
+				code: "decode/malformed",
+			});
+		}
+	});
+
+	test("a section holds at most MAX_INTERFACES interfaces; a new section starts again", async () => {
+		const many = n.iface(128).repeat(MAX_INTERFACES);
+		const full = await decode(
+			n.section() + many + n.packet(MAX_INTERFACES - 1, REQUEST),
+		);
+		expect(summaryOf(full).status).toBe("complete");
+		expect(await errorOf(n.section() + many + n.iface(128))).toBe(
+			"decode/malformed",
+		);
+		const again = await decode(
+			n.section() + many + n.section() + n.iface(128) + n.packet(0, REQUEST),
+		);
+		expect(summaryOf(again).status).toBe("complete");
+		// Names count too: an option holds at most 64 KiB, so 17 names of
+		// 62 KiB pass 1 MiB, and 16 do not.
+		const named = n.iface(128, { name: "x".repeat(62 * 1024) });
+		expect(await errorOf(n.section() + named.repeat(16))).toBeUndefined();
+		expect(await errorOf(n.section() + named.repeat(17))).toBe(
+			"decode/malformed",
+		);
+	});
+
+	test("hex in one-byte chunks: each byte is scanned once, and lines split right", async () => {
+		const line = "ab".repeat(30 * 1024);
+		const text = new TextEncoder().encode(`${line}\n${KEEPALIVE}\n`);
+		const reader = new ByteReader(trickle(text));
+		// Quadratic scanning of 61,450 one-byte chunks takes minutes; linear, milliseconds.
+		const first = await reader.readLine(MAX_HEX_LINE);
+		expect((first as Uint8Array).length).toBe(line.length);
+		const second = await reader.readLine(MAX_HEX_LINE);
+		expect(new TextDecoder().decode(second as Uint8Array)).toBe(KEEPALIVE);
+		expect(await reader.readLine(MAX_HEX_LINE)).toBeUndefined();
+	}, 5000);
+
+	test("a source that reuses its buffer for each chunk decodes the same", async () => {
+		const p = pcapBuilder({ linkType: 128 });
+		const file = bytes(p.header() + p.record(REQUEST) + p.record(KEEPALIVE));
+		const reused = (function* () {
+			const one = new Uint8Array(1);
+			for (const b of file) {
+				one[0] = b;
+				yield one;
+			}
+		})();
+		const whole = entriesOf(await decode(file, { detail: "full" }));
+		expect(entriesOf(await decode(reused, { detail: "full" }))).toEqual(whole);
+	});
+
+	test("an abort while a read waits on the input ends the stream, also during detection", async () => {
+		// A source whose next() never settles, and whose return() would wait
+		// behind it, as an async generator's does.
+		const parked = (first?: Uint8Array) => ({
+			[Symbol.asyncIterator]() {
+				let sent = first === undefined;
+				let release = () => {};
+				const pending = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				return {
+					async next(): Promise<IteratorResult<Uint8Array>> {
+						if (!sent && first) {
+							sent = true;
+							return { done: false, value: first };
+						}
+						await new Promise(() => {});
+						return { done: true, value: undefined };
+					},
+					async return(): Promise<IteratorResult<Uint8Array>> {
+						await pending;
+						release();
+						return { done: true, value: undefined };
+					},
+				};
+			},
+		});
+		const controller = new AbortController();
+		const stream = await openDecode(parked(bytes(ok + n.packet(0, REQUEST))), {
+			signal: controller.signal,
+		});
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "packet") setTimeout(() => controller.abort(), 10);
+		}
+		expect(summaryOf(records).status).toBe("interrupted");
+
+		const detecting = new AbortController();
+		setTimeout(() => detecting.abort(), 10);
+		await expect(
+			openDecode(parked(Uint8Array.of(0x0a, 0x0d)), {
+				signal: detecting.signal,
+			}),
+		).rejects.toBeDefined();
+	}, 5000);
 });

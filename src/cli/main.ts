@@ -79,8 +79,11 @@ export interface Io {
 	 * `--write` refuses one of them.
 	 */
 	outputFiles?: readonly { dev: bigint; ino: bigint }[];
-	/** stdin, for `decode -`; a function, so a command that does not read it never opens it. */
-	stdin?: () => AsyncIterable<Uint8Array>;
+	/**
+	 * stdin, for `decode -`; a function, so a command that does not read it
+	 * never opens it. `destroy` releases it when decode stops before its end.
+	 */
+	stdin?: () => AsyncIterable<Uint8Array> & { destroy?(): void };
 	/** For tests: makes `--write`'s sink in place of {@link fileSink}. */
 	writeSink?: (path: string, options: FileSinkOptions) => ByteSink;
 	/** Interrupt: ends the capture as `interrupted`, with the summary written. */
@@ -702,6 +705,38 @@ async function openFile(path: string): Promise<FileInput> {
 	};
 }
 
+/**
+ * stdin as decode's input. Stopping early (a limit, Ctrl-C, a closed stdout)
+ * destroys the stream rather than waiting: a read still pending on a
+ * producer that has gone quiet would otherwise hold the process until the
+ * producer closes the pipe.
+ */
+function streamInput(
+	stream: AsyncIterable<Uint8Array> & { destroy?(): void },
+): FileInput {
+	const iterator = stream[Symbol.asyncIterator]();
+	let closed: Promise<void> | undefined;
+	const close = () => {
+		closed ??= (async () => {
+			stream.destroy?.();
+		})();
+		return closed;
+	};
+	const done = { done: true, value: undefined } as const;
+	return {
+		close,
+		[Symbol.asyncIterator]() {
+			return {
+				next: async () => (closed ? done : iterator.next()),
+				async return() {
+					await close();
+					return done;
+				},
+			};
+		},
+	};
+}
+
 async function runDecode(
 	planned: Plan,
 	decode: NonNullable<Plan["decode"]>,
@@ -722,7 +757,8 @@ async function runDecode(
 					"Give a file path instead of -.",
 				);
 			}
-			input = io.stdin();
+			file = streamInput(io.stdin());
+			input = file;
 		} else {
 			file = await openFile(decode.input);
 			input = file;

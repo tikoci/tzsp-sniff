@@ -127,7 +127,8 @@ guessed. What a packet is depends on the file's link type:
 `--tzsp-port <port>` (repeatable) names the TZSP ports to unwrap; the
 default is 37008. IP fragments are not reassembled. Any other link type
 ends the stream with `decode/link-type`. Every length is checked before it
-is read (1 MiB per block, 128 KiB per hex line): a corrupt file prints the
+is read (1 MiB per block, 128 KiB per hex line, 4,096 interfaces per
+pcapng section): a corrupt file prints the
 records before the damage, then ends with `decode/malformed` and exit 1; a
 file cut inside a block (still being written, or copied short) prints what
 is whole, warns `decode/truncated`, and its summary is `incomplete`.
@@ -170,9 +171,13 @@ pass the writer as `openCapture({ write })` to save every datagram, or as
 and ends the capture with `write/stalled` when a sink takes nothing for 30
 seconds.
 
-`openDecode(input, options)` is `decode`: `input` is the bytes, or any
-iterable of chunks (a file or stdin stream), and the stream has the same
-records, with a `decode` header:
+`openDecode(input, options)` is `decode`: `input` is the bytes (read in
+place), or any iterable of chunks (a file or stdin stream; each chunk is
+copied, so a source may reuse its buffer), and the stream has the same
+records, with a `decode` header. Records from a file may lack `time`,
+`listener` and `peer`; `openCapture()`'s stay typed with them
+(`CaptureRecord`). On an abort, a source's `return()` is called without
+waiting, so a source parked on a read should release itself there:
 
 ```typescript
 import { readFile } from "node:fs/promises";
