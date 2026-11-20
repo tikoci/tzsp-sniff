@@ -378,3 +378,57 @@ export async function stalledTerminal(command: string[], budgetMs: number) {
 		closeSync(pty.master);
 	}
 }
+
+/**
+ * Run `command` (a CLI, `decode -` and its flags included) with stdin a
+ * pipe that is written once and never closed, as a producer that has gone
+ * quiet. Once `ready` matches stdout (or at once when it is undefined,
+ * after `settleMs`), SIGINT is sent; the child must exit inside `budgetMs`
+ * without stdin closing. The child is killed in `finally`.
+ */
+export async function interruptWithStdinOpen(
+	command: string[],
+	input: Uint8Array,
+	o: { ready?: RegExp; settleMs?: number; budgetMs: number },
+) {
+	const proc = Bun.spawn(command, {
+		env: childEnv(),
+		stdin: "pipe",
+		stdout: "pipe",
+		stderr: "pipe",
+	});
+	const killer = setTimeout(() => proc.kill("SIGKILL"), o.budgetMs * 2);
+	try {
+		proc.stdin.write(input);
+		await proc.stdin.flush();
+		const stderr = new Response(proc.stderr).text();
+		const reader = proc.stdout.getReader();
+		const decoder = new TextDecoder();
+		let stdout = "";
+		let interruptedAt: number | undefined;
+		const interrupt = () => {
+			interruptedAt = performance.now();
+			proc.kill("SIGINT");
+		};
+		if (!o.ready) setTimeout(interrupt, o.settleMs ?? 300);
+		for (;;) {
+			const { value, done } = await reader.read();
+			if (done) break;
+			stdout += decoder.decode(value, { stream: true });
+			if (o.ready && interruptedAt === undefined && o.ready.test(stdout))
+				interrupt();
+		}
+		const code = await proc.exited;
+		return {
+			code,
+			stdout,
+			stderr: await stderr,
+			/** From SIGINT to exit; stdin was never closed. */
+			ms: performance.now() - (interruptedAt ?? performance.now()),
+			interrupted: interruptedAt !== undefined,
+		};
+	} finally {
+		clearTimeout(killer);
+		proc.kill("SIGKILL");
+	}
+}

@@ -62,6 +62,29 @@ export const CODES = {
 		summary:
 			"The capture file's sink took no data for too long; the capture ended rather than wait.",
 	},
+	"decode/invalid-option": {
+		kind: "error",
+		summary: "An openDecode() option is out of range or not one it takes.",
+	},
+	"decode/unknown-format": {
+		kind: "error",
+		summary:
+			"The input's first bytes are neither pcapng nor pcap, and no --input format was given.",
+	},
+	"decode/malformed": {
+		kind: "error",
+		summary:
+			"The input's structure is corrupt (a block length over the limit or contradicting itself, a line that is not hex); decoding stopped there.",
+	},
+	"decode/link-type": {
+		kind: "error",
+		summary:
+			"A packet's link type is not one decode reads; decoding stopped there.",
+	},
+	"decode/read-failed": {
+		kind: "error",
+		summary: "Opening or reading the input failed.",
+	},
 	"cli/unknown-command": {
 		kind: "error",
 		summary: "The first argument is not a command.",
@@ -89,6 +112,16 @@ export const CODES = {
 	"cli/unexpected-argument": {
 		kind: "error",
 		summary: "A positional argument the command does not take.",
+	},
+	"cli/missing-argument": {
+		kind: "error",
+		summary:
+			"A command was given without the argument it needs (decode's file).",
+	},
+	"cli/wrong-command": {
+		kind: "error",
+		summary:
+			"A flag or value of another command; the message names the command it belongs to.",
 	},
 	"cli/write-to-output": {
 		kind: "error",
@@ -120,6 +153,15 @@ export const CODES = {
 	"capture/all-filtered": {
 		kind: "warning",
 		summary: "Frames arrived, and the filters removed every one of them.",
+	},
+	"decode/truncated": {
+		kind: "warning",
+		summary:
+			"The input ends inside a block; every packet before it was decoded.",
+	},
+	"decode/empty": {
+		kind: "warning",
+		summary: "The input held no packets.",
 	},
 	"tip/default-duration": {
 		kind: "tip",

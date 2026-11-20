@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { expectPortFree, stalledTerminal } from "../unit/helpers.ts";
+import {
+	expectPortFree,
+	fixture,
+	interruptWithStdinOpen,
+	stalledTerminal,
+} from "../unit/helpers.ts";
 
 /**
  * The built executable under Node with stdout on a terminal nobody reads.
@@ -23,4 +28,29 @@ test.skipIf(process.platform === "win32")(
 		await expectPortFree(result.port);
 	},
 	BUDGET_MS * 2,
+);
+
+test.skipIf(process.platform === "win32")(
+	"node: decode - with stdin left open: Ctrl-C ends it, after a packet and before the format is known",
+	async () => {
+		const request = fixture("7.25.1-x86-sniffer-stream")[0] as string;
+		const started = await interruptWithStdinOpen(
+			["node", BIN, "decode", "-", "--input", "hex", "--format", "jsonl"],
+			new TextEncoder().encode(`${request}\n`),
+			{ ready: /"type":"packet"/, budgetMs: BUDGET_MS },
+		);
+		expect(started.code).toBe(0);
+		expect(started.ms).toBeLessThan(BUDGET_MS / 2);
+		expect(started.stdout.trimEnd().split("\n").at(-1)).toContain(
+			'"status":"interrupted"',
+		);
+		const detecting = await interruptWithStdinOpen(
+			["node", BIN, "decode", "-"],
+			Uint8Array.of(0x0a, 0x0d),
+			{ settleMs: 500, budgetMs: BUDGET_MS },
+		);
+		expect(detecting.code).toBe(130);
+		expect(detecting.ms).toBeLessThan(BUDGET_MS / 2);
+	},
+	BUDGET_MS * 4,
 );

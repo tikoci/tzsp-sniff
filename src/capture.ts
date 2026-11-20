@@ -15,16 +15,17 @@ import {
 } from "./listen.ts";
 import {
 	type Counters,
-	type DatagramRecord,
 	type Detail,
 	datagramRecord,
 	type HeaderRecord,
 	isoTime,
-	type PacketRecord,
 	packetRecord,
 	SCHEMA_VERSION,
+	type CaptureDatagramRecord,
+	type CapturePacketRecord,
+	type CaptureRecord,
+	type CaptureSummaryRecord,
 	type StopReason,
-	type StreamRecord,
 	type SummaryRecord,
 	type SummaryStatus,
 	viewPacket,
@@ -78,7 +79,7 @@ export interface CaptureOptions extends ListenOptions {
  */
 export type CaptureListener = Omit<Listener, typeof Symbol.asyncIterator>;
 
-export interface CaptureStream extends AsyncIterable<StreamRecord> {
+export interface CaptureStream extends AsyncIterable<CaptureRecord> {
 	readonly header: HeaderRecord;
 	readonly listener: CaptureListener;
 }
@@ -149,6 +150,7 @@ export async function openCapture(
 		schemaVersion: SCHEMA_VERSION,
 		tool: "tzsp-sniff",
 		version: VERSION,
+		command: "listen",
 		time: isoTime(Date.now()),
 		bind: listener.bind,
 		listeners: listener.listeners.map(({ port, label }) => ({ port, label })),
@@ -254,7 +256,7 @@ export async function openCapture(
 		return writersClosed;
 	};
 
-	async function* run(): AsyncGenerator<StreamRecord> {
+	async function* run(): AsyncGenerator<CaptureRecord> {
 		const counters: Counters = {
 			datagrams: 0,
 			packets: 0,
@@ -312,14 +314,21 @@ export async function openCapture(
 						}
 					}
 					stats.addDatagram(capture);
-					let record: PacketRecord | DatagramRecord | undefined;
+					// A Capture has its time and listener, so its records do too.
+					let record: CapturePacketRecord | CaptureDatagramRecord | undefined;
 					if (d) {
 						if (kept) {
 							const view = viewPacket(d);
 							counters.packets += 1;
 							stats.addPacket(d, view);
 							if (!statsOnly)
-								record = packetRecord(capture, d, detail, undefined, view);
+								record = packetRecord(
+									capture,
+									d,
+									detail,
+									undefined,
+									view,
+								) as CapturePacketRecord;
 						} else {
 							counters.filtered += 1;
 						}
@@ -329,7 +338,8 @@ export async function openCapture(
 							"packet"
 						>;
 						counters[kind] += 1;
-						if (!statsOnly) record = datagramRecord(capture, detail);
+						if (!statsOnly)
+							record = datagramRecord(capture, detail) as CaptureDatagramRecord;
 					}
 					// A limit met by this entry stops intake now, before the entry
 					// is handed over: nothing more is received while the caller
@@ -474,7 +484,8 @@ export async function openCapture(
 				summary.error.case = caseCode;
 			}
 		}
-		yield summary;
+		// Every datagram read came with a listener and a peer.
+		yield summary as CaptureSummaryRecord;
 	}
 
 	const view: CaptureListener = {
@@ -519,7 +530,7 @@ export async function openCapture(
 	return {
 		header,
 		listener: view,
-		[Symbol.asyncIterator](): AsyncIterator<StreamRecord> {
+		[Symbol.asyncIterator](): AsyncIterator<CaptureRecord> {
 			if (used) {
 				throw new TzspSniffError(
 					"capture/reused",

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { open as openFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
+import { openDecode } from "../../src/decode.ts";
 import { TzspSniffError } from "../../src/errors.ts";
 import { fileSink } from "../../src/file.ts";
 import type { BoundListener, Capture } from "../../src/listen.ts";
@@ -26,6 +27,8 @@ import {
 	type CaptureWriter,
 	interfaceBlock,
 	LINKTYPE_TZSP,
+	MAX_INTERFACE_NAME_BYTES,
+	MAX_INTERFACES,
 	packetBlock,
 	pcapngWriter,
 	peerComment,
@@ -514,7 +517,7 @@ async function drain(
 	const seen: StreamRecord[] = [];
 	for await (const r of stream) {
 		seen.push(r);
-		if (r.type === "header")
+		if (r.type === "header" && r.command === "listen")
 			await send(r.listeners[0]?.port as number, datagrams);
 	}
 	return seen;
@@ -762,6 +765,44 @@ describe("writer limits and late calls", () => {
 		)) as TzspSniffError;
 		expect(error.code).toBe("write/invalid-option");
 		expect(m.calls).toEqual([]);
+	});
+
+	test("the writer keeps to the interfaces and names decode reads back (final review of 71d400c)", async () => {
+		const labels = (count: number, bytes: number) =>
+			Array.from({ length: count }, (_, i) => ({
+				address: "0.0.0.0",
+				port: i + 1,
+				label: String(i).padStart(bytes, "x"),
+			}));
+		// At the limit: written, and decode reads every interface back.
+		const atLimit = memorySink();
+		const w = pcapngWriter(atLimit.sink);
+		await w.open(labels(32, MAX_INTERFACE_NAME_BYTES / 32));
+		await w.close();
+		const records = [];
+		for await (const r of await openDecode(atLimit.bytes())) records.push(r);
+		const summary = records.at(-1) as SummaryRecord;
+		expect([summary.status, summary.error?.code]).toEqual([
+			"complete",
+			undefined,
+		]);
+		// One byte of names past it, or one interface past it: refused before the sink is touched.
+		for (const listeners of [
+			labels(32, MAX_INTERFACE_NAME_BYTES / 32).map((l, i) =>
+				i ? l : { ...l, label: `${l.label}x` },
+			),
+			labels(MAX_INTERFACES + 1, 1),
+		]) {
+			const m = memorySink();
+			const error = (await rejection(
+				pcapngWriter(m.sink).open(listeners),
+			)) as TzspSniffError;
+			expect(error.code).toBe("write/invalid-option");
+			expect(m.calls).toEqual([]);
+		}
+		const most = memorySink();
+		await pcapngWriter(most.sink).open(labels(MAX_INTERFACES, 1));
+		expect(most.calls[0]).toBe("open");
 	});
 
 	test("stallMs above the timer maximum is refused", () => {

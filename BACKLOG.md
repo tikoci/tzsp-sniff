@@ -61,3 +61,24 @@ Small items, one or two sentences each, deleted when done or declined
 - pcapng: microsecond arrival times (`performance.timeOrigin +
   performance.now()`, `if_tsresol` 6), if a lab needs finer ordering than
   the sequence number gives.
+- `decode --format pcapng` (refused in slice 5): filter a TZSP file down to
+  a smaller one; inputs with no TZSP datagram (a file RouterOS saved) would
+  still be refused.
+- `decode <named pipe>` (refused in slice 5, since a `FileHandle` read on
+  it cannot be cancelled and Ctrl-C would wait on the producer): read a
+  FIFO through a cancellable stream, if `<(...)` is asked for.
+- `openDecode()` on a Node `Readable` that has gone quiet: closing the
+  decode wakes it, but Node's stream iterator queues `return()` behind the
+  pending read, so the stream stays open until data comes. Calling
+  `destroy()` when the input has one, as the CLI does for stdin, would
+  release it (final review of 888b9b5).
+- `openDecode()` hears the caller's abort through an `abort` listener; one
+  added earlier that calls `stopImmediatePropagation()` keeps it from
+  running, and a pull waiting on the input stays pending. A subscription
+  that survives that, if a caller shares its signal that way (final review
+  of 888b9b5).
+- A filter on a decoded file's `interface` (`ether1 rx`), if a lab asks for
+  the direction.
+- `decode`: reassemble IP fragments of UDP to the TZSP port, so a TZSP
+  datagram over the path MTU (the `filter-stream=no` loop, #5) decodes
+  whole.

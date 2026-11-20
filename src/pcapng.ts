@@ -98,6 +98,15 @@ export interface PcapngWriterOptions {
 
 export const DEFAULT_WRITE_STALL_MS = 30_000;
 
+/**
+ * What one pcapng section may hold in interfaces, which a reader keeps
+ * until the section ends: 4,096 of them, with 1 MiB of names. `decode`
+ * refuses a section past either (`decode/malformed`), and the writer
+ * refuses to start one (`write/invalid-option`), so what it saves decodes.
+ */
+export const MAX_INTERFACES = 4096;
+export const MAX_INTERFACE_NAME_BYTES = 1024 * 1024;
+
 const encoder = new TextEncoder();
 const pad4 = (n: number) => (n + 3) & ~3;
 
@@ -347,7 +356,22 @@ export function pcapngWriter(
 				throw error;
 			}
 			// Every block that open writes is made first: an option too long
-			// for pcapng is refused before the sink is touched.
+			// for pcapng, or more interfaces or names than decode reads back,
+			// is refused before the sink is touched.
+			const nameBytes = listeners.reduce(
+				(sum, l) => sum + encoder.encode(l.label).length,
+				0,
+			);
+			if (
+				listeners.length > MAX_INTERFACES ||
+				nameBytes > MAX_INTERFACE_NAME_BYTES
+			) {
+				throw new TzspSniffError(
+					"write/invalid-option",
+					`${listeners.length} listeners with ${nameBytes} bytes of labels pass what one pcapng section holds and decode reads back: ${MAX_INTERFACES} interfaces, ${MAX_INTERFACE_NAME_BYTES} bytes of names.`,
+					"Use fewer or shorter listener labels.",
+				);
+			}
 			const headers = [
 				sectionHeaderBlock(`tzsp-sniff ${VERSION}`),
 				...listeners.map(interfaceBlock),

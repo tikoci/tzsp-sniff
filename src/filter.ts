@@ -22,7 +22,7 @@ import {
 	IP_PROTOCOLS,
 } from "./dissect.ts";
 import { TzspSniffError } from "./errors.ts";
-import type { Capture } from "./listen.ts";
+import type { Entry } from "./records.ts";
 
 /** Every filter term, in the order help and the header list them. */
 export const FILTER_KEYS = [
@@ -78,12 +78,13 @@ export interface FilterSpec extends FilterTerms {
 }
 
 /**
- * Whether a captured frame passes. Pass the dissection when there is one,
- * to save dissecting again. A capture that is not a frame (a control,
- * unsupported or invalid TZSP record) has none of a frame's fields.
+ * Whether a frame passes: a listener's capture or a decoded entry. Pass the
+ * dissection when there is one, to save dissecting again. An entry that is
+ * not a frame (a control, unsupported or invalid TZSP record) has none of a
+ * frame's fields.
  */
 export interface PacketFilter {
-	(capture: Capture, dissection?: Dissection): boolean;
+	(entry: Entry, dissection?: Dissection): boolean;
 	/** The spec, checked and in canonical form: what the header shows. */
 	readonly spec: FilterSpec;
 	/** The spec as CLI flags, such as `["--proto tcp", "--not-host 10.0.0.1"]`. */
@@ -455,7 +456,7 @@ const toTerms = (checked: Checked): FilterTerms => {
 
 /** What the terms read from one packet, found once. */
 interface Facts {
-	capture: Capture;
+	entry: Entry;
 	protocols: Set<string>;
 	etherTypes: string[];
 	srcMac?: string;
@@ -466,9 +467,9 @@ interface Facts {
 	dstPorts: number[];
 }
 
-function factsOf(capture: Capture, d: Dissection | undefined): Facts {
+function factsOf(entry: Entry, d: Dissection | undefined): Facts {
 	const facts: Facts = {
-		capture,
+		entry,
 		protocols: new Set(),
 		etherTypes: [],
 		srcHosts: [],
@@ -562,9 +563,12 @@ function matchValue(key: FilterKey, v: Value, f: Facts): boolean {
 			return f.etherTypes.includes(v.text);
 		case "sender": {
 			const s = v.sender as NonNullable<Value["sender"]>;
-			const { listener, peer } = f.capture;
-			if (listener.label === s.label) return true;
-			if (s.ip === undefined || peerKey(peer.address) !== s.ip) return false;
+			// An input that names no listener or peer (a file RouterOS saved)
+			// has no sender to match.
+			const { listener, peer } = f.entry;
+			if (listener !== undefined && listener.label === s.label) return true;
+			if (!peer || s.ip === undefined || peerKey(peer.address) !== s.ip)
+				return false;
 			return s.port === undefined || s.port === peer.port;
 		}
 	}
@@ -586,11 +590,14 @@ export function createFilter(spec: FilterSpec = {}): PacketFilter {
 	const canonical: FilterSpec = toTerms(positive);
 	if (negativeTerms.length) canonical.not = toTerms(negative);
 
-	const filter = (capture: Capture, dissection?: Dissection) => {
+	const filter = (entry: Entry, dissection?: Dissection) => {
 		if (!positiveTerms.length && !negativeTerms.length) return true;
 		let d = dissection;
-		if (!d && capture.tzsp.kind === "packet") d = dissect(capture.tzsp.payload);
-		const facts = factsOf(capture, d);
+		if (!d) {
+			if (entry.tzsp === undefined) d = dissect(entry.frame);
+			else if (entry.tzsp.kind === "packet") d = dissect(entry.tzsp.payload);
+		}
+		const facts = factsOf(entry, d);
 		for (const [key, values] of positiveTerms)
 			if (!matchTerm(key, values, facts)) return false;
 		for (const [key, values] of negativeTerms)

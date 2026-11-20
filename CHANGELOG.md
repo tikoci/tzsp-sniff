@@ -8,6 +8,42 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 
 ### Added
 
+- `decode <file|->`: the capture pipeline over a pcapng or pcap file
+  (detected from its first bytes, either byte order), hex lines (`--input
+  hex`) or stdin, with no network: the same records, filters, `--fields`,
+  `--detail`, `--stats`, `--count` and `--expect`. A `--write` file decodes
+  to the records the capture printed (listener label and peer restored, an IPv6 zone too); a
+  file RouterOS saved decodes as Ethernet frames with their `interface` and
+  `comment`; UDP to the TZSP port in an Ethernet, raw IP or Linux cooked
+  capture is unwrapped (`--tzsp-port` to change the port). Other link types
+  end with `decode/link-type`; a corrupt file with `decode/malformed` and
+  exit 1, after the records before the damage; a file cut inside a block
+  warns `decode/truncated` and is `incomplete`. Lengths are capped before
+  anything is allocated (1 MiB per block or pcap record with its header,
+  128 KiB per hex line, 4,096 interfaces and 1 MiB of names per pcapng
+  section), and the structure is checked: pcap magic, version and snap
+  length, simple packet block sizes, a section's declared length (a multiple of
+  4), and
+  timestamps a Date can hold. Ctrl-C ends `decode -` even while the
+  producer keeps stdin open or is slow to clean up, and an aborted
+  `openDecode()` releases its input whether or not a record was read, and
+  closing one settles while a read waits on a quiet input; a path that is not a regular file (a named
+  pipe, a device) is refused with `decode/read-failed`, whose fix says to
+  pipe it to `decode -`. A flag of
+  `listen` under `decode`, and the reverse, is refused with
+  `cli/wrong-command`, which names the command it belongs to.
+- `openDecode(input, options)` in the library, with `DecodeOptions`,
+  `DecodeStream`, `MAX_BLOCK_BYTES`, `MAX_HEX_LINE`, `MAX_INTERFACES` and
+  `MAX_INTERFACE_NAME_BYTES`. Decoded records may lack `time`, `listener`
+  and `peer` (files that do not say them); `openCapture()` yields
+  `CaptureRecord`, which keeps them required. Records gain `interface` and
+  `comment`; headers carry `command` (`listen` or
+  `decode`); `stoppedBy` gains `end`; a decode's sender rows may lack
+  `listener` or `peer`. `packetRecord()`, `datagramRecord()`, filters and `summarize()`
+  take an `Entry`, which a listener's `Capture` is.
+- `--write` refuses listeners whose labels pass what one pcapng section
+  holds and `decode` reads back (4,096 interfaces, 1 MiB of names), with
+  `write/invalid-option` before the file is touched.
 - `--write <file>`: save every datagram the capture reads, as received,
   before filters and whatever `--format`, `--detail` or `--stats` print
   (the summary's `dropped` and `unread` count what it never read), as pcapng with link

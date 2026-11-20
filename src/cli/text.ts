@@ -6,8 +6,8 @@ import { filterFlags } from "../filter.ts";
 import type { RecordLayer } from "../records.ts";
 import type { TzspTag } from "../tzsp.ts";
 import type {
+	AnyHeaderRecord,
 	DatagramRecord,
-	HeaderRecord,
 	PacketRecord,
 	SummaryRecord,
 	TipRecord,
@@ -16,7 +16,14 @@ import type {
 
 const seconds = (ms: number) => `${Number((ms / 1000).toFixed(3))}s`;
 
-export function headerText(h: HeaderRecord): string {
+export function headerText(h: AnyHeaderRecord): string {
+	const flags = filterFlags(h.filters);
+	const keeping = flags.length ? `, keeping ${flags.join(" ")}` : "";
+	if (h.command === "decode") {
+		const until =
+			h.limits.count !== undefined ? `, until ${h.limits.count} packets` : "";
+		return `decoding ${h.input.name} (${h.input.format})${until}${keeping}\n`;
+	}
 	const where = h.listeners
 		.map(
 			(l) =>
@@ -32,8 +39,6 @@ export function headerText(h: HeaderRecord): string {
 	const limit = until.length
 		? `until ${until.join(" or ")}`
 		: "until interrupted";
-	const flags = filterFlags(h.filters);
-	const keeping = flags.length ? `, keeping ${flags.join(" ")}` : "";
 	const saving = h.write ? `, saving every datagram to ${h.write}` : "";
 	return `listening on UDP ${where}, ${limit}${keeping}${saving}\n`;
 }
@@ -61,6 +66,7 @@ const layerText = (l: RecordLayer) => {
 /** The `summary` detail fields, in this order, when the record has them. */
 const SUMMARY_KEYS = [
 	"peer",
+	"interface",
 	"length",
 	"kind",
 	"tzspType",
@@ -85,14 +91,30 @@ const summaryFields = (r: PacketRecord | DatagramRecord) => {
 	return parts.length ? `  ${parts.join(" ")}\n` : "";
 };
 
-/** A packet or record: time, the listener when there are several, the line, then detail. */
+/**
+ * A packet or record: its time, its source when asked (the listener, or a
+ * capture file's interface) and it has one, the line, then detail.
+ */
 export function entryText(
 	r: PacketRecord | DatagramRecord,
-	showListener: boolean,
+	showSource: boolean,
 ): string {
-	let text = `${r.time.slice(11, 23)}${showListener ? ` ${r.listener}` : ""} ${r.line}\n`;
+	// A file's interface name can hold a space (`ether1 rx`): bracketed.
+	const source = !showSource
+		? undefined
+		: (r.listener ??
+			(r.interface === undefined ? undefined : `[${r.interface}]`));
+	// From the T: a year past 9999 is written +275760-..., not at a fixed place.
+	const clock = r.time?.slice(
+		r.time.indexOf("T") + 1,
+		r.time.indexOf("T") + 13,
+	);
+	const head = [clock, source, r.line].filter((part) => part !== undefined);
+	let text = `${head.join(" ")}\n`;
 	text += summaryFields(r);
 	if (r.type === "packet" && r.layers) text += r.layers.map(layerText).join("");
+	if (r.comment !== undefined)
+		text += `  comment ${JSON.stringify(r.comment)}\n`;
 	if (r.type === "record" && r.tags) {
 		text += `  tags ${r.tags.map((t) => `${t.name}=${t.hex}`).join(" ")}\n`;
 	}
@@ -148,12 +170,21 @@ export function errorText(e: {
 	return `error ${e.code}: ${e.message}\n${e.fix ? `  fix: ${e.fix}\n` : ""}`;
 }
 
-export function summaryText(s: SummaryRecord): string {
+export function summaryText(
+	s: SummaryRecord,
+	command: "listen" | "decode" = "listen",
+): string {
 	const c = s.counters;
-	const lines = [
-		`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
-		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}${c.unsaved ? `, unsaved ${c.unsaved}` : ""}`,
-	];
+	const lines =
+		command === "decode"
+			? [
+					`summary: ${s.status}, ${s.stoppedBy === "end" ? "read to the end" : `stopped by ${s.stoppedBy}`}; the packets span ${seconds(s.durationMs)}`,
+					`  read ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}`,
+				]
+			: [
+					`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
+					`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}${c.unsaved ? `, unsaved ${c.unsaved}` : ""}`,
+				];
 	if (s.written) {
 		lines.push(
 			`  written: ${s.written.datagrams} datagrams, ${s.written.bytes} bytes`,
@@ -192,7 +223,11 @@ export function summaryText(s: SummaryRecord): string {
 	if (s.senders.top.length) {
 		lines.push("  senders:");
 		for (const v of s.senders.top) {
-			lines.push(`    ${v.listener} from ${v.peer}: ${v.datagrams} datagrams`);
+			const who =
+				v.listener !== undefined && v.peer !== undefined
+					? `${v.listener} from ${v.peer}`
+					: (v.listener ?? `from ${v.peer}`);
+			lines.push(`    ${who}: ${v.datagrams} datagrams`);
 		}
 		lines.push(...other(s.senders, "datagrams"));
 	}

@@ -15,6 +15,7 @@ import {
 	LINKTYPE_TZSP,
 	listen,
 	openCapture,
+	openDecode,
 	parseTzsp,
 	pcapngWriter,
 	TZSP_PORT,
@@ -170,6 +171,21 @@ try {
 	assert.ok(file.includes(REQUEST));
 	if (process.platform !== "win32")
 		assert.equal(statSync(path).mode & 0o777, 0o600);
+
+	// decode reads the file back under Node: the datagram, and the listener
+	// and peer the file recorded.
+	const decoded = [];
+	for await (const record of await openDecode(file, { detail: "full" }))
+		decoded.push(record);
+	assert.deepEqual(
+		decoded.map((r) => r.type),
+		["header", "packet", "summary"],
+	);
+	assert.equal(decoded[1].datagram, REQUEST.toString("hex"));
+	assert.equal(decoded[0].command, "decode");
+	assert.equal(typeof decoded[1].listener, "string");
+	assert.match(decoded[1].peer, /^127\.0\.0\.1:\d+$/);
+	assert.equal(decoded[2].status, "complete");
 } finally {
 	rmSync(dir, { recursive: true, force: true });
 }
@@ -267,5 +283,55 @@ assert.equal(pcapCode, 0);
 const pcap = Buffer.concat(chunks);
 assert.equal(pcap.readUInt32LE(0), 0x0a0d0d0a);
 assert.ok(pcap.includes(REQUEST));
+
+// decode in the built CLI under Node: a file RouterOS saved, by path and
+// on stdin, through Node's fs and stdin.
+const ROUTEROS_FILE = "test/fixtures/routeros/7.25.1-x86-sniffer-file.pcapng";
+for (const viaStdin of [false, true]) {
+	const decodeChild = spawn(
+		process.execPath,
+		[
+			"dist/cli/bin.js",
+			"decode",
+			viaStdin ? "-" : ROUTEROS_FILE,
+			"--format",
+			"jsonl",
+			"--fields",
+			"interface",
+		],
+		{
+			env: { PATH: process.env.PATH ?? "" },
+			stdio: ["pipe", "pipe", "inherit"],
+		},
+	);
+	let decodeOut = "";
+	let decodeCode;
+	try {
+		decodeChild.stdout.setEncoding("utf8");
+		decodeChild.stdout.on("data", (chunk) => {
+			decodeOut += chunk;
+		});
+		if (viaStdin) decodeChild.stdin.end(readFileSync(ROUTEROS_FILE));
+		else decodeChild.stdin.end();
+		[decodeCode] = await within(
+			10000,
+			`the built CLI, decode ${viaStdin ? "-" : "<file>"}`,
+			once(decodeChild, "close"),
+		);
+	} finally {
+		decodeChild.kill("SIGKILL");
+	}
+	assert.equal(decodeCode, 0);
+	const decodedRecords = decodeOut
+		.trimEnd()
+		.split("\n")
+		.map((l) => JSON.parse(l));
+	assert.equal(decodedRecords.length, 8);
+	assert.deepEqual(decodedRecords[1], {
+		type: "packet",
+		interface: "ether1 tx",
+	});
+	assert.equal(decodedRecords[7].status, "complete");
+}
 
 console.log(`node-smoke: ok (node ${process.version})`);

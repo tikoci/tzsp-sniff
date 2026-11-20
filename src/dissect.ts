@@ -949,6 +949,21 @@ class Dissector {
 export function dissect(frame: Uint8Array): Dissection {
 	const d = new Dissector(frame);
 	d.ethernet(0, frame.length);
+	return finish(frame, d);
+}
+
+/**
+ * Dissect bytes that start at the layer an EtherType names, with no
+ * Ethernet header: a raw IP or Linux cooked capture, for `decode` to find
+ * UDP to the TZSP port in. Not exported from the package.
+ */
+export function dissectFrom(bytes: Uint8Array, etherType: number): Dissection {
+	const d = new Dissector(bytes);
+	d.etherPayload(0, bytes.length, etherType, 0);
+	return finish(bytes, d);
+}
+
+function finish(frame: Uint8Array, d: Dissector): Dissection {
 	const result: Dissection = {
 		frame,
 		layers: d.layers,

@@ -14,6 +14,7 @@ import {
 	childEnv,
 	expectPortFree,
 	fixture,
+	interruptWithStdinOpen,
 	openPty,
 	send,
 	stalledTerminal,
@@ -362,4 +363,50 @@ describe("tzsp-sniff executable", () => {
 			},
 		);
 	});
+});
+
+describe("decode - with stdin left open", () => {
+	const decode = (args: string[]) => [
+		process.execPath,
+		"--no-env-file",
+		BIN,
+		"decode",
+		"-",
+		...args,
+	];
+
+	test.skipIf(process.platform === "win32")(
+		"Ctrl-C after a packet: the summary says interrupted, exit 0, without stdin closing",
+		async () => {
+			const result = await interruptWithStdinOpen(
+				decode(["--input", "hex", "--format", "jsonl"]),
+				new TextEncoder().encode(`${REQUEST}\n`),
+				{ ready: /"type":"packet"/, budgetMs: CHILD_MS },
+			);
+			expect(result.interrupted).toBe(true);
+			expect(result.code).toBe(0);
+			expect(result.ms).toBeLessThan(CHILD_MS / 2);
+			expect(records(result.stdout).at(-1)).toMatchObject({
+				type: "summary",
+				status: "interrupted",
+				stoppedBy: "interrupt",
+			});
+		},
+		CHILD_MS * 3,
+	);
+
+	test.skipIf(process.platform === "win32")(
+		"Ctrl-C while the format is still unknown: exit 130, nothing on stdout",
+		async () => {
+			const result = await interruptWithStdinOpen(
+				decode(["--format", "jsonl"]),
+				Uint8Array.of(0x0a, 0x0d),
+				{ settleMs: 500, budgetMs: CHILD_MS },
+			);
+			expect(result.code).toBe(130);
+			expect(result.ms).toBeLessThan(CHILD_MS / 2);
+			expect(result.stdout).toBe("");
+		},
+		CHILD_MS * 3,
+	);
 });

@@ -120,13 +120,18 @@ describe("selectFields", () => {
 		);
 		// A transmitted record (unsupported here) with a channel tag.
 		const tagged = bytes("010100011201060100");
-		const at = (d: Uint8Array): Capture => ({
+		// A capture file's packet also carries its interface and comment (decode).
+		const at = (
+			d: Uint8Array,
+		): Capture & { interface: string; comment: string } => ({
 			seq: 1,
 			time: 0,
 			listener: { address: "0.0.0.0", port: 1, label: "1" },
 			peer: { address: "127.0.0.1", port: 2, family: "IPv4" },
 			datagram: d,
 			tzsp: parseTzsp(d),
+			interface: "ether1 rx",
+			comment: "cpu:0 fp:0",
 		});
 		const fields = ENTRY_FIELDS as Record<string, Detail>;
 		const seen = new Set<string>();

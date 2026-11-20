@@ -45,6 +45,8 @@ const io: Io = {
 	stdout,
 	stderr,
 	signal: interrupt.signal,
+	// Only decode - reads it; touching process.stdin earlier would open it.
+	stdin: () => process.stdin,
 	stdoutTerminal: process.stdout.isTTY === true,
 	outputFiles: [1, 2].flatMap((fd) => {
 		try {

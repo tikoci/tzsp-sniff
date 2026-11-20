@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
+import { entryText } from "../../src/cli/text.ts";
 import {
 	DEFAULT_DURATION_MS,
 	helpText,
@@ -164,6 +166,14 @@ describe("flags and help", () => {
 		expect(a.flags.get("port")).toEqual(["1=a", "2"]);
 		expect(a.flags.get("count")).toEqual(["3"]);
 		expect(a.flags.get("stats")).toEqual([""]);
+		expect(parseArgs(["decode", "x.pcapng", "--count", "1"])).toMatchObject({
+			command: "decode",
+			input: "x.pcapng",
+		});
+		expect(parseArgs(["decode", "-"]).input).toBe("-");
+		// After --, a name that looks like a flag is the input.
+		expect(parseArgs(["decode", "--", "--odd"]).input).toBe("--odd");
+		expect(parseArgs(["decode", "--version"]).input).toBeUndefined();
 		// The same value twice is a no-op.
 		expect(parseArgs(["--count", "3", "--count=3"]).flags.get("count")).toEqual(
 			["3"],
@@ -172,7 +182,6 @@ describe("flags and help", () => {
 
 	test("refuses what it cannot apply, each with its own code", () => {
 		const cases: [string[], string][] = [
-			[["decode", "x.pcapng"], "cli/unknown-command"],
 			[["--nope"], "cli/unknown-flag"],
 			[["-c", "3"], "cli/unknown-flag"],
 			[["--count"], "cli/missing-value"],
@@ -188,6 +197,18 @@ describe("flags and help", () => {
 			// Own registry keys only, not inherited names.
 			[["constructor"], "cli/unknown-command"],
 			[["__proto__"], "cli/unknown-command"],
+			// decode: one input, and no flag of listen.
+			[["decode"], "cli/missing-argument"],
+			[["decode", "--count", "1"], "cli/missing-argument"],
+			[["decode", "a.pcapng", "b.pcapng"], "cli/unexpected-argument"],
+			[["decode", "a.pcapng", "--", "b"], "cli/unexpected-argument"],
+			[["decode", "a.pcapng", "--follow"], "cli/wrong-command"],
+			[["decode", "a.pcapng", "--port", "1"], "cli/wrong-command"],
+			[["decode", "-", "--write", "x.pcapng"], "cli/wrong-command"],
+			[["decode", "-", "--duration=5s"], "cli/wrong-command"],
+			[["--input", "hex"], "cli/wrong-command"],
+			[["listen", "--tzsp-port", "1"], "cli/wrong-command"],
+			[["-"], "cli/unexpected-argument"],
 		];
 		for (const [argv, code] of cases) {
 			expect({ argv, code: codeOf(() => parseArgs(argv)) }).toEqual({
@@ -1149,5 +1170,348 @@ describe("--write and --format pcapng", () => {
 		const file = readPcapng(readFileSync(path));
 		expect(file.packets).toHaveLength(1);
 		expect(file.trailing).toBe(0);
+	});
+});
+
+describe("decode", () => {
+	const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-decode-"));
+	afterAll(() => rmSync(dir, { recursive: true, force: true }));
+	const ROUTEROS = join(
+		import.meta.dir,
+		"..",
+		"fixtures",
+		"routeros",
+		"7.25.1-x86-sniffer-file.pcapng",
+	);
+	const planOf = (argv: string[]) => plan(parseArgs(argv));
+	const lines = (text: string) =>
+		text
+			.trimEnd()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+
+	test("a listen flag under decode names listen, and --format pcapng is listen's", () => {
+		let error: TzspSniffError | undefined;
+		try {
+			parseArgs(["decode", "x", "--follow"]);
+		} catch (e) {
+			error = e as TzspSniffError;
+		}
+		expect(error?.message).toBe("--follow is a flag of listen, not decode.");
+		expect(error?.fix).toContain("tzsp-sniff listen --follow");
+		expect(codeOf(() => planOf(["decode", "x", "--format", "pcapng"]))).toBe(
+			"cli/wrong-command",
+		);
+	});
+
+	test("plan: no default duration; --input and --tzsp-port are checked", () => {
+		const p = planOf([
+			"decode",
+			"x",
+			"--tzsp-port",
+			"37009,37010",
+			"--count",
+			"2",
+		]);
+		expect(p.tips).toEqual([]);
+		expect(p.decode).toEqual({
+			input: "x",
+			options: {
+				name: "x",
+				detail: "line",
+				tzspPorts: [37009, 37010],
+				count: 2,
+			},
+		});
+		expect(
+			planOf(["decode", "x", "--input", "hex"]).decode?.options.format,
+		).toBe("hex");
+		// Only a capture file has an interface or a comment.
+		expect(codeOf(() => planOf(["--fields", "interface"]))).toBe(
+			"cli/invalid-value",
+		);
+		expect(
+			planOf(["decode", "x", "--fields", "interface,comment"]).fields,
+		).toEqual(["interface", "comment"]);
+		expect(codeOf(() => planOf(["decode", "x", "--input", "json"]))).toBe(
+			"cli/invalid-value",
+		);
+		for (const port of ["0", "65536", "x", "1.5"]) {
+			expect(codeOf(() => planOf(["decode", "x", "--tzsp-port", port]))).toBe(
+				"cli/invalid-value",
+			);
+		}
+	});
+
+	test("text: packet lines on stdout, the start line and summary on stderr", async () => {
+		const m = memoryIo();
+		expect(await main(["decode", ROUTEROS], m.io)).toBe(0);
+		expect(m.stderr()).toStartWith(`decoding ${ROUTEROS} (pcapng)\n`);
+		expect(m.stderr()).toContain("summary: complete, read to the end;");
+		const out = m.stdout().trimEnd().split("\n");
+		expect(out).toHaveLength(6);
+		expect(out[0]).toMatch(
+			/^\d\d:\d\d:\d\d\.\d{3} 10\.0\.2\.15 > 10\.0\.2\.3 icmp echo-request/,
+		);
+		const summary = memoryIo();
+		expect(
+			await main(["decode", ROUTEROS, "--detail", "layers"], summary.io),
+		).toBe(0);
+		expect(summary.stdout()).toContain("[ether1 tx] 10.0.2.15 > 10.0.2.3");
+		expect(summary.stdout()).toContain("interface=ether1 tx");
+		expect(summary.stdout()).toContain('  comment "cpu:0 fp:0"\n');
+	});
+
+	test("jsonl --fields: the decode header, shaped packets, the summary last", async () => {
+		const m = memoryIo();
+		const code = await main(
+			[
+				"decode",
+				ROUTEROS,
+				"--format",
+				"jsonl",
+				"--fields",
+				"seq,interface,comment",
+			],
+			m.io,
+		);
+		expect(code).toBe(0);
+		const records = lines(m.stdout());
+		expect(records[0]).toMatchObject({
+			type: "header",
+			command: "decode",
+			input: { name: ROUTEROS, format: "pcapng" },
+			detail: "layers",
+		});
+		expect(records[1]).toEqual({
+			type: "packet",
+			seq: 1,
+			interface: "ether1 tx",
+			comment: "cpu:0 fp:0",
+		});
+		expect(records.at(-1)).toMatchObject({
+			type: "summary",
+			status: "complete",
+		});
+	});
+
+	test("stdin as -", async () => {
+		const m = memoryIo();
+		const data = readFileSync(ROUTEROS);
+		m.io.stdin = () =>
+			(async function* () {
+				yield data.subarray(0, 100);
+				yield data.subarray(100);
+			})();
+		expect(
+			await main(["decode", "-", "--count", "2", "--format", "jsonl"], m.io),
+		).toBe(0);
+		const records = lines(m.stdout());
+		expect(records[0]).toMatchObject({ input: { name: "-" } });
+		expect(records.filter((r) => r.type === "packet")).toHaveLength(2);
+		expect(records.at(-1)).toMatchObject({ stoppedBy: "count" });
+	});
+
+	test("stdin with no destroy(): stopping early runs its return(), so its cleanup runs", async () => {
+		const m = memoryIo();
+		const data = readFileSync(ROUTEROS);
+		let cleaned = false;
+		m.io.stdin = () =>
+			(async function* () {
+				try {
+					yield data.subarray(0, 100);
+					yield data.subarray(100);
+					yield data.subarray(0, 0);
+				} finally {
+					cleaned = true;
+				}
+			})();
+		expect(await main(["decode", "-", "--count", "1"], m.io)).toBe(0);
+		expect(cleaned).toBe(true);
+	});
+
+	test("stdin with no destroy(): an abort does not wait on a stalled return(), and a throwing one is dropped (final review of 71d400c)", async () => {
+		const source =
+			(onReturn: () => Promise<IteratorResult<Uint8Array>>) => () => ({
+				[Symbol.asyncIterator]() {
+					let sent = false;
+					return {
+						next(): Promise<IteratorResult<Uint8Array>> {
+							if (sent) return new Promise(() => {});
+							sent = true;
+							return Promise.resolve({
+								done: false,
+								value: new TextEncoder().encode(`${REQUEST}\n${REQUEST}\n`),
+							});
+						},
+						return: onReturn,
+					};
+				},
+			});
+		const controller = new AbortController();
+		const m = memoryIo({ signal: controller.signal });
+		const write = m.io.stdout.write;
+		m.io.stdout = {
+			async write(data) {
+				await write(data);
+				if (String(data).includes('"type":"packet"')) controller.abort();
+			},
+		};
+		m.io.stdin = source(() => new Promise(() => {}));
+		// main settles: the summary is written and nothing waits on return().
+		await main(["decode", "-", "--input", "hex", "--format", "jsonl"], m.io);
+		expect(lines(m.stdout()).at(-1)).toMatchObject({ status: "interrupted" });
+
+		const thrown = memoryIo();
+		thrown.io.stdin = source(() => {
+			throw new Error("the source's own cleanup failed");
+		});
+		expect(
+			await main(["decode", "-", "--input", "hex", "--count", "1"], thrown.io),
+		).toBe(0);
+	}, 2000);
+
+	test("stdin: an abort ends the wait on a return() that began before it (final review of 5ea61d0)", async () => {
+		const controller = new AbortController();
+		const m = memoryIo({ signal: controller.signal });
+		m.io.stdin = () => ({
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					return { done: false, value: new TextEncoder().encode("zzzz") };
+				},
+				// Not a format: cleanup starts with no abort, then stalls.
+				return(): Promise<IteratorResult<Uint8Array>> {
+					setTimeout(() => controller.abort(), 20);
+					return new Promise(() => {});
+				},
+			}),
+		});
+		expect(await main(["decode", "-"], m.io)).toBe(130);
+	}, 2000);
+
+	test.skipIf(process.platform === "win32")(
+		"a named pipe is refused without waiting for a writer, and the fix says to pipe it to - (final review of 71d400c)",
+		async () => {
+			const fifo = join(dir, "pipe");
+			expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
+			const m = memoryIo();
+			// No writer ever comes: a blocking open would never return.
+			expect(await main(["decode", fifo], m.io)).toBe(1);
+			expect(m.stderr()).toStartWith("error decode/read-failed: ");
+			expect(m.stderr()).toContain("not a regular file");
+			expect(m.stderr()).toContain("decode -");
+		},
+		2000,
+	);
+
+	test("an input it cannot read or tell: exit 1 with the code on stderr, nothing on stdout", async () => {
+		const notCapture = join(dir, "notes.txt");
+		writeFileSync(notCapture, `${REQUEST}\n`);
+		const cases: [string[], string][] = [
+			[["decode", join(dir, "missing.pcapng")], "decode/read-failed"],
+			[["decode", dir], "decode/read-failed"],
+			[["decode", notCapture], "decode/unknown-format"],
+		];
+		for (const [argv, code] of cases) {
+			const m = memoryIo();
+			expect({ argv, exit: await main(argv, m.io) }).toEqual({ argv, exit: 1 });
+			expect(m.stderr()).toStartWith(`error ${code}: `);
+			expect(m.stdout()).toBe("");
+		}
+		const hex = memoryIo();
+		expect(await main(["decode", notCapture, "--input", "hex"], hex.io)).toBe(
+			0,
+		);
+		expect(hex.stdout()).toContain("icmp echo-request");
+	});
+
+	test("a corrupt file: the packets before it, then exit 1 with decode/malformed", async () => {
+		const path = join(dir, "corrupt.pcapng");
+		const data = readFileSync(ROUTEROS);
+		// The first packet whole, then a block length over the limit.
+		const cut = Buffer.concat([data, Buffer.from("06000000fffffff0", "hex")]);
+		writeFileSync(path, cut);
+		const m = memoryIo();
+		expect(await main(["decode", path], m.io)).toBe(1);
+		expect(m.stdout().trimEnd().split("\n")).toHaveLength(6);
+		expect(m.stderr()).toContain("summary: error");
+		expect(m.stderr()).toContain("error decode/malformed: ");
+	});
+
+	test("a file cut inside a block: exit 0, a warning, incomplete; --expect still decides", async () => {
+		const path = join(dir, "cut.pcapng");
+		const data = readFileSync(ROUTEROS);
+		writeFileSync(path, data.subarray(0, data.length - 10));
+		const m = memoryIo();
+		expect(await main(["decode", path], m.io)).toBe(0);
+		expect(m.stdout().trimEnd().split("\n")).toHaveLength(5);
+		expect(m.stderr()).toContain("warning decode/truncated: ");
+		expect(m.stderr()).toContain("summary: incomplete");
+		expect(await main(["decode", path, "--expect", "6"], memoryIo().io)).toBe(
+			1,
+		);
+	});
+
+	test("round trip: listen --write, then decode, gives the same packet records", async () => {
+		const path = join(dir, "round-trip.pcapng");
+		const listened = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0=router-a",
+				"--count",
+				"6",
+				"--duration",
+				"5s",
+				"--format",
+				"jsonl",
+				"--detail",
+				"full",
+				"--write",
+				path,
+			],
+			listened.io,
+		);
+		await until(() => listened.out.length > 0);
+		await send(boundPort(listened.stdout()), STREAM);
+		expect(await run).toBe(0);
+		const decoded = memoryIo();
+		expect(
+			await main(
+				["decode", path, "--format", "jsonl", "--detail", "full"],
+				decoded.io,
+			),
+		).toBe(0);
+		const packets = (text: string) =>
+			lines(text).filter((r) => r.type === "packet" || r.type === "record");
+		const before = packets(listened.stdout());
+		expect(before).toHaveLength(6);
+		expect(before[0]).toMatchObject({ listener: "router-a" });
+		expect(packets(decoded.stdout())).toEqual(before);
+		// Past the 5 s capture budget, with room to set up and decode.
+	}, 15_000);
+});
+
+describe("text output (final review of 5ea61d0)", () => {
+	test("the clock is read from the T, so a six-digit year does not move it", () => {
+		const at = (time: string) =>
+			entryText(
+				{
+					type: "record",
+					seq: 1,
+					time,
+					kind: "control",
+					tzspType: "keepalive",
+					length: 4,
+					line: "tzsp keepalive",
+				} as Parameters<typeof entryText>[0],
+				false,
+			);
+		expect(at("2026-11-20T09:16:57.123Z")).toStartWith(
+			"09:16:57.123 tzsp keepalive\n",
+		);
+		expect(at("+275760-09-13T00:00:00.000Z")).toStartWith(
+			"00:00:00.000 tzsp keepalive\n",
+		);
 	});
 });
