@@ -13,6 +13,8 @@ export const COMMANDS = {
 		"Receive and print, until a limit is met or, with --follow, until interrupted. The default command.",
 	decode:
 		"Read a capture file (pcapng or pcap, detected) or hex lines (--input hex), or stdin as -, and print it as listen does. No network.",
+	dissectors:
+		"List the protocols this tool decodes: how each is matched (link, EtherType, IP protocol) and the fields its layer carries. No network, no input.",
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 
@@ -31,6 +33,7 @@ export interface FlagSpec {
 }
 
 const BOTH = ["listen", "decode"] as const;
+const ALL = ["listen", "decode", "dissectors"] as const;
 
 /** What each filter flag keeps; `--src-` and `--dst-` forms fix the direction. */
 const FILTER_HELP: Record<FilterKey, { value: string; help: string }> = {
@@ -143,8 +146,8 @@ export const FLAGS: readonly FlagSpec[] = [
 	{
 		name: "format",
 		value: "text|jsonl|pcapng",
-		commands: BOTH,
-		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array. pcapng (listen only): the datagrams the filters keep, as a capture file on stdout (as --write saves them), for a pipe or a redirect, not a terminal; everything else on stderr. --fields, --stats and --detail do not apply to it.",
+		commands: ALL,
+		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array. With dissectors, text or jsonl: one record per protocol, and no header or summary. pcapng (listen only): the datagrams the filters keep, as a capture file on stdout (as --write saves them), for a pipe or a redirect, not a terminal; everything else on stderr. --fields, --stats and --detail do not apply to it.",
 	},
 	{
 		name: "write",
@@ -193,17 +196,26 @@ export const FLAGS: readonly FlagSpec[] = [
 	...filterFlags(true),
 	{
 		name: "help",
-		commands: BOTH,
+		commands: ALL,
 		help: "Show this help (also -h).",
 	},
 	{
 		name: "version",
-		commands: BOTH,
+		commands: ALL,
 		help: "Print the version.",
 	},
 ];
 
 const BY_NAME = new Map(FLAGS.map((f) => [f.name, f]));
+
+/**
+ * Where a flag `dissectors` refused belongs, as a command that runs as
+ * printed: listen's help when listen takes it, else decode's.
+ */
+const ownerExample = (spec: FlagSpec) =>
+	spec.commands.includes("listen")
+		? "To capture with it, see tzsp-sniff listen --help"
+		: "To read a file with it, see tzsp-sniff decode --help";
 
 /** Own keys only: `constructor` or `__proto__` is not a command. */
 const isCommand = (name: string): name is CommandName =>
@@ -276,7 +288,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 				: `${command} takes no arguments, and got ${JSON.stringify(arg)}.`,
 			command === "decode"
 				? "Decode one file at a time."
-				: "Remove it; to read a capture file, run tzsp-sniff decode <file>.",
+				: command === "dissectors"
+					? `Remove it: dissectors lists every protocol. To see one, filter the list with jq: tzsp-sniff dissectors --format jsonl | jq 'select(.protocol == "tcp")'`
+					: "Remove it; to read a capture file, run tzsp-sniff decode <file>.",
 		);
 	};
 	for (; i < argv.length; i++) {
@@ -308,7 +322,9 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 				`--${name} is a flag of ${owners}, not ${command}.`,
 				command === "decode"
 					? `Drop it: decode reads a file to its end, with no network. To capture, run tzsp-sniff listen --${name}.`
-					: `Drop it, or run tzsp-sniff ${owners} --${name}.`,
+					: command === "dissectors"
+						? `Drop it: dissectors lists the protocols and reads no packets. ${ownerExample(spec)}`
+						: `Drop it, or run tzsp-sniff ${owners} --${name}.`,
 			);
 		}
 		if (!spec) {

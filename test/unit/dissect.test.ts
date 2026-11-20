@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import {
 	type Dissection,
-	dissect,
+	dissect as dissectFrame,
+	dissectors,
+	type FieldInfo,
 	formatIpv6,
 	type Layer,
 	MAX_IPV6_EXTENSIONS,
@@ -26,6 +28,63 @@ import {
 	tcp,
 	udp,
 } from "./helpers.ts";
+
+/** Declared fields, as `name` or `name[].item`, with their type and whether they may be absent. */
+function declared(fields: readonly FieldInfo[], prefix = "") {
+	const out = new Map<string, { type: string; optional: boolean }>();
+	for (const f of fields) {
+		out.set(`${prefix}${f.name}`, { type: f.type, optional: f.optional });
+		for (const [k, v] of declared(f.items ?? [], `${prefix}${f.name}[].`))
+			out.set(k, v);
+	}
+	return out;
+}
+const DECLARED = new Map(
+	dissectors().map((d) => [d.protocol, declared(d.fields)]),
+);
+
+/**
+ * Every field the vectors in this file produce, by protocol, as `name` or
+ * `name[].item` with the JSON type it had. The last test checks them
+ * against `dissectors()`, so a field the declarations miss, or one no vector
+ * here exercises, fails (#25).
+ */
+const produced = new Map<string, Map<string, Set<string>>>();
+/** Each layer or list item that lacks a field declared required. */
+const missing: string[] = [];
+const isItem = (i: unknown) =>
+	typeof i === "object" && i !== null && !Array.isArray(i);
+const jsonType = (v: unknown): string => {
+	if (!Array.isArray(v)) return v === null ? "null" : typeof v;
+	// An empty list says nothing of its items' type: either kind of list.
+	if (v.length === 0) return "[]";
+	if (v.every((i) => typeof i === "string")) return "string[]";
+	return v.every(isItem) ? "object[]" : "mixed[]";
+};
+function note(protocol: string, fields: object, prefix = "") {
+	const byName = produced.get(protocol) ?? new Map<string, Set<string>>();
+	produced.set(protocol, byName);
+	for (const [key, { optional }] of DECLARED.get(protocol) ?? []) {
+		// The fields at this level: `name` at the top, `prefix` + `item` within a list.
+		const rest = key.startsWith(prefix) ? key.slice(prefix.length) : undefined;
+		if (optional || rest === undefined || rest.includes("[]")) continue;
+		if (!(rest in fields)) missing.push(`${protocol} ${key}`);
+	}
+	for (const [name, value] of Object.entries(fields)) {
+		const key = `${prefix}${name}`;
+		byName.set(key, (byName.get(key) ?? new Set()).add(jsonType(value)));
+		if (Array.isArray(value))
+			for (const item of value)
+				if (isItem(item)) note(protocol, item, `${key}[].`);
+	}
+}
+/** `dissect`, noting every field each layer carries. */
+const dissect = (frame: Uint8Array): Dissection => {
+	const d = dissectFrame(frame);
+	for (const l of d.layers)
+		if (l.fields && l.protocol !== "data") note(l.protocol, l.fields);
+	return d;
+};
 
 const frameOf = (datagramHex: string) => parseTzsp(bytes(datagramHex)).payload;
 /** The layer type that can carry `P` (ICMP and ICMPv6 share one). */
@@ -607,11 +666,20 @@ describe("dissect: IPv6", () => {
 		});
 	});
 
-	test("ICMPv6 neighbor solicitation carries its target address", () => {
+	test("ICMPv6 neighbor solicitation and advertisement carry their target address", () => {
 		const ns = `8700000000000000${"20010db8000000000000000000000009"}`;
 		const d = packet({ next: 58, payload: ns });
 		expect(layer(d, "icmpv6").fields).toMatchObject({
 			typeName: "neighbor-solicitation",
+			targetAddress: "2001:db8::9",
+		});
+		// A neighbor advertisement: flags (router, solicited, override), then the target.
+		const na = `88000000e0000000${"20010db8000000000000000000000009"}`;
+		expect(layer(packet({ next: 58, payload: na }), "icmpv6").fields).toEqual({
+			type: 136,
+			code: 0,
+			typeName: "neighbor-advertisement",
+			length: 24,
 			targetAddress: "2001:db8::9",
 		});
 		const cut = packet({ next: 58, payload: ns.slice(0, 20) });
@@ -972,4 +1040,42 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 			}
 		}
 	});
+});
+
+// After every test in the file, in any order (`bun test --seed`): it reads
+// what all of them produced. A failure here is reported as an afterAll hook.
+afterAll(() => {
+	// Every field a vector produces is declared, with its type, and every
+	// declared field is produced.
+	{
+		const list = dissectors();
+		expect([...produced.keys()].sort()).toEqual(
+			list.map((d) => d.protocol).sort(),
+		);
+		for (const d of list) {
+			const want = declared(d.fields);
+			const got = produced.get(d.protocol) ?? new Map<string, Set<string>>();
+			expect({ protocol: d.protocol, fields: [...got.keys()].sort() }).toEqual({
+				protocol: d.protocol,
+				fields: [...want.keys()].sort(),
+			});
+			for (const [name, types] of got) {
+				const type = want.get(name)?.type;
+				for (const t of types) {
+					const ok =
+						t === type ||
+						(t === "[]" && (type === "string[]" || type === "object[]"));
+					expect({ protocol: d.protocol, name, type: t, ok }).toEqual({
+						protocol: d.protocol,
+						name,
+						type: t,
+						ok: true,
+					});
+				}
+			}
+		}
+	}
+	// Every layer and list item a vector produced carries each field not
+	// declared optional.
+	expect(missing).toEqual([]);
 });

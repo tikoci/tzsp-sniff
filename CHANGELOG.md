@@ -8,6 +8,12 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 
 ### Added
 
+- `dissectors` and `dissectors()`: each protocol decoded, how it is reached
+  (link type, EtherType, IP protocol) and its layer's fields, with type and
+  whether each can be absent; text, or one `dissector` record per protocol
+  with `--format jsonl`. The list is read from the registry that dispatch
+  goes through, as is `--proto`'s.
+
 - `decode <file|->`: the capture pipeline over a pcapng or pcap file
   (detected from its first bytes, either byte order), hex lines (`--input
   hex`) or stdin, with no network: the same records, filters, `--fields`,

@@ -15,8 +15,8 @@ rather than as a general sniffer.
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
 > ICMP, UDP and TCP, and saves captures as pcapng (`--write`, `--format
-> pcapng`); `decode` reads them again, and the files RouterOS saves.
-> `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
+> pcapng`); `decode` reads them again, and the files RouterOS saves;
+> `dissectors` lists what is decoded. `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
 
 ## Use
 
@@ -139,6 +139,27 @@ are refused with `cli/wrong-command`, which names `listen`. The summary's
 `durationMs` is the span of the file's timestamps, and `stoppedBy` is `end`
 once the input is read.
 
+### `dissectors`: what is decoded
+
+`tzsp-sniff dissectors` lists each protocol the tool decodes, how it is
+reached (the frame's link type, an EtherType, an IP protocol) and every field
+its layer carries at `--detail layers`, with its type and whether it can be
+absent. A field not marked optional is in every layer that has `fields`. A
+layer has no `fields` when the fixed part of its header is cut short or
+unreadable; one whose options are cut short keeps them, with a `problem`. It
+reads the same registry the decoder dispatches through, so the list is what
+runs. `--format jsonl` prints one `dissector` record per
+protocol, and nothing else:
+
+```sh
+tzsp-sniff dissectors
+tzsp-sniff dissectors --format jsonl | jq -r 'select(.protocol == "tcp") | .fields[].name'
+```
+
+The protocol names are the ones records carry in `protocols` and the ones
+`--proto` takes. Bytes no dissector reads are a `data` layer, which is not
+listed.
+
 ### Library
 
 The package will be `@tikoci/tzsp-sniff`, and runs on Node 22 or later or on
@@ -195,7 +216,8 @@ for await (const record of await openDecode(await readFile("cmr.pcapng"), {
 `listen()` is the layer below: the sockets and a bounded queue, yielding
 each datagram with its arrival time, UDP peer and listener label.
 `dissect(frame)` decodes one Ethernet frame into layers, each with its span
-and fields. `parseTzsp(datagram)` reads the TZSP header:
+and fields, and `dissectors()` lists what it decodes, as the `dissectors`
+command prints it. `parseTzsp(datagram)` reads the TZSP header:
 
 ```typescript
 import { dissect, parseTzsp } from "@tikoci/tzsp-sniff";

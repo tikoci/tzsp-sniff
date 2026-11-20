@@ -2,6 +2,7 @@
  * Text rendering of stream records, for people on a terminal. Plain text
  * only: no color, so nothing changes when stdout is not a terminal.
  */
+import type { DissectorInfo, DissectorMatch, FieldInfo } from "../dissect.ts";
 import { filterFlags } from "../filter.ts";
 import type { RecordLayer } from "../records.ts";
 import type { TzspTag } from "../tzsp.ts";
@@ -232,4 +233,26 @@ export function summaryText(
 		lines.push(...other(s.senders, "datagrams"));
 	}
 	return `${lines.join("\n")}\n`;
+}
+
+const matchText = (m: DissectorMatch) => `${m.by} ${m.value}`;
+
+/** One field line, and an `object[]` field's own fields under it as `name[].item`. */
+function fieldLines(fields: readonly FieldInfo[], prefix = ""): string[] {
+	return fields.flatMap((f) => [
+		`  ${prefix}${f.name} (${f.type}${f.optional ? ", optional" : ""}): ${f.description}`,
+		...(f.items ? fieldLines(f.items, `${prefix}${f.name}[].`) : []),
+	]);
+}
+
+/**
+ * One dissector, for `tzsp-sniff dissectors`: its protocol, name and
+ * reference, how it is matched, then a line per field.
+ */
+export function dissectorText(d: DissectorInfo): string {
+	return `${[
+		`${d.protocol}: ${d.name} (${d.reference})`,
+		`  matched by ${d.matches.map(matchText).join(", ")}`,
+		...fieldLines(d.fields),
+	].join("\n")}\n`;
 }
