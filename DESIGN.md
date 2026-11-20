@@ -624,8 +624,9 @@ open, it was made in the slice, and each is tested in
   waiting on the input, whatever the pull returned (a promise from
   another realm, any thenable), also when the source aborts from inside
   `next()`, also when that pull settled as the signal fired (a chunk
-  or the end), and also when the source rejects the pull because of the
-  abort (final review of 5ea61d0): the stream ends `interrupted` (or `openDecode` rejects,
+  or the end), and also when the source rejects the pull, or a sync
+  `next()` throws, because of the abort (final reviews of 5ea61d0 and
+  e06fc6a): the stream ends `interrupted` (or `openDecode` rejects,
   during detection, rather than call the input empty). The signal is
   checked before each packet is asked for, so bytes already buffered (a
   bad hex line) cannot turn an abort into `decode/malformed`, and an
@@ -633,9 +634,16 @@ open, it was made in the slice, and each is tested in
   a `count` already reached stays the reason. On an abort the source's
   `return()` is called but not awaited, during detection too, and with
   no pull running (a caller that aborts before reading a record still
-  releases the input); a wait on `return()` that began before the abort
-  ends at the abort too, in the reader and the stdin adapter (final
-  review of 5ea61d0). A source
+  releases the input). With a pull running, the pull's caller closes the
+  reader once `next()` has returned, so a sync generator that aborts
+  inside `next()` still runs its `finally`; buffered bytes are not
+  dropped on an abort, so a read under way is never reported as cut
+  short. The iterator is made before the reader listens on the signal,
+  and an abort while it is made rejects `openDecode`. A wait on
+  `return()` that began before the abort ends at the abort too, in the
+  reader and the stdin adapter, and after the input's end that makes
+  the stream `interrupted` (a `count` reached stays the reason; final
+  reviews of 5ea61d0 and e06fc6a). A source
   slow to clean up cannot hold the summary, and an async generator
   queues `return()` behind a read still pending. The CLI's stdin adapter destroys the
   stream there, so Ctrl-C ends `decode -` while the producer still holds

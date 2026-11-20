@@ -1503,3 +1503,144 @@ describe("final review of 5ea61d0", () => {
 		expect(summaryOf(records)).toMatchObject({ status: "interrupted" });
 	}, 2000);
 });
+
+describe("final review of e06fc6a", () => {
+	const n = pcapngBuilder();
+	const pcapng = () => Buffer.from(n.section() + n.iface(128), "hex");
+	const rejection = (p: Promise<unknown>) =>
+		p.then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+	const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+	test("a sync generator that aborts inside next(): rejected, and its finally runs", async () => {
+		const controller = new AbortController();
+		let finished = false;
+		function* source() {
+			try {
+				controller.abort();
+				yield pcapng();
+			} finally {
+				finished = true;
+			}
+		}
+		const error = await rejection(
+			openDecode(source(), { signal: controller.signal }),
+		);
+		expect(error).toMatchObject({ name: "AbortError" });
+		await tick();
+		expect(finished).toBe(true);
+	});
+
+	test("making the iterator: a throw leaves no listener, an abort is the abort and closes it", async () => {
+		const controller = new AbortController();
+		let listeners = 0;
+		const add = controller.signal.addEventListener.bind(controller.signal);
+		const remove = controller.signal.removeEventListener.bind(
+			controller.signal,
+		);
+		controller.signal.addEventListener = ((...a: Parameters<typeof add>) => {
+			listeners += 1;
+			add(...a);
+		}) as typeof add;
+		controller.signal.removeEventListener = ((
+			...a: Parameters<typeof remove>
+		) => {
+			listeners -= 1;
+			remove(...a);
+		}) as typeof remove;
+		const throwing = {
+			[Symbol.iterator](): Iterator<Uint8Array> {
+				throw new Error("no iterator");
+			},
+		};
+		await rejection(openDecode(throwing, { signal: controller.signal }));
+		expect(listeners).toBe(0);
+
+		const aborting = new AbortController();
+		let returned = false;
+		const source = {
+			[Symbol.iterator](): Iterator<Uint8Array> {
+				aborting.abort();
+				return {
+					next: () => ({ done: true, value: undefined }),
+					return() {
+						returned = true;
+						return { done: true, value: undefined };
+					},
+				};
+			},
+		};
+		const error = await rejection(
+			openDecode(source, { format: "hex", signal: aborting.signal }),
+		);
+		expect(error).toMatchObject({ name: "AbortError" });
+		expect(returned).toBe(true);
+	});
+
+	test("a sync next() that aborts and throws the reason: the abort, not decode/read-failed", async () => {
+		const controller = new AbortController();
+		const source = {
+			[Symbol.iterator]: (): Iterator<Uint8Array> => ({
+				next() {
+					controller.abort();
+					throw controller.signal.reason;
+				},
+			}),
+		};
+		const error = await rejection(
+			openDecode(source, { signal: controller.signal }),
+		);
+		expect(error).not.toBeInstanceOf(TzspSniffError);
+		expect(error).toMatchObject({ name: "AbortError" });
+	});
+
+	test("an abort as an intact file's first read starts: interrupted, never truncated", async () => {
+		const p = pcapBuilder({ linkType: 128 });
+		const controller = new AbortController();
+		const stream = await openDecode(
+			Buffer.from(p.header() + p.record(KEEPALIVE), "hex"),
+			{ format: "pcap", signal: controller.signal },
+		);
+		const it = stream[Symbol.asyncIterator]();
+		const records: StreamRecord[] = [];
+		records.push((await it.next()).value as StreamRecord);
+		const pending = it.next();
+		controller.abort();
+		for (let r = await pending; !r.done; r = await it.next())
+			records.push(r.value as StreamRecord);
+		const warnings = records.flatMap((r) =>
+			r.type === "warning" ? [r.code] : [],
+		);
+		expect(warnings).not.toContain("decode/truncated");
+		expect(summaryOf(records)).toMatchObject({ status: "interrupted" });
+	});
+
+	test("an abort while return() stalls at the end of the input: interrupted, not complete", async () => {
+		const controller = new AbortController();
+		let sent = false;
+		const source = {
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					if (sent) return { done: true, value: undefined };
+					sent = true;
+					return { done: false, value: pcapng() };
+				},
+				return(): Promise<IteratorResult<Uint8Array>> {
+					setTimeout(() => controller.abort(), 20);
+					return new Promise(() => {});
+				},
+			}),
+		};
+		const records: StreamRecord[] = [];
+		for await (const r of await openDecode(source, {
+			signal: controller.signal,
+		}))
+			records.push(r);
+		expect(summaryOf(records)).toMatchObject({
+			status: "interrupted",
+			stoppedBy: "interrupt",
+		});
+	}, 2000);
+});

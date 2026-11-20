@@ -339,6 +339,11 @@ export async function openDecode(
 	if (signal?.aborted) throw signal.reason;
 
 	const reader = new ByteReader(input, signal);
+	// Aborted while the input's iterator was made: nothing is opened.
+	if (signal?.aborted) {
+		await reader.close(false);
+		throw signal.reason;
+	}
 	let format = options.format;
 	if (format === undefined) {
 		let head: Uint8Array;
@@ -482,6 +487,9 @@ export async function openDecode(
 			// On an interrupt the source is told to stop, not waited for.
 			await reader.close(stoppedBy !== "interrupt").catch(() => {});
 		}
+		// Aborted while the source cleaned up after its end: the abort ended
+		// the wait, so it is the reason. A count reached stays.
+		if (!stoppedBy && signal?.aborted) stoppedBy = "interrupt";
 		stoppedBy ??= "end";
 
 		if (state.truncatedAt !== undefined && !failure) {

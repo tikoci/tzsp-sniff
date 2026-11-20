@@ -110,23 +110,35 @@ export class ByteReader {
 	/** A pull from the input has not settled (an abort stopped waiting for it). */
 	private pulling = false;
 	private readonly signal: AbortSignal | undefined;
-	/** Closes the input on an abort, even with no pull running. */
+	/**
+	 * On an abort with no pull running, the source is told to finish, so a
+	 * caller that aborts and reads no further still releases it. A pull
+	 * running sees the abort itself and its caller closes the reader:
+	 * return() then would land inside a sync generator still in next().
+	 * Buffered bytes stay, so a read already under way is not cut short.
+	 */
 	private readonly onAbort = () => {
-		void this.close(false);
+		if (!this.pulling) void this.finish();
 	};
 	/** Bytes taken so far: where the next read starts. */
 	position = 0;
 
 	constructor(input: DecodeInput, signal?: AbortSignal) {
 		this.signal = signal;
-		signal?.addEventListener("abort", this.onAbort, { once: true });
 		if (input instanceof Uint8Array) {
 			if (input.length) this.push(input);
 			this.ended = true;
-		} else {
-			this.iterator = isAsync(input)
-				? input[Symbol.asyncIterator]()
-				: input[Symbol.iterator]();
+			return;
+		}
+		// Made before the listener, so an iterator that cannot be made
+		// leaves none on the caller's signal.
+		this.iterator = isAsync(input)
+			? input[Symbol.asyncIterator]()
+			: input[Symbol.iterator]();
+		if (signal) {
+			signal.addEventListener("abort", this.onAbort, { once: true });
+			// Aborted while the iterator was made: the event has fired.
+			if (signal.aborted) this.onAbort();
 		}
 	}
 
@@ -138,20 +150,23 @@ export class ByteReader {
 	/** One more span of the input, copied; false at its end. */
 	private async more(): Promise<boolean> {
 		const signal = this.signal;
+		// First: after an abort the source is released, which is not its end.
+		if (signal?.aborted) throw new InputAborted();
 		if (this.rest) {
-			if (signal?.aborted) throw new InputAborted();
 			// A copy, as a plain Uint8Array: Buffer#slice would be a view.
 			this.push(new Uint8Array(this.rest.subarray(0, SPAN)));
 			this.rest =
 				this.rest.length > SPAN ? this.rest.subarray(SPAN) : undefined;
 			return true;
 		}
-		if (this.ended || !this.iterator) return false;
-		if (signal?.aborted) throw new InputAborted();
+		const iterator = this.iterator;
+		if (this.ended || !iterator) return false;
 		// Normalized: a promise from another realm, or any thenable, is raced
-		// against the abort too, and a sync iterator's result is one as well.
-		const next = Promise.resolve(this.iterator.next());
+		// against the abort too, a sync iterator's result is one as well, and
+		// a sync throw is a rejection. Pulling from before the call, so an
+		// abort inside a sync next() does not call return() inside it.
 		this.pulling = true;
+		const next = (async () => iterator.next())();
 		next.then(
 			() => {
 				this.pulling = false;
@@ -311,23 +326,28 @@ export class ByteReader {
 	 * with the reader still open closes it, a pull running or not.
 	 */
 	async close(wait = true): Promise<void> {
-		this.signal?.removeEventListener("abort", this.onAbort);
-		const iterator = this.iterator;
-		this.iterator = undefined;
-		this.ended = true;
+		const done = this.finish();
 		this.rest = undefined;
 		this.chunks = [];
 		this.head = 0;
 		this.offset = 0;
 		this.buffered = 0;
-		if (!iterator?.return) return;
-		const done = (async () => iterator.return?.())().then(
+		if (!done || !wait || this.pulling) return;
+		if (this.signal) await untilAbort(done, this.signal);
+		else await done;
+	}
+
+	/** Tell the source to finish, once; settles when its return() does. */
+	private finish(): Promise<void> | undefined {
+		this.signal?.removeEventListener("abort", this.onAbort);
+		const iterator = this.iterator;
+		this.iterator = undefined;
+		this.ended = true;
+		if (!iterator?.return) return undefined;
+		return (async () => iterator.return?.())().then(
 			() => {},
 			() => {},
 		);
-		if (!wait || this.pulling) return;
-		if (this.signal) await untilAbort(done, this.signal);
-		else await done;
 	}
 }
 
