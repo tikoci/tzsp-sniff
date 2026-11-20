@@ -643,7 +643,16 @@ open, it was made in the slice, and each is tested in
   `return()` that began before the abort ends at the abort too, in the
   reader and the stdin adapter, and after the input's end that makes
   the stream `interrupted` (a `count` reached stays the reason; final
-  reviews of 5ea61d0 and e06fc6a). A source
+  reviews of 5ea61d0 and e06fc6a). The reader stops a waiting pull with
+  its own signal, fired by the caller's abort and by `close()`, so
+  closing a decode (`return()`) settles while a read waits on a quiet
+  input, with no signal given too. An abort keeps its reason as given
+  (`null` too), also when it comes as the format is told or as the
+  iterator is made; a buffered bad record parsed as the signal fires is
+  the interrupt, not `decode/malformed`; and an interrupted stream never
+  warns `decode/empty`, `capture/no-frames` or `capture/all-filtered`,
+  since it has not seen all the input holds (final review of 888b9b5).
+  A source
   slow to clean up cannot hold the summary, and an async generator
   queues `return()` behind a read still pending. The CLI's stdin adapter destroys the
   stream there, so Ctrl-C ends `decode -` while the producer still holds

@@ -1644,3 +1644,135 @@ describe("final review of e06fc6a", () => {
 		});
 	}, 2000);
 });
+
+describe("final review of 888b9b5", () => {
+	const settled = <T>(p: Promise<T>, ms = 500) =>
+		Promise.race([
+			p.then(
+				(value) => ({ value }),
+				(error: unknown) => ({ error }),
+			),
+			new Promise<"pending">((resolve) =>
+				setTimeout(() => resolve("pending"), ms),
+			),
+		]);
+	const stalled = (onReturn = () => {}) => ({
+		[Symbol.asyncIterator]: () => ({
+			next: () => new Promise<IteratorResult<Uint8Array>>(() => {}),
+			async return(): Promise<IteratorResult<Uint8Array>> {
+				onReturn();
+				return { done: true, value: undefined };
+			},
+		}),
+	});
+
+	test("return() while a read waits on the input, with no signal: both settle", async () => {
+		let returned = 0;
+		const stream = await openDecode(
+			stalled(() => {
+				returned += 1;
+			}),
+			{ format: "hex" },
+		);
+		const it = stream[Symbol.asyncIterator]();
+		await it.next();
+		const pending = it.next();
+		const closing = it.return?.(undefined) as Promise<unknown>;
+		expect(await settled(closing)).not.toBe("pending");
+		expect(await settled(pending)).not.toBe("pending");
+		expect(returned).toBe(1);
+	});
+
+	test("detection keeps the abort and its reason verbatim", async () => {
+		// Valid bytes, aborted as openDecode runs.
+		const now = new AbortController();
+		const opening = openDecode(ROUTEROS_FILE, { signal: now.signal });
+		now.abort();
+		expect(await settled(opening)).toEqual({ error: now.signal.reason });
+
+		// A factory that aborts, then throws.
+		const factory = new AbortController();
+		const throwing = {
+			[Symbol.iterator](): Iterator<Uint8Array> {
+				factory.abort();
+				throw new Error("the factory's own error");
+			},
+		};
+		expect(
+			await settled(openDecode(throwing, { signal: factory.signal })),
+		).toEqual({ error: factory.signal.reason });
+
+		// A reason of null stays null.
+		const nulled = new AbortController();
+		const waiting = openDecode(stalled(), { signal: nulled.signal });
+		nulled.abort(null);
+		expect(await settled(waiting)).toEqual({ error: null });
+	});
+
+	test("an abort as a buffered bad record is parsed: interrupted, not decode/malformed", async () => {
+		const p = pcapBuilder({ linkType: 128 });
+		const inputs: [string, Uint8Array, NonNullable<DecodeOptions["format"]>][] =
+			[
+				["hex", new TextEncoder().encode("zz\n"), "hex"],
+				[
+					"pcap",
+					Buffer.from(p.header() + p.record(KEEPALIVE, 0, 1_000_000), "hex"),
+					"pcap",
+				],
+			];
+		for (const [name, input, format] of inputs) {
+			const controller = new AbortController();
+			const stream = await openDecode(input, {
+				format,
+				signal: controller.signal,
+			});
+			const it = stream[Symbol.asyncIterator]();
+			const records: StreamRecord[] = [(await it.next()).value];
+			const pending = it.next();
+			controller.abort();
+			for (let r = await pending; !r.done; r = await it.next())
+				records.push(r.value);
+			expect({ name, status: summaryOf(records).status }).toEqual({
+				name,
+				status: "interrupted",
+			});
+		}
+	});
+
+	test("an abort with no read running drops the unread bytes", async () => {
+		const controller = new AbortController();
+		const reader = new ByteReader(
+			[new Uint8Array(8 * 1024 * 1024)],
+			controller.signal,
+		);
+		await reader.peek(4);
+		controller.abort();
+		const state = reader as unknown as {
+			buffered: number;
+			chunks: Uint8Array[];
+			rest: Uint8Array | undefined;
+		};
+		expect([state.buffered, state.chunks.length, state.rest]).toEqual([
+			0,
+			0,
+			undefined,
+		]);
+	});
+
+	test("an abort right after the header: interrupted, never decode/empty", async () => {
+		const controller = new AbortController();
+		const stream = await openDecode(ROUTEROS_FILE, {
+			signal: controller.signal,
+		});
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "header") controller.abort();
+		}
+		const warnings = records.flatMap((r) =>
+			r.type === "warning" ? [r.code] : [],
+		);
+		expect(warnings).not.toContain("decode/empty");
+		expect(summaryOf(records)).toMatchObject({ status: "interrupted" });
+	});
+});

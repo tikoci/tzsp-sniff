@@ -111,14 +111,26 @@ export class ByteReader {
 	private pulling = false;
 	private readonly signal: AbortSignal | undefined;
 	/**
-	 * On an abort with no pull running, the source is told to finish, so a
-	 * caller that aborts and reads no further still releases it. A pull
-	 * running sees the abort itself and its caller closes the reader:
-	 * return() then would land inside a sync generator still in next().
-	 * Buffered bytes stay, so a read already under way is not cut short.
+	 * Stops a pull waiting on the input: the caller's abort, or close().
+	 * The reader's own, so close() wakes a pull with no signal given too.
+	 */
+	private readonly halt = new AbortController();
+	/** Reads under way (`read`, `peek`, `readLine`), which keep their bytes. */
+	private reading = 0;
+	/**
+	 * On an abort a pull waiting on the input stops. With no pull running,
+	 * the source is told to finish, so a caller that aborts and reads no
+	 * further still releases it, and with no read under way the unread
+	 * bytes go too. A pull running sees the abort itself and its caller
+	 * closes the reader: return() then would land inside a sync generator
+	 * still in next(). A read under way keeps its bytes, so it is not cut
+	 * short; its caller closes the reader.
 	 */
 	private readonly onAbort = () => {
-		if (!this.pulling) void this.finish();
+		this.halt.abort();
+		if (this.pulling) return;
+		void this.finish();
+		if (!this.reading) this.drop();
 	};
 	/** Bytes taken so far: where the next read starts. */
 	position = 0;
@@ -149,9 +161,10 @@ export class ByteReader {
 
 	/** One more span of the input, copied; false at its end. */
 	private async more(): Promise<boolean> {
-		const signal = this.signal;
-		// First: after an abort the source is released, which is not its end.
-		if (signal?.aborted) throw new InputAborted();
+		const signal = this.halt.signal;
+		// First: after an abort or close() the source is released, which is
+		// not its end.
+		if (signal.aborted) throw new InputAborted();
 		if (this.rest) {
 			// A copy, as a plain Uint8Array: Buffer#slice would be a view.
 			this.push(new Uint8Array(this.rest.subarray(0, SPAN)));
@@ -176,31 +189,27 @@ export class ByteReader {
 			},
 		);
 		let result: IteratorResult<Uint8Array>;
-		if (signal) {
-			let onAbort = () => {};
-			try {
-				result = await Promise.race([
-					next,
-					new Promise<never>((_, reject) => {
-						onAbort = () => reject(new InputAborted());
-						signal.addEventListener("abort", onAbort, { once: true });
-						// Aborted while next() ran: the event has already fired.
-						if (signal.aborted) onAbort();
-					}),
-				]);
-			} catch (error) {
-				// A source that rejects its read because of the abort: the abort.
-				if (signal.aborted) throw new InputAborted();
-				throw error;
-			} finally {
-				signal.removeEventListener("abort", onAbort);
-			}
-			// A pull that settled as the signal fired (a chunk or the end):
-			// the abort still wins.
+		let onAbort = () => {};
+		try {
+			result = await Promise.race([
+				next,
+				new Promise<never>((_, reject) => {
+					onAbort = () => reject(new InputAborted());
+					signal.addEventListener("abort", onAbort, { once: true });
+					// Aborted while next() ran: the event has already fired.
+					if (signal.aborted) onAbort();
+				}),
+			]);
+		} catch (error) {
+			// A source that rejects its read because of the abort: the abort.
 			if (signal.aborted) throw new InputAborted();
-		} else {
-			result = await next;
+			throw error;
+		} finally {
+			signal.removeEventListener("abort", onAbort);
 		}
+		// A pull that settled as the signal fired (a chunk or the end):
+		// the abort still wins.
+		if (signal.aborted) throw new InputAborted();
 		if (result.done) {
 			this.ended = true;
 			return false;
@@ -273,8 +282,20 @@ export class ByteReader {
 
 	/** Up to `n` bytes without taking them. */
 	async peek(n: number): Promise<Uint8Array> {
-		await this.fill(n);
-		return this.copy(n);
+		return this.under(async () => {
+			await this.fill(n);
+			return this.copy(n);
+		});
+	}
+
+	/** Run a read, counted, so an abort meanwhile keeps its bytes. */
+	private async under<T>(read: () => Promise<T>): Promise<T> {
+		this.reading += 1;
+		try {
+			return await read();
+		} finally {
+			this.reading -= 1;
+		}
 	}
 
 	/**
@@ -282,7 +303,7 @@ export class ByteReader {
 	 * against its cap before asking.
 	 */
 	async read(n: number): Promise<Uint8Array> {
-		return this.take(Math.min(await this.fill(n), n));
+		return this.under(async () => this.take(Math.min(await this.fill(n), n)));
 	}
 
 	/**
@@ -290,7 +311,13 @@ export class ByteReader {
 	 * `too-long` when `max` bytes pass with no newline. Each byte is scanned
 	 * once, however the input is chunked.
 	 */
-	async readLine(max: number): Promise<Uint8Array | undefined | "too-long"> {
+	readLine(max: number): Promise<Uint8Array | undefined | "too-long"> {
+		return this.under(() => this.line(max));
+	}
+
+	private async line(
+		max: number,
+	): Promise<Uint8Array | undefined | "too-long"> {
 		let index = this.head;
 		let from = this.offset;
 		let scanned = 0;
@@ -327,14 +354,21 @@ export class ByteReader {
 	 */
 	async close(wait = true): Promise<void> {
 		const done = this.finish();
+		this.drop();
+		// A pull still waiting on the input stops.
+		this.halt.abort();
+		if (!done || !wait || this.pulling) return;
+		if (this.signal) await untilAbort(done, this.signal);
+		else await done;
+	}
+
+	/** Let go of the bytes not yet taken. */
+	private drop() {
 		this.rest = undefined;
 		this.chunks = [];
 		this.head = 0;
 		this.offset = 0;
 		this.buffered = 0;
-		if (!done || !wait || this.pulling) return;
-		if (this.signal) await untilAbort(done, this.signal);
-		else await done;
 	}
 
 	/** Tell the source to finish, once; settles when its return() does. */

@@ -338,11 +338,13 @@ export async function openDecode(
 	const filter = createFilter(options.filter);
 	if (signal?.aborted) throw signal.reason;
 
-	const reader = new ByteReader(input, signal);
-	// Aborted while the input's iterator was made: nothing is opened.
-	if (signal?.aborted) {
-		await reader.close(false);
-		throw signal.reason;
+	let reader: ByteReader;
+	try {
+		reader = new ByteReader(input, signal);
+	} catch (error) {
+		// Aborted while the input's iterator was made: the abort, verbatim.
+		if (signal?.aborted) throw signal.reason;
+		throw error;
 	}
 	let format = options.format;
 	if (format === undefined) {
@@ -350,10 +352,12 @@ export async function openDecode(
 		try {
 			head = await reader.peek(4);
 		} catch (error) {
-			const aborted = error instanceof InputAborted;
+			const aborted = error instanceof InputAborted || !!signal?.aborted;
 			// Aborted: the source's return() is started, not waited for.
 			await reader.close(!aborted).catch(() => {});
-			if (aborted) throw signal?.reason ?? error;
+			// The reason as given, null or undefined too.
+			if (signal?.aborted) throw signal.reason;
+			if (aborted) throw error;
 			throw readFailure(error);
 		}
 		format = detectFormat(head);
@@ -372,6 +376,13 @@ export async function openDecode(
 					: "Give a pcapng or pcap capture, or --input hex for hex lines.",
 			);
 		}
+	}
+
+	// Aborted while the format was told, or while the iterator was made:
+	// nothing is opened.
+	if (signal?.aborted) {
+		await reader.close(false).catch(() => {});
+		throw signal.reason;
 	}
 
 	const limits: DecodeHeaderRecord["limits"] = {};
@@ -476,7 +487,9 @@ export async function openDecode(
 				// signal fired then: that is an interrupt, not the end.
 				if (!stoppedBy && signal?.aborted) throw new InputAborted();
 			} catch (error) {
-				if (error instanceof InputAborted) stoppedBy = "interrupt";
+				// A buffered bad record parsed as the signal fired: the abort.
+				if (error instanceof InputAborted || signal?.aborted)
+					stoppedBy = "interrupt";
 				else {
 					failure =
 						error instanceof TzspSniffError ? error : readFailure(error);
@@ -501,7 +514,8 @@ export async function openDecode(
 			} satisfies WarningRecord;
 		}
 		let emptyCase: WarningRecord | undefined;
-		if (!failure && counters.packets === 0) {
+		// Only at the input's end: an interrupt has not seen what it held.
+		if (!failure && stoppedBy === "end" && counters.packets === 0) {
 			if (counters.datagrams === 0) {
 				emptyCase = {
 					type: "warning",

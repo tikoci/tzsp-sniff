@@ -26,7 +26,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   4), and
   timestamps a Date can hold. Ctrl-C ends `decode -` even while the
   producer keeps stdin open or is slow to clean up, and an aborted
-  `openDecode()` releases its input whether or not a record was read; a path that is not a regular file (a named
+  `openDecode()` releases its input whether or not a record was read, and
+  closing one settles while a read waits on a quiet input; a path that is not a regular file (a named
   pipe, a device) is refused with `decode/read-failed`, whose fix says to
   pipe it to `decode -`. A flag of
   `listen` under `decode`, and the reverse, is refused with
