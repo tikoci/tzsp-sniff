@@ -276,6 +276,38 @@ describe("dissectors", () => {
 		expect(m.stderr()).toContain("--format jsonl");
 	});
 
+	test("--version still checks --format", async () => {
+		for (const format of ["json", "pcapng", "xml"]) {
+			const m = memoryIo();
+			expect(
+				await main(["dissectors", "--version", "--format", format], m.io),
+			).toBe(2);
+			expect(m.stdout()).toBe("");
+		}
+	});
+
+	test("a refused flag's fix is a command that takes it, and the jq hint runs as printed", async () => {
+		const fixOf = (argv: string[]) => {
+			try {
+				parseArgs(argv);
+			} catch (error) {
+				if (error instanceof TzspSniffError) return error.fix;
+			}
+			return undefined;
+		};
+		expect(fixOf(["dissectors", "--input", "hex"])).toContain(
+			"run tzsp-sniff decode <file> --input pcapng|pcap|hex",
+		);
+		expect(fixOf(["dissectors", "--tzsp-port", "1"])).toContain(
+			"run tzsp-sniff decode <file> --tzsp-port <port>",
+		);
+		expect(fixOf(["dissectors", "--count", "1"])).toContain(
+			"run tzsp-sniff listen --count <n>",
+		);
+		const jq = fixOf(["dissectors", "tcp"]) ?? "";
+		expect(jq).toEndWith(`jq 'select(.protocol == "tcp")'`);
+	});
+
 	test("a capture flag is refused with where it applies", async () => {
 		const m = memoryIo();
 		expect(await main(["dissectors", "--count", "1"], m.io)).toBe(2);

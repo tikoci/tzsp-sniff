@@ -613,9 +613,9 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 	try {
 		const args = parseArgs(argv);
 		if (args.command === "dissectors") {
-			planned = args.flags.has("version")
-				? "version"
-				: { dissectors: dissectorsFormat(args) };
+			// Checked even for --version, as listen's and decode's flags are.
+			const format = dissectorsFormat(args);
+			planned = args.flags.has("version") ? "version" : { dissectors: format };
 		} else {
 			// Plan even for --version, so a flag it would refuse is refused here
 			// too; only --help comes first, so a broken command can still ask.

@@ -29,6 +29,20 @@ import {
 	udp,
 } from "./helpers.ts";
 
+/** Declared fields, as `name` or `name[].item`, with their type and whether they may be absent. */
+function declared(fields: readonly FieldInfo[], prefix = "") {
+	const out = new Map<string, { type: string; optional: boolean }>();
+	for (const f of fields) {
+		out.set(`${prefix}${f.name}`, { type: f.type, optional: f.optional });
+		for (const [k, v] of declared(f.items ?? [], `${prefix}${f.name}[].`))
+			out.set(k, v);
+	}
+	return out;
+}
+const DECLARED = new Map(
+	dissectors().map((d) => [d.protocol, declared(d.fields)]),
+);
+
 /**
  * Every field the vectors in this file produce, by protocol, as `name` or
  * `name[].item` with the JSON type it had. The last test checks them
@@ -36,25 +50,32 @@ import {
  * here exercises, fails (#25).
  */
 const produced = new Map<string, Map<string, Set<string>>>();
-const jsonType = (v: unknown): string =>
-	Array.isArray(v)
-		? v.every((i) => typeof i === "string")
-			? "string[]"
-			: "object[]"
-		: typeof v;
+/** Each layer or list item that lacks a field declared required. */
+const missing: string[] = [];
+const isItem = (i: unknown) =>
+	typeof i === "object" && i !== null && !Array.isArray(i);
+const jsonType = (v: unknown): string => {
+	if (!Array.isArray(v)) return v === null ? "null" : typeof v;
+	// An empty list says nothing of its items' type: either kind of list.
+	if (v.length === 0) return "[]";
+	if (v.every((i) => typeof i === "string")) return "string[]";
+	return v.every(isItem) ? "object[]" : "mixed[]";
+};
 function note(protocol: string, fields: object, prefix = "") {
 	const byName = produced.get(protocol) ?? new Map<string, Set<string>>();
 	produced.set(protocol, byName);
+	for (const [key, { optional }] of DECLARED.get(protocol) ?? []) {
+		// The fields at this level: `name` at the top, `prefix` + `item` within a list.
+		const rest = key.startsWith(prefix) ? key.slice(prefix.length) : undefined;
+		if (optional || rest === undefined || rest.includes("[]")) continue;
+		if (!(rest in fields)) missing.push(`${protocol} ${key}`);
+	}
 	for (const [name, value] of Object.entries(fields)) {
 		const key = `${prefix}${name}`;
-		// An empty list says nothing of its items' type: either kind of list.
-		const type =
-			Array.isArray(value) && value.length === 0 ? "[]" : jsonType(value);
-		byName.set(key, (byName.get(key) ?? new Set()).add(type));
+		byName.set(key, (byName.get(key) ?? new Set()).add(jsonType(value)));
 		if (Array.isArray(value))
 			for (const item of value)
-				if (typeof item === "object" && item !== null)
-					note(protocol, item, `${key}[].`);
+				if (isItem(item)) note(protocol, item, `${key}[].`);
 	}
 }
 /** `dissect`, noting every field each layer carries. */
@@ -645,11 +666,20 @@ describe("dissect: IPv6", () => {
 		});
 	});
 
-	test("ICMPv6 neighbor solicitation carries its target address", () => {
+	test("ICMPv6 neighbor solicitation and advertisement carry their target address", () => {
 		const ns = `8700000000000000${"20010db8000000000000000000000009"}`;
 		const d = packet({ next: 58, payload: ns });
 		expect(layer(d, "icmpv6").fields).toMatchObject({
 			typeName: "neighbor-solicitation",
+			targetAddress: "2001:db8::9",
+		});
+		// A neighbor advertisement: flags (router, solicited, override), then the target.
+		const na = `88000000e0000000${"20010db8000000000000000000000009"}`;
+		expect(layer(packet({ next: 58, payload: na }), "icmpv6").fields).toEqual({
+			type: 136,
+			code: 0,
+			typeName: "neighbor-advertisement",
+			length: 24,
 			targetAddress: "2001:db8::9",
 		});
 		const cut = packet({ next: 58, payload: ns.slice(0, 20) });
@@ -1012,17 +1042,6 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 	});
 });
 
-/** Declared fields, as `name` or `name[].item`, with their type and whether they may be absent. */
-function declared(fields: readonly FieldInfo[], prefix = "") {
-	const out = new Map<string, { type: string; optional: boolean }>();
-	for (const f of fields) {
-		out.set(`${prefix}${f.name}`, { type: f.type, optional: f.optional });
-		for (const [k, v] of declared(f.items ?? [], `${prefix}${f.name}[].`))
-			out.set(k, v);
-	}
-	return out;
-}
-
 // Last in the file: it reads what every test above produced.
 describe("dissect: fields match dissectors()", () => {
 	test("every field a vector produces is declared, with its type, and every declared field is produced", () => {
@@ -1054,41 +1073,7 @@ describe("dissect: fields match dissectors()", () => {
 		}
 	});
 
-	test("a layer with fields carries every field not declared optional", () => {
-		const samples: [string, Uint8Array][] = [
-			[
-				"tcp",
-				bytes(
-					eth(
-						0x0800,
-						ipv4({ proto: 6, payload: tcp({ sp: 1, dp: 2, flags: 0x02 }) }),
-					),
-				),
-			],
-			["udp", bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(1, 2, "") })))],
-			[
-				"ipv6",
-				bytes(eth(0x86dd, ipv6({ next: 58, payload: echo(128, 1, 1) }))),
-			],
-		];
-		for (const [protocol, frame] of samples) {
-			const d = dissectFrame(frame);
-			const l = d.layers.find((x) => x.protocol === protocol);
-			const want = declared(
-				dissectors().find((x) => x.protocol === protocol)?.fields ?? [],
-			);
-			for (const [name, { optional }] of want) {
-				if (optional || name.includes("[]")) continue;
-				expect({
-					protocol,
-					name,
-					present: l?.fields && name in l.fields,
-				}).toEqual({
-					protocol,
-					name,
-					present: true,
-				});
-			}
-		}
+	test("every layer and list item a vector produced carries each field not declared optional", () => {
+		expect(missing).toEqual([]);
 	});
 });

@@ -216,6 +216,33 @@ describe("field declarations", () => {
 			// @ts-expect-error: b may be absent, so it is optional
 			b: { type: "string", description: "" },
 		};
-		expect([missing, extra, wrongType, notOptional]).toHaveLength(4);
+		interface Nested {
+			list: { a: number }[];
+			numbers: number[];
+		}
+		const nestedMissing: FieldDecls<Nested> = {
+			// @ts-expect-error: the item's a is missing
+			list: { type: "object[]", description: "", items: {} },
+			// @ts-expect-error: a list of numbers has no declaration
+			numbers: { type: "object[]", description: "", items: 1 },
+		};
+		const nestedWrong: FieldDecls<Nested> = {
+			list: {
+				type: "object[]",
+				description: "",
+				// @ts-expect-error: the item's a is a number
+				items: { a: { type: "string", description: "" } },
+			},
+			// @ts-expect-error: a list of numbers has no declaration
+			numbers: { type: "string[]", description: "" },
+		};
+		expect([
+			missing,
+			extra,
+			wrongType,
+			notOptional,
+			nestedMissing,
+			nestedWrong,
+		]).toHaveLength(6);
 	});
 });

@@ -208,6 +208,17 @@ export const FLAGS: readonly FlagSpec[] = [
 
 const BY_NAME = new Map(FLAGS.map((f) => [f.name, f]));
 
+/**
+ * Where a flag `dissectors` refused belongs, as a command line to adapt:
+ * listen's when listen takes it, else decode's with its file.
+ */
+const ownerExample = (spec: FlagSpec) => {
+	const value = spec.value ? ` ${spec.value}` : "";
+	return spec.commands.includes("listen")
+		? `To capture with it, run tzsp-sniff listen --${spec.name}${value}`
+		: `To read a file with it, run tzsp-sniff decode <file> --${spec.name}${value}`;
+};
+
 /** Own keys only: `constructor` or `__proto__` is not a command. */
 const isCommand = (name: string): name is CommandName =>
 	Object.hasOwn(COMMANDS, name);
@@ -280,7 +291,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 			command === "decode"
 				? "Decode one file at a time."
 				: command === "dissectors"
-					? `Remove it: dissectors lists every protocol. To see one, filter the list: tzsp-sniff dissectors --format jsonl | jq 'select(.protocol == "tcp")'.`
+					? `Remove it: dissectors lists every protocol. To see one, filter the list with jq: tzsp-sniff dissectors --format jsonl | jq 'select(.protocol == "tcp")'`
 					: "Remove it; to read a capture file, run tzsp-sniff decode <file>.",
 		);
 	};
@@ -314,7 +325,7 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 				command === "decode"
 					? `Drop it: decode reads a file to its end, with no network. To capture, run tzsp-sniff listen --${name}.`
 					: command === "dissectors"
-						? `Drop it: dissectors lists the protocols and reads no packets. To capture, run tzsp-sniff listen --${name}.`
+						? `Drop it: dissectors lists the protocols and reads no packets. ${ownerExample(spec)}`
 						: `Drop it, or run tzsp-sniff ${owners} --${name}.`,
 			);
 		}

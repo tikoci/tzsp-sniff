@@ -860,19 +860,29 @@ become a module and a line.
 
 - **Fields are declared against the fields interface.** A declaration is
   keyed by the interface's keys (`FieldDecls<F>`), so a field added to the
-  interface and not declared, a declared field not in it, a wrong type or a
-  wrong `optional` does not compile (`test/unit/registry.test.ts` holds
-  that with `@ts-expect-error` cases). At run time, every field a vector in
-  `test/unit/dissect.test.ts` produces must be declared with its type, and
-  every declared field must be produced by one: the first run found ICMP
-  (v4) declared with ICMPv6's neighbor-discovery target.
+  interface and not declared, a wrong type, a wrong `optional`, a list item
+  missing a field or a list of anything but strings or objects does not
+  compile (`test/unit/registry.test.ts` holds that with `@ts-expect-error`
+  cases). A declared key not in the interface is caught by TypeScript's
+  excess-property check only in an object literal written in place, not one
+  spread in or passed as a variable (cross-review of 043ac64); the run-time
+  check below catches it, since no vector produces such a field. At run
+  time, every field a vector in `test/unit/dissect.test.ts` produces must be
+  declared with its type, every declared field must be produced by one, and
+  every layer and list item a vector produces must carry each field not
+  declared optional: the first run found ICMP (v4) declared with ICMPv6's
+  neighbor-discovery target.
 - **Each match is checked by dispatch**: a minimal frame per declared
   EtherType (under Ethernet and a VLAN tag) and per IP protocol (in IPv4
   and IPv6) reaches the dissector that declares it; every other EtherType
   and IP protocol is `data`; no match is claimed twice.
 - **Not built until a dissector needs them:** matches on a UDP or TCP port,
   and the heuristic hook for protocols on unusual ports. No 0.1.0 dissector
-  is reached either way.
+  is reached either way, and a port match needs choices best made with its
+  first user (destination or source port first, a port shared by two
+  protocols, a first IP fragment). #25 as filed had the registry accept a
+  port match; this PR leaves it out, for the maintainer to confirm
+  (BACKLOG.md).
 - **`dissectors` prints text or JSONL**, one `dissector` record per
   protocol with no `header` or `summary`: it is a fixed list, not a
   capture, so it has no stream to frame. `--format json` is refused as on

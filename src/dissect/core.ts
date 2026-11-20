@@ -172,13 +172,22 @@ type FieldDecl<T> = { description: string } & ([NonNullable<T>] extends [string]
 			: [NonNullable<T>] extends [string[]]
 				? { type: "string[]" }
 				: [NonNullable<T>] extends [(infer E)[]]
-					? { type: "object[]"; items: FieldDecls<E> }
+					? [E] extends [readonly unknown[]]
+						? never
+						: [E] extends [object]
+							? { type: "object[]"; items: FieldDecls<E> }
+							: never
 					: never) &
 	(undefined extends T ? { optional: true } : { optional?: never });
 
 /**
  * A declaration for every field of `F`, keyed by its name: a field missing
- * here, one not in `F`, a wrong type or a wrong `optional` does not compile.
+ * here, a wrong type or a wrong `optional` does not compile, nor does a
+ * list of anything but strings or objects. A key not in `F` is caught by
+ * TypeScript's excess-property check, which applies to an object literal
+ * written in place, not to one spread in or passed as a variable; the
+ * runtime test in test/unit/dissect.test.ts catches that case, since no
+ * vector produces such a field.
  */
 export type FieldDecls<F> = { [K in keyof F]-?: FieldDecl<F[K]> };
 
