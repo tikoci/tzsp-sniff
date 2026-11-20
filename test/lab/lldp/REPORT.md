@@ -38,6 +38,12 @@ and every LLDP datagram with its arrival time.
 | `optional-tlvs` | `/ip/neighbor/discovery-settings/set lldp-vlan-info=yes lldp-mac-phy-config=yes lldp-max-frame-size=yes` | one LLDPDU |
 | `identity-utf8` | `/system/identity/set name="lab-café"` | one LLDPDU |
 
+Each experiment keeps only LLDPDUs that show its setup: the identity as
+booted and none of the optional TLVs, then the optional TLVs, then the UTF-8
+identity (`SHOWS` in lab.ts, checked again by fixtures.ts). One sent before
+the setup took effect would be counted as `stale`; the committed runs
+predate that count, and every LLDPDU in them passes the check.
+
 Discovery as booted, the same on all three:
 `protocol=cdp,lldp,mndp discover-interval=30s discover-interface-list=static
 lldp-med=yes lldp-vlan-info=no lldp-mac-phy-config=no lldp-max-frame-size=no

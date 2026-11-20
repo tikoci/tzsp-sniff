@@ -26,6 +26,10 @@
  * - `identity-utf8`: a system identity with a non-ASCII letter, to see how
  *   the system name TLV encodes it.
  *
+ * Each experiment keeps only LLDPDUs that show its setup (`SHOWS`): the
+ * booted identity and no optional TLVs, the optional TLVs, then the UTF-8
+ * identity. One sent before the setup took effect is counted as `stale`.
+ *
  * Output. Every experiment must see its LLDPDUs before anything is written
  * to evidence/<version>-<arch>.json; a failed run writes to
  * .scratch/lldp-lab/ instead.
@@ -33,6 +37,7 @@
 import { createSocket, type Socket } from "node:dgram";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { dissect } from "../../../src/dissect.ts";
 import { parseTzsp, toHex } from "../../../src/tzsp.ts";
 import {
 	accelerator,
@@ -92,6 +97,8 @@ export interface Evidence {
 	ipv6?: string;
 	/** Datagrams seen that were not LLDP, counted. */
 	other: number;
+	/** LLDPDUs that did not show their experiment's setup (sent before it), counted. */
+	stale?: number;
 	experiments: Experiment[];
 	failure?: string;
 }
@@ -103,11 +110,55 @@ export function isLldp(datagram: Uint8Array): boolean {
 	return d.payload[12] === 0x88 && d.payload[13] === 0xcc;
 }
 
+/** What an experiment's LLDPDU must show to be its own, given the identity as booted. */
+export type Shows = (fields: LldpView, identity: string) => boolean;
+
+/** The parts of an LLDPDU an experiment's check reads. */
+export interface LldpView {
+	systemName?: string;
+	/** `ouiName/subtypeName` of each organizationally specific TLV. */
+	org: string[];
+}
+
+const OPTIONAL_TLVS = [
+	"ieee-802.3/mac-phy-config-status",
+	"ieee-802.3/max-frame-size",
+	"ieee-802.1/port-and-protocol-vlan-id",
+];
+const hasOptional = (v: LldpView) =>
+	OPTIONAL_TLVS.every((t) => v.org.includes(t));
+
+/**
+ * Each experiment's check: an LLDPDU sent before its setup took effect (one
+ * in flight when the setup ran) is not its own, whenever it arrives.
+ */
+export const SHOWS: Record<string, Shows> = {
+	default: (v, identity) => v.systemName === identity && !hasOptional(v),
+	"optional-tlvs": (v, identity) => v.systemName === identity && hasOptional(v),
+	"identity-utf8": (v) => v.systemName === UTF8_IDENTITY && hasOptional(v),
+};
+
+/** The LLDP layer of a TZSP datagram, as the checks read it; `undefined` when there is none. */
+export function lldpView(datagram: Uint8Array): LldpView | undefined {
+	const d = parseTzsp(datagram);
+	if (d.kind !== "packet" || !d.payload) return undefined;
+	const l = dissect(d.payload).layers.find((x) => x.protocol === "lldp");
+	if (l?.protocol !== "lldp" || !l.fields) return undefined;
+	const view: LldpView = {
+		org: l.fields.otherTlvs.map((t) => `${t.ouiName}/${t.subtypeName}`),
+	};
+	if (l.fields.systemName !== undefined) view.systemName = l.fields.systemName;
+	return view;
+}
+
 export class Listener {
 	private sock: Socket | undefined;
 	private start = 0;
 	kept: Datagram[] = [];
 	other = 0;
+	/** LLDPDUs that arrived during an experiment but did not show its setup. */
+	stale = 0;
+	private accept: (datagram: Uint8Array) => boolean = () => false;
 	/** A socket error after the bind, which fails the experiment waiting. */
 	private failed: Error | undefined;
 	async open(): Promise<number> {
@@ -127,16 +178,18 @@ export class Listener {
 		});
 		sock.on("message", (msg) => {
 			const b = new Uint8Array(msg);
-			if (isLldp(b))
+			if (!isLldp(b)) this.other++;
+			else if (this.accept(b))
 				this.kept.push({ at: Date.now() - this.start, hex: toHex(b) });
-			else this.other++;
+			else this.stale++;
 		});
 		await bound;
 		return sock.address().port;
 	}
-	/** Start a new experiment: what arrives from now on is its own. */
-	reset(): void {
+	/** Start a new experiment: what arrives from now on, and passes `accept`, is its own. */
+	reset(accept: (datagram: Uint8Array) => boolean): void {
 		this.kept = [];
+		this.accept = accept;
 		this.start = Date.now();
 	}
 	async waitFor(count: number): Promise<Datagram[]> {
@@ -175,12 +228,18 @@ const field = (output: string, name: string) =>
 async function experiment(
 	router: Router,
 	listener: Listener,
+	identity: string,
 	name: string,
 	setup: string[],
 	count: number,
 ): Promise<Experiment> {
+	const shows = SHOWS[name];
+	if (!shows) throw new Error(`no check for experiment ${name}`);
 	for (const command of setup) await router.exec(command);
-	listener.reset();
+	listener.reset((b) => {
+		const view = lldpView(b);
+		return view !== undefined && shows(view, identity);
+	});
 	return { name, setup, datagrams: await listener.waitFor(count) };
 }
 
@@ -231,25 +290,25 @@ async function lab(target: Target): Promise<boolean> {
 		);
 		await router.exec("/tool/sniffer/start");
 		await router.sniffing();
-		ev.experiments.push(
-			await experiment(router, listener, "default", [], 2),
-			await experiment(
-				router,
-				listener,
+		const identity = ev.identity;
+		if (!identity) throw new Error("the router reported no identity");
+		// Each experiment is kept as it completes, so a failed run's evidence
+		// still has the ones before it.
+		const plan: [string, string[], number][] = [
+			["default", [], 2],
+			[
 				"optional-tlvs",
 				[
 					"/ip/neighbor/discovery-settings/set lldp-vlan-info=yes lldp-mac-phy-config=yes lldp-max-frame-size=yes",
 				],
 				1,
-			),
-			await experiment(
-				router,
-				listener,
-				"identity-utf8",
-				[`/system/identity/set name="${UTF8_IDENTITY}"`],
-				1,
-			),
-		);
+			],
+			["identity-utf8", [`/system/identity/set name="${UTF8_IDENTITY}"`], 1],
+		];
+		for (const [name, setup, count] of plan)
+			ev.experiments.push(
+				await experiment(router, listener, identity, name, setup, count),
+			);
 		await router.exec("/tool/sniffer/stop");
 		ok = true;
 	} catch (e) {
@@ -258,6 +317,7 @@ async function lab(target: Target): Promise<boolean> {
 			ev.failure += ` (${JSON.stringify((e as { step: unknown }).step)})`;
 	} finally {
 		ev.other = listener.other;
+		ev.stale = listener.stale;
 		try {
 			listener.close();
 		} catch {}

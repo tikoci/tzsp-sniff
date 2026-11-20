@@ -7,8 +7,9 @@
  *
  * Reads only test/lab/lldp/evidence/, which is committed, so it gives the
  * same output on any checkout. The new set is built beside the old one and
- * checked (every run complete, every experiment present, every datagram
- * LLDP) before it replaces the old set; on any error the old set stays.
+ * checked (every run complete, every experiment present with its count,
+ * every datagram an LLDPDU that shows its experiment's setup) before it
+ * replaces the old set; on any error the old set stays.
  */
 import {
 	mkdir,
@@ -19,7 +20,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { type Evidence, isLldp } from "./lab.ts";
+import { type Evidence, lldpView, SHOWS } from "./lab.ts";
 
 const EVIDENCE = join(import.meta.dir, "evidence");
 const FIXTURES = join(import.meta.dir, "..", "..", "fixtures");
@@ -69,9 +70,13 @@ async function build(): Promise<LldpFixture[]> {
 				throw new Error(
 					`${name}: ${want} has ${exp?.datagrams.length ?? 0} LLDPDUs, not ${count}`,
 				);
-			for (const d of exp.datagrams)
-				if (!isLldp(Buffer.from(d.hex, "hex")))
-					throw new Error(`${name} ${want}: not LLDP`);
+			for (const d of exp.datagrams) {
+				const view = lldpView(Buffer.from(d.hex, "hex"));
+				if (!view || !SHOWS[want]?.(view, ev.identity))
+					throw new Error(
+						`${name} ${want}: an LLDPDU that does not show its setup`,
+					);
+			}
 			const file = `${stem}-${want}.hex`;
 			await writeFile(
 				join(NEXT, file),
