@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type Dissection,
-	dissect,
+	dissect as dissectFrame,
+	dissectors,
+	type FieldInfo,
 	formatIpv6,
 	type Layer,
 	MAX_IPV6_EXTENSIONS,
@@ -26,6 +28,42 @@ import {
 	tcp,
 	udp,
 } from "./helpers.ts";
+
+/**
+ * Every field the vectors in this file produce, by protocol, as `name` or
+ * `name[].item` with the JSON type it had. The last test checks them
+ * against `dissectors()`, so a field the declarations miss, or one no vector
+ * here exercises, fails (#25).
+ */
+const produced = new Map<string, Map<string, Set<string>>>();
+const jsonType = (v: unknown): string =>
+	Array.isArray(v)
+		? v.every((i) => typeof i === "string")
+			? "string[]"
+			: "object[]"
+		: typeof v;
+function note(protocol: string, fields: object, prefix = "") {
+	const byName = produced.get(protocol) ?? new Map<string, Set<string>>();
+	produced.set(protocol, byName);
+	for (const [name, value] of Object.entries(fields)) {
+		const key = `${prefix}${name}`;
+		// An empty list says nothing of its items' type: either kind of list.
+		const type =
+			Array.isArray(value) && value.length === 0 ? "[]" : jsonType(value);
+		byName.set(key, (byName.get(key) ?? new Set()).add(type));
+		if (Array.isArray(value))
+			for (const item of value)
+				if (typeof item === "object" && item !== null)
+					note(protocol, item, `${key}[].`);
+	}
+}
+/** `dissect`, noting every field each layer carries. */
+const dissect = (frame: Uint8Array): Dissection => {
+	const d = dissectFrame(frame);
+	for (const l of d.layers)
+		if (l.fields && l.protocol !== "data") note(l.protocol, l.fields);
+	return d;
+};
 
 const frameOf = (datagramHex: string) => parseTzsp(bytes(datagramHex)).payload;
 /** The layer type that can carry `P` (ICMP and ICMPv6 share one). */
@@ -969,6 +1007,87 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 				frame.set(bytes(eth(type, "")));
 				frame.set(body, 14);
 				expectSpansInside(dissect(frame));
+			}
+		}
+	});
+});
+
+/** Declared fields, as `name` or `name[].item`, with their type and whether they may be absent. */
+function declared(fields: readonly FieldInfo[], prefix = "") {
+	const out = new Map<string, { type: string; optional: boolean }>();
+	for (const f of fields) {
+		out.set(`${prefix}${f.name}`, { type: f.type, optional: f.optional });
+		for (const [k, v] of declared(f.items ?? [], `${prefix}${f.name}[].`))
+			out.set(k, v);
+	}
+	return out;
+}
+
+// Last in the file: it reads what every test above produced.
+describe("dissect: fields match dissectors()", () => {
+	test("every field a vector produces is declared, with its type, and every declared field is produced", () => {
+		const list = dissectors();
+		expect([...produced.keys()].sort()).toEqual(
+			list.map((d) => d.protocol).sort(),
+		);
+		for (const d of list) {
+			const want = declared(d.fields);
+			const got = produced.get(d.protocol) ?? new Map<string, Set<string>>();
+			expect({ protocol: d.protocol, fields: [...got.keys()].sort() }).toEqual({
+				protocol: d.protocol,
+				fields: [...want.keys()].sort(),
+			});
+			for (const [name, types] of got) {
+				const type = want.get(name)?.type;
+				for (const t of types) {
+					const ok =
+						t === type ||
+						(t === "[]" && (type === "string[]" || type === "object[]"));
+					expect({ protocol: d.protocol, name, type: t, ok }).toEqual({
+						protocol: d.protocol,
+						name,
+						type: t,
+						ok: true,
+					});
+				}
+			}
+		}
+	});
+
+	test("a layer with fields carries every field not declared optional", () => {
+		const samples: [string, Uint8Array][] = [
+			[
+				"tcp",
+				bytes(
+					eth(
+						0x0800,
+						ipv4({ proto: 6, payload: tcp({ sp: 1, dp: 2, flags: 0x02 }) }),
+					),
+				),
+			],
+			["udp", bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(1, 2, "") })))],
+			[
+				"ipv6",
+				bytes(eth(0x86dd, ipv6({ next: 58, payload: echo(128, 1, 1) }))),
+			],
+		];
+		for (const [protocol, frame] of samples) {
+			const d = dissectFrame(frame);
+			const l = d.layers.find((x) => x.protocol === protocol);
+			const want = declared(
+				dissectors().find((x) => x.protocol === protocol)?.fields ?? [],
+			);
+			for (const [name, { optional }] of want) {
+				if (optional || name.includes("[]")) continue;
+				expect({
+					protocol,
+					name,
+					present: l?.fields && name in l.fields,
+				}).toEqual({
+					protocol,
+					name,
+					present: true,
+				});
 			}
 		}
 	});

@@ -13,6 +13,7 @@ import {
 	OutputClosedError,
 	plan,
 } from "../../src/cli/main.ts";
+import { dissectors } from "../../src/dissect.ts";
 import { TzspSniffError } from "../../src/errors.ts";
 import { filterFlags } from "../../src/filter.ts";
 import { VERSION } from "../../src/version.ts";
@@ -209,6 +210,12 @@ describe("flags and help", () => {
 			[["--input", "hex"], "cli/wrong-command"],
 			[["listen", "--tzsp-port", "1"], "cli/wrong-command"],
 			[["-"], "cli/unexpected-argument"],
+			// dissectors: no input, and no capture flag.
+			[["dissectors", "tcp"], "cli/unexpected-argument"],
+			[["dissectors", "--count", "1"], "cli/wrong-command"],
+			[["dissectors", "--fields", "protocol"], "cli/wrong-command"],
+			[["dissectors", "--proto", "tcp"], "cli/wrong-command"],
+			[["dissectors", "--detail", "full"], "cli/wrong-command"],
 		];
 		for (const [argv, code] of cases) {
 			expect({ argv, code: codeOf(() => parseArgs(argv)) }).toEqual({
@@ -216,6 +223,81 @@ describe("flags and help", () => {
 				code,
 			});
 		}
+	});
+});
+
+describe("dissectors", () => {
+	test("text: a block per protocol, its matches, then a line per field", async () => {
+		const m = memoryIo();
+		expect(await main(["dissectors"], m.io)).toBe(0);
+		expect(m.stderr()).toBe("");
+		const text = m.stdout();
+		for (const d of dissectors()) {
+			expect(text).toContain(`${d.protocol}: ${d.name} (${d.reference})\n`);
+			for (const f of d.fields)
+				expect(text).toContain(`  ${f.name} (${f.type}`);
+		}
+		expect(text).toContain(
+			"vlan: IEEE 802.1Q VLAN tag, and the 802.1ad outer tag (IEEE 802.1Q)\n  matched by etherType 0x8100, etherType 0x88a8\n",
+		);
+		expect(text).toContain("  extensions[].header (number): ");
+		expect(text).toContain("  protocolName (string, optional): ");
+	});
+
+	test("jsonl: one dissector record per protocol, nothing else", async () => {
+		const m = memoryIo();
+		expect(await main(["dissectors", "--format", "jsonl"], m.io)).toBe(0);
+		expect(m.stderr()).toBe("");
+		const records = m
+			.stdout()
+			.trimEnd()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		expect(records).toEqual(
+			dissectors().map((d) => ({ type: "dissector", ...d })),
+		);
+	});
+
+	test("json and pcapng are refused, as on listen and decode", async () => {
+		for (const [format, code] of [
+			["json", "cli/invalid-value"],
+			["pcapng", "cli/wrong-command"],
+			["xml", "cli/invalid-value"],
+		]) {
+			const m = memoryIo();
+			expect(
+				await main(["dissectors", "--format", format as string], m.io),
+			).toBe(2);
+			expect(m.stdout()).toBe("");
+			expect(m.stderr()).toContain(`error ${code}:`);
+		}
+		const m = memoryIo();
+		await main(["dissectors", "--format", "json"], m.io);
+		expect(m.stderr()).toContain("--format jsonl");
+	});
+
+	test("a capture flag is refused with where it applies", async () => {
+		const m = memoryIo();
+		expect(await main(["dissectors", "--count", "1"], m.io)).toBe(2);
+		expect(m.stderr()).toContain(
+			"--count is a flag of listen and decode, not dissectors.",
+		);
+		expect(m.stderr()).toContain("tzsp-sniff listen --count");
+	});
+
+	test("--version and --help", async () => {
+		const v = memoryIo();
+		expect(await main(["dissectors", "--version"], v.io)).toBe(0);
+		expect(v.stdout()).toBe(`${VERSION}\n`);
+		const h = memoryIo();
+		expect(await main(["dissectors", "--help"], h.io)).toBe(0);
+		expect(h.stdout()).toContain("tzsp-sniff dissectors [--format text|jsonl]");
+	});
+
+	test("a closed stdout ends it quietly", async () => {
+		const m = memoryIo({ stdoutFailsAfter: 0 });
+		expect(await main(["dissectors"], m.io)).toBe(0);
+		expect(m.stderr()).toBe("");
 	});
 });
 

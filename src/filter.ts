@@ -16,6 +16,7 @@ import { isIP } from "node:net";
 import {
 	type Dissection,
 	dissect,
+	dissectors,
 	formatIpv4,
 	formatIpv6,
 	hex16,
@@ -96,22 +97,14 @@ export const filterFlag = (key: FilterKey) =>
 	key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
 
 /**
- * Protocol names `proto` accepts: every layer the dissector produces, and
- * every IP protocol it names (DESIGN.md, "Filters": `proto` matches the
- * chain; the IP header's protocol counts, so `ospf` works before an OSPF
- * dissector exists).
+ * Protocol names `proto` accepts: every layer the dissector registry
+ * produces, and every IP protocol it names (DESIGN.md, "Filters": `proto`
+ * matches the chain; the IP header's protocol counts, so `ospf` works before
+ * an OSPF dissector exists).
  */
 export const FILTER_PROTOCOLS: readonly string[] = [
 	...new Set([
-		"ethernet",
-		"vlan",
-		"arp",
-		"ipv4",
-		"ipv6",
-		"icmp",
-		"icmpv6",
-		"udp",
-		"tcp",
+		...dissectors().map((d) => d.protocol),
 		...Object.values(IP_PROTOCOLS),
 	]),
 ];

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
 	createFilter,
 	dissect,
+	dissectors,
 	fileSink,
 	LINKTYPE_TZSP,
 	listen,
@@ -332,6 +333,24 @@ for (const viaStdin of [false, true]) {
 		interface: "ether1 tx",
 	});
 	assert.equal(decodedRecords[7].status, "complete");
+}
+
+// The built CLI's dissectors under Node: the library's list, as JSONL.
+{
+	const { execFileSync } = await import("node:child_process");
+	const listed = execFileSync(
+		process.execPath,
+		["dist/cli/bin.js", "dissectors", "--format", "jsonl"],
+		{ encoding: "utf8", timeout: 10000 },
+	)
+		.trimEnd()
+		.split("\n")
+		.map((l) => JSON.parse(l));
+	assert.deepEqual(
+		listed,
+		dissectors().map((x) => ({ type: "dissector", ...x })),
+	);
+	assert.ok(listed.some((x) => x.protocol === "tcp"));
 }
 
 console.log(`node-smoke: ok (node ${process.version})`);

@@ -22,6 +22,7 @@ import {
 	type DecodeStream,
 	openDecode,
 } from "../decode.ts";
+import { dissectors } from "../dissect.ts";
 import { TzspSniffError } from "../errors.ts";
 import { type FileSinkOptions, fileSink } from "../file.ts";
 import {
@@ -56,6 +57,7 @@ import {
 	wantsHelp,
 } from "./flags.ts";
 import {
+	dissectorText,
 	entryText,
 	errorText,
 	fieldsText,
@@ -122,10 +124,11 @@ export function helpText(): string {
 		"",
 		"Usage: tzsp-sniff [listen] [flags]",
 		"       tzsp-sniff decode <file|-> [flags]",
+		"       tzsp-sniff dissectors [--format text|jsonl]",
 		"",
 		"Commands:",
 		...Object.entries(COMMANDS).map(
-			([name, text]) => `  ${name.padEnd(8)}${text}`,
+			([name, text]) => `  ${name.padEnd(12)}${text}`,
 		),
 		"",
 		"Flags:",
@@ -140,9 +143,10 @@ export function helpText(): string {
 		"",
 		"Output: stdout is the result. In text format the start line, warnings, tips and",
 		"the summary go to stderr, except that with --stats the summary is the result.",
-		"Every JSONL stream starts with a header record and ends with one summary",
-		"record; a stream without a summary was cut off. jq reads it as it is, and",
-		"`jq -s .` makes it one array.",
+		"A capture's JSONL stream (listen, decode) starts with a header record and ends",
+		"with one summary record; a stream without a summary was cut off. jq reads it",
+		"as it is, and `jq -s .` makes it one array. dissectors prints one dissector",
+		"record per protocol, with no header or summary.",
 		"",
 		"Exit: 0 done (also when nothing arrived: a warning says why), 1 the capture",
 		"failed or --expect was not met, 2 a usage error, 130 interrupted before the",
@@ -157,6 +161,7 @@ export function helpText(): string {
 		"  tzsp-sniff --proto icmp --format pcapng --follow | tshark -r -",
 		"  tzsp-sniff decode capture.pcapng --proto tcp --port-match 54321 --detail layers",
 		"  tzsp-sniff decode sniffer-file.pcapng --stats",
+		"  tzsp-sniff dissectors --format jsonl | jq -r '.protocol'",
 		"",
 		"On the router (RouterOS 7), toward this host:",
 		`  /tool/sniffer/set streaming-enabled=yes streaming-server=<this host>:${TZSP_PORT}`,
@@ -544,6 +549,44 @@ export function plan(args: ParsedArgs): Plan {
 	};
 }
 
+type DissectorsFormat = "text" | "jsonl";
+
+/** `dissectors`' format: text or jsonl, the others refused as on listen and decode. */
+function dissectorsFormat(args: ParsedArgs): DissectorsFormat {
+	const text = args.flags.get("format")?.[0] ?? "text";
+	if (text === "json") {
+		throw invalid(
+			"format",
+			"does not take json: jsonl carries the same records, one per line.",
+			"Use --format jsonl; jq reads it, and `jq -s .` makes one array.",
+		);
+	}
+	if (text === "pcapng") {
+		throw new TzspSniffError(
+			"cli/wrong-command",
+			"--format pcapng is a format of listen, not dissectors: dissectors prints text or jsonl.",
+			"Use --format jsonl or text.",
+		);
+	}
+	return choice("format", text, ["text", "jsonl"] as const);
+}
+
+/** Print every dissector: a block of text each, or a JSONL record each. */
+async function runDissectors(
+	format: DissectorsFormat,
+	io: Io,
+): Promise<number> {
+	const list = dissectors();
+	await io.stdout.write(
+		format === "jsonl"
+			? list
+					.map((d) => `${JSON.stringify({ type: "dissector", ...d })}\n`)
+					.join("")
+			: list.map(dissectorText).join("\n"),
+	);
+	return 0;
+}
+
 /** Run the CLI; resolves to the exit code. */
 export async function main(argv: readonly string[], io: Io): Promise<number> {
 	try {
@@ -566,38 +609,44 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(helpText());
 		return 0;
 	}
-	let planned: Plan | "version";
+	let planned: Plan | "version" | { dissectors: DissectorsFormat };
 	try {
 		const args = parseArgs(argv);
-		// Plan even for --version, so a flag it would refuse is refused here
-		// too; only --help comes first, so a broken command can still ask.
-		const checked = plan(args);
-		if (checked.format === "pcapng" && io.stdoutTerminal) {
-			throw new TzspSniffError(
-				"cli/binary-to-terminal",
-				"--format pcapng writes a binary capture file, and stdout is a terminal.",
-				"Redirect it (> capture.pcapng), pipe it (| tshark -r -), or use --write capture.pcapng with a text format.",
-			);
-		}
-		if (checked.write && io.outputFiles?.length) {
-			let stat: { dev: bigint; ino: bigint } | undefined;
-			try {
-				stat = statSync(checked.write.path, { bigint: true });
-			} catch {
-				// Not there yet: nothing writes to it.
-			}
-			if (
-				stat &&
-				io.outputFiles.some((o) => o.dev === stat.dev && o.ino === stat.ino)
-			) {
+		if (args.command === "dissectors") {
+			planned = args.flags.has("version")
+				? "version"
+				: { dissectors: dissectorsFormat(args) };
+		} else {
+			// Plan even for --version, so a flag it would refuse is refused here
+			// too; only --help comes first, so a broken command can still ask.
+			const checked = plan(args);
+			if (checked.format === "pcapng" && io.stdoutTerminal) {
 				throw new TzspSniffError(
-					"cli/write-to-output",
-					`--write ${checked.write.path} is where stdout or stderr is redirected; the capture and the output would overwrite each other.`,
-					"Redirect the output elsewhere, or give --write another path.",
+					"cli/binary-to-terminal",
+					"--format pcapng writes a binary capture file, and stdout is a terminal.",
+					"Redirect it (> capture.pcapng), pipe it (| tshark -r -), or use --write capture.pcapng with a text format.",
 				);
 			}
+			if (checked.write && io.outputFiles?.length) {
+				let stat: { dev: bigint; ino: bigint } | undefined;
+				try {
+					stat = statSync(checked.write.path, { bigint: true });
+				} catch {
+					// Not there yet: nothing writes to it.
+				}
+				if (
+					stat &&
+					io.outputFiles.some((o) => o.dev === stat.dev && o.ino === stat.ino)
+				) {
+					throw new TzspSniffError(
+						"cli/write-to-output",
+						`--write ${checked.write.path} is where stdout or stderr is redirected; the capture and the output would overwrite each other.`,
+						"Redirect the output elsewhere, or give --write another path.",
+					);
+				}
+			}
+			planned = args.flags.has("version") ? "version" : checked;
 		}
-		planned = args.flags.has("version") ? "version" : checked;
 	} catch (error) {
 		if (!(error instanceof TzspSniffError)) throw error;
 		await io.stderr.write(errorText(error));
@@ -608,6 +657,7 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(`${VERSION}\n`);
 		return 0;
 	}
+	if ("dissectors" in planned) return runDissectors(planned.dissectors, io);
 	if (planned.decode) return runDecode(planned, planned.decode, io);
 	const { options, format, tips, fields, write } = planned;
 	if (io.signal) options.signal = io.signal;

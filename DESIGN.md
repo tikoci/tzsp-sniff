@@ -149,7 +149,7 @@ pcapngWriter(sink): CaptureWriter                        // exists: streaming, w
 fileSink(path, { overwrite }): FileSink                  // exists: --write's file
 openDecode(input, options): Promise<DecodeStream>        // exists: decode, the same records from a file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
-dissectors(): DissectorInfo[]                            // what can be decoded
+dissectors(): DissectorInfo[]                            // exists: the registry, as listed
 ```
 
 **Requirement, bytes in and records out:**
@@ -243,7 +243,7 @@ everything else goes to stderr, errors carry a code from one registry.
 | `listen` (the default) | receive and print, until a limit is met or forever with `--follow` |
 | `decode <file\|->` | the same pipeline over a capture file or stdin; no network |
 | `setup` | print the RouterOS commands that send to this listener |
-| `dissectors` | list protocols, how each is matched (EtherType, IP protocol, port) and its fields |
+| `dissectors` | list protocols, how each is matched (link type, EtherType, IP protocol) and its fields |
 
 **Decided: `listen` is the default command**, so `tzsp-sniff --count 10`
 works, which is what an agent guesses; `--help` lists `listen` and says it is
@@ -843,6 +843,44 @@ Untrusted input, so the contract is enforced, not hoped for:
   are marked fragments and not dissected further; no reassembly;
 - vectors in unit tests for each truncation and malformation, asserting both
   the problem and the preserved bytes.
+
+**Decided: a dissector registry** (maintainer, slice 6, 2026-11-20, on
+issue #15; built in #25). Each protocol is a module under `src/dissect/` that
+exports a registration: its `protocol` (the layer name in records and the
+name `--proto` takes), a name and reference, how it is reached (the frame's
+link type, an EtherType, an IP protocol), the function that reads it there,
+and its fields. `src/dissect/registry.ts` lists the registrations and
+builds the dispatch tables from their matches, and a layer reaches the
+next one only through them; `dissectors()`, the `dissectors` command and
+`FILTER_PROTOCOLS` read the same list. The alternative, declarations kept
+beside the hand-written switches with tests to hold them together, was
+smaller but left two lists to drift; a registry is what DESIGN.md asked for
+from the start, and the dissectors after 0.1.0 (DNS, DHCP, OSPF …) each
+become a module and a line.
+
+- **Fields are declared against the fields interface.** A declaration is
+  keyed by the interface's keys (`FieldDecls<F>`), so a field added to the
+  interface and not declared, a declared field not in it, a wrong type or a
+  wrong `optional` does not compile (`test/unit/registry.test.ts` holds
+  that with `@ts-expect-error` cases). At run time, every field a vector in
+  `test/unit/dissect.test.ts` produces must be declared with its type, and
+  every declared field must be produced by one: the first run found ICMP
+  (v4) declared with ICMPv6's neighbor-discovery target.
+- **Each match is checked by dispatch**: a minimal frame per declared
+  EtherType (under Ethernet and a VLAN tag) and per IP protocol (in IPv4
+  and IPv6) reaches the dissector that declares it; every other EtherType
+  and IP protocol is `data`; no match is claimed twice.
+- **Not built until a dissector needs them:** matches on a UDP or TCP port,
+  and the heuristic hook for protocols on unusual ports. No 0.1.0 dissector
+  is reached either way.
+- **`dissectors` prints text or JSONL**, one `dissector` record per
+  protocol with no `header` or `summary`: it is a fixed list, not a
+  capture, so it has no stream to frame. `--format json` is refused as on
+  `listen` (see "Decided: JSONL, no `--format json`"); #15's "Done when"
+  had listed it by mistake.
+- The `data` layer and TZSP itself are not listed: `data` is bytes no
+  dissector reads, and TZSP is the record around the frame, read by
+  `parseTzsp`.
 
 **Decided: one packet at a time; no TCP stream reassembly yet.** TCP can
 split a length prefix across segments or carry several messages in one,
