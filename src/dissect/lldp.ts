@@ -24,7 +24,7 @@ import {
 	u32,
 } from "./core.ts";
 
-/** The most TLVs read before End; one more is `unsupported` (`tlv-limit`). */
+/** The most TLVs read, End included; one more is `unsupported` (`tlv-limit`). */
 export const MAX_LLDP_TLVS = 64;
 
 export interface LldpManagementAddress {
@@ -177,10 +177,18 @@ const ORGANIZATIONS: Record<
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
 const LENIENT = new TextDecoder("utf-8");
 
+/**
+ * The bytes from `start` to `end` as a plain Uint8Array over the same
+ * memory: `subarray` would build the caller's subclass, whose constructor
+ * may not take what `subarray` passes.
+ */
+const view = (b: Uint8Array, start: number, end: number) =>
+	new Uint8Array(b.buffer, b.byteOffset + start, end - start);
+
 /** Text, or `undefined` when the bytes are not UTF-8 (the caller marks it). */
 function text(b: Uint8Array, start: number, end: number): string | undefined {
 	try {
-		return UTF8.decode(b.subarray(start, end));
+		return UTF8.decode(view(b, start, end));
 	} catch {
 		return undefined;
 	}
@@ -365,7 +373,7 @@ function lldp(f: Frame, start: number, end: number) {
 				} else if (TEXT_SUBTYPES.has(subtype)) {
 					const t = text(b, value + 1, offset);
 					if (t === undefined) mark("malformed", "text");
-					id = t ?? LENIENT.decode(b.subarray(value + 1, offset));
+					id = t ?? LENIENT.decode(view(b, value + 1, offset));
 				} else {
 					id = hex(b, value + 1, offset);
 				}
@@ -386,16 +394,26 @@ function lldp(f: Frame, start: number, end: number) {
 			case 6: {
 				const t = text(b, value, offset);
 				if (t === undefined) mark("malformed", "text");
-				const s = t ?? LENIENT.decode(b.subarray(value, offset));
+				const s = t ?? LENIENT.decode(view(b, value, offset));
 				if (type === 4) fields.portDescription = s;
 				else if (type === 5) fields.systemName = s;
 				else fields.systemDescription = s;
 				break;
 			}
-			case 7:
-				fields.capabilities = names(u16(b, value));
-				fields.enabledCapabilities = names(u16(b, value + 2));
+			case 7: {
+				const system = u16(b, value);
+				const enabled = u16(b, value + 2);
+				// A capability enabled but not supported: the TLV "shall be
+				// discarded" (802.1AB-2009, 8.5.8.3), so it is kept raw.
+				if ((enabled & ~system) !== 0) {
+					mark("malformed", "capabilities");
+					raw(type, length, value);
+					break;
+				}
+				fields.capabilities = names(system);
+				fields.enabledCapabilities = names(enabled);
 				break;
+			}
 			case 8: {
 				// Address string length (subtype and address), subtype,
 				// address, interface numbering, interface number, OID length,
@@ -428,6 +446,10 @@ function lldp(f: Frame, start: number, end: number) {
 				if (familyName) entry.familyName = familyName;
 				const numberingName = INTERFACE_NUMBERING[numbering];
 				if (numberingName) entry.interfaceNumberingName = numberingName;
+				// With unknown numbering the number "shall be set to zero"
+				// (802.1AB-2009, 8.5.9.6).
+				if (numbering === 1 && entry.interfaceNumber !== 0)
+					mark("malformed", "interface-number");
 				if (oidLength > 0) {
 					const dotted = oid(b, after + 6, offset);
 					if (dotted === undefined) mark("malformed", "oid");
@@ -517,7 +539,7 @@ const FIELDS: FieldDecls<LldpFields> = {
 		type: "string[]",
 		optional: true,
 		description:
-			"The system's capabilities, when sent: other, repeater, bridge, wlan-access-point, router, telephone, docsis-cable-device, station-only, c-vlan-component, s-vlan-component, two-port-mac-relay, or bit-<n>.",
+			"The system's capabilities, when sent and consistent (a capability enabled but not supported is malformed/capabilities, and the TLV kept raw): other, repeater, bridge, wlan-access-point, router, telephone, docsis-cable-device, station-only, c-vlan-component, s-vlan-component, two-port-mac-relay, or bit-<n>.",
 	},
 	enabledCapabilities: {
 		type: "string[]",
@@ -527,7 +549,8 @@ const FIELDS: FieldDecls<LldpFields> = {
 	},
 	managementAddresses: {
 		type: "object[]",
-		description: "Each management address TLV, in order.",
+		description:
+			"Each management address TLV that reads whole, in order; one whose lengths do not fit is malformed (tlv-length) and kept raw in otherTlvs instead.",
 		items: {
 			family: {
 				type: "number",
@@ -554,7 +577,8 @@ const FIELDS: FieldDecls<LldpFields> = {
 			},
 			interfaceNumber: {
 				type: "number",
-				description: "The interface number.",
+				description:
+					"The interface number; 0 with unknown numbering, which is malformed (interface-number) otherwise.",
 			},
 			oid: {
 				type: "string",

@@ -931,7 +931,11 @@ RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
   than 6 bytes, an address other than its family's length) is `malformed`
   (`tlv-length`) and kept raw; an id subtype or string TLV that is not UTF-8 is `malformed`
   (`text`), read with replacement characters; a management address OID that
-  does not parse is `malformed` (`oid`). After 64 TLVs (`MAX_LLDP_TLVS`;
+  does not parse is `malformed` (`oid`). Two "shall" rules of 802.1AB-2009:
+  a capability enabled but not supported makes the TLV one to discard
+  (8.5.8.3), so it is `malformed` (`capabilities`) and kept raw; unknown
+  interface numbering with a number other than 0 (8.5.9.6) is `malformed`
+  (`interface-number`), the address still listed. After 64 TLVs (`MAX_LLDP_TLVS`;
   RouterOS sends 11 to 14) the layer is `unsupported` (`tlv-limit`).
 - **The layer ends at End.** Bytes after it are not LLDP's and get no
   layer, as Ethernet padding after ARP or IPv4 gets none.

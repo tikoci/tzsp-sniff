@@ -1221,7 +1221,7 @@ describe("dissect: LLDP", () => {
 			PORT,
 			TTL,
 			tlv(8, `05010a000001030000000707${oid}`),
-			tlv(8, "0706020000000003010000000100"),
+			tlv(8, "0706020000000003010000000000"),
 			tlv(8, "036301ff090000000200"),
 			END,
 		);
@@ -1242,7 +1242,7 @@ describe("dissect: LLDP", () => {
 				address: "02:00:00:00:00:03",
 				interfaceNumbering: 1,
 				interfaceNumberingName: "unknown",
-				interfaceNumber: 1,
+				interfaceNumber: 0,
 			},
 			{
 				family: 0x63,
@@ -1251,6 +1251,56 @@ describe("dissect: LLDP", () => {
 				interfaceNumber: 2,
 			},
 		]);
+	});
+
+	test("unknown interface numbering with a number other than 0 is malformed (interface-number)", () => {
+		// 802.1AB-2009, 8.5.9.6: with unknown numbering the number "shall be set to zero".
+		const { l } = lldpOf(
+			CHASSIS,
+			PORT,
+			TTL,
+			tlv(8, "05010a000001010000000100"),
+			END,
+		);
+		expect(l).toMatchObject({
+			problem: "malformed",
+			reason: "interface-number",
+		});
+		expect(l.fields?.managementAddresses[0]).toMatchObject({
+			interfaceNumberingName: "unknown",
+			interfaceNumber: 1,
+		});
+	});
+
+	test("a capability enabled but not supported is malformed (capabilities), and kept raw", () => {
+		// 802.1AB-2009, 8.5.8.3: such a TLV "shall be discarded".
+		const { l } = lldpOf(CHASSIS, PORT, TTL, tlv(7, "00000010"), END);
+		expect(l).toMatchObject({ problem: "malformed", reason: "capabilities" });
+		expect(l.fields).not.toHaveProperty("capabilities");
+		expect(l.fields).not.toHaveProperty("enabledCapabilities");
+		expect(l.fields?.otherTlvs).toEqual([
+			{ type: 7, length: 4, value: "00000010" },
+		]);
+	});
+
+	test("a frame in a Uint8Array subclass decodes, text included", () => {
+		// subarray() would call the subclass's constructor, which takes an array here.
+		class CaptureBytes extends Uint8Array {
+			constructor(values: number[]) {
+				super(values.map((b) => b));
+			}
+		}
+		const plain = lldpFrame(CHASSIS, PORT, TTL, tlv(5, utf8("a")), END);
+		const d = dissect(new CaptureBytes([...plain]));
+		expect(d.problem).toBeUndefined();
+		expect(layer(d, "lldp").fields).toMatchObject({
+			portId: "ether1",
+			systemName: "a",
+		});
+		const bad = lldpFrame(CHASSIS, PORT, TTL, tlv(5, "ff"), END);
+		expect(
+			layer(dissect(new CaptureBytes([...bad])), "lldp").fields?.systemName,
+		).toBe("\uFFFD");
 	});
 
 	test("a management address with an OID that does not parse, or lengths that disagree, is malformed", () => {
@@ -1279,6 +1329,7 @@ describe("dissect: LLDP", () => {
 			tlv(127, "aabbcc01ff"),
 			tlv(127, "0080c26300"),
 			tlv(127, "00120f05aabb"),
+			tlv(127, "00120f07cc"),
 			tlv(9, "abcd"),
 			END,
 		);
@@ -1301,6 +1352,15 @@ describe("dissect: LLDP", () => {
 				ouiName: "ieee-802.3",
 				subtype: 5,
 				subtypeName: "eee",
+			},
+			{
+				type: 127,
+				length: 5,
+				value: "cc",
+				oui: "00-12-0f",
+				ouiName: "ieee-802.3",
+				subtype: 7,
+				subtypeName: "additional-ethernet-capabilities",
 			},
 			{ type: 9, length: 2, value: "abcd" },
 		]);

@@ -16,7 +16,9 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   subtype named for IEEE 802.1, IEEE 802.3 and LLDP-MED. At most 64 TLVs
   are read (`unsupported/tlv-limit`); a TLV past the frame or no End is
   `truncated`; chassis id, port id and TTL out of order or repeated, a TLV
-  of the wrong length or text that is not UTF-8 is `malformed`. The text
+  of the wrong length, text that is not UTF-8, a capability enabled but not
+  supported, or a non-zero interface number with unknown numbering is
+  `malformed`. The text
   line names chassis, port, TTL and system name. Checked against what
   RouterOS 7.25.1 and 7.24.6 send, on x86_64 and arm64 CHRs.
 

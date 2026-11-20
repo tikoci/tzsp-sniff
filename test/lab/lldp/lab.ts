@@ -146,6 +146,7 @@ export class Listener {
 			if (this.failed) throw this.failed;
 			await new Promise((r) => setTimeout(r, 500));
 		}
+		if (this.failed) throw this.failed;
 		if (this.kept.length < count)
 			throw new Error(
 				`${this.kept.length} of ${count} LLDPDUs in ${WAIT_MS / 1000} s`,

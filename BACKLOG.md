@@ -90,10 +90,3 @@ Small items, one or two sentences each, deleted when done or declined
   pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
   command) do not run as printed (tikoci-cli-mcp); point to a command that
   runs, as `dissectors` now does with `--help` (Codex re-review of PR #27).
-- LLDP, **Unverified**: whether 802.1AB makes two more cases malformed. One
-  is an enabled capability that the system capabilities lack (`00000010`).
-  The other is a management address with `unknown` interface numbering and
-  a non-zero number. Codex's review of PR #28 cited clauses 8.5.8.3 and
-  8.5.9.6 from a copy we could not read. Neither Wireshark (packet-lldp.c
-  at ffc784d8541a) nor RouterOS's own LLDP shows them. Decide once the
-  standard's text is checked.
