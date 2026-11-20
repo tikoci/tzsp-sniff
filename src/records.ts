@@ -12,19 +12,29 @@
 import type { Dissection, Layer } from "./dissect.ts";
 import type { Code, ErrorCode, TipCode, WarningCode } from "./errors.ts";
 import type { FilterSpec } from "./filter.ts";
-import type { Capture } from "./listen.ts";
-import { type TzspTag, toHex } from "./tzsp.ts";
+import type { Peer } from "./listen.ts";
+import { type TzspDatagram, type TzspTag, toHex } from "./tzsp.ts";
 
 export const SCHEMA_VERSION = 1;
 
 export const DETAILS = ["line", "summary", "layers", "full"] as const;
 export type Detail = (typeof DETAILS)[number];
 
-export interface HeaderRecord {
+/** What `listen` and `decode` headers share. */
+interface HeaderBase {
 	type: "header";
 	schemaVersion: typeof SCHEMA_VERSION;
 	tool: "tzsp-sniff";
 	version: string;
+	/** The filters in effect, in canonical form; `{}` keeps every frame. */
+	filters: FilterSpec;
+	detail: Detail;
+	stats: boolean;
+}
+
+/** The header of a capture from the network. */
+export interface HeaderRecord extends HeaderBase {
+	command: "listen";
 	/** When the sockets were bound, ISO 8601. */
 	time: string;
 	bind: string;
@@ -36,14 +46,28 @@ export interface HeaderRecord {
 		idleMs?: number;
 		expect?: number;
 	};
-	/** The filters in effect, in canonical form; `{}` keeps every frame. */
-	filters: FilterSpec;
 	queue: { datagrams: number; bytes: number };
-	detail: Detail;
-	stats: boolean;
 	/** Where every datagram is saved (`--write`), when it is. */
 	write?: string;
 }
+
+/** The input formats `decode` reads. */
+export const INPUT_FORMATS = ["pcapng", "pcap", "hex"] as const;
+export type InputFormat = (typeof INPUT_FORMATS)[number];
+
+/** The header of a `decode` stream: a file or stdin, no network. */
+export interface DecodeHeaderRecord extends HeaderBase {
+	command: "decode";
+	/** When decoding started, ISO 8601. */
+	time: string;
+	/** What was read: its name (a path, `-` for stdin) and format, detected or given. */
+	input: { name: string; format: InputFormat };
+	/** UDP ports whose datagrams are unwrapped as TZSP in IP, Ethernet or Linux cooked captures. */
+	tzspPorts: number[];
+	limits: { count?: number; expect?: number };
+}
+
+export type AnyHeaderRecord = HeaderRecord | DecodeHeaderRecord;
 
 /** A layer as a record carries it: offsets index the datagram, not the frame. */
 export type RecordLayer =
@@ -62,15 +86,54 @@ export type RecordLayer =
 			};
 	  };
 
+/**
+ * What a packet or record is made from: a datagram a listener received (a
+ * `Capture` is one), or a packet `decode` read from a file. Each field is
+ * there only when the source says it: a file RouterOS saved has no listener
+ * or peer, a hex line has no time (DESIGN.md, "`decode` input").
+ */
+export type Entry = EntryBase &
+	(
+		| {
+				/** The TZSP datagram it carried; its bytes are `tzsp.datagram`. */
+				tzsp: TzspDatagram;
+		  }
+		| {
+				tzsp?: undefined;
+				/** An Ethernet frame with no TZSP around it (a file RouterOS saved). */
+				frame: Uint8Array;
+		  }
+	);
+
+export interface EntryBase {
+	/** Position: arrival order for `listen`, order in the input for `decode`; from 1. */
+	seq: number;
+	/** ms since the epoch: host arrival time, or the file's timestamp. */
+	time?: number;
+	/** The listener that received it, or the one a file names. */
+	listener?: { readonly label: string };
+	/** The UDP peer, as received or as a file recorded it. */
+	peer?: Peer;
+	/** The interface a capture file names (not a TZSP listener's label). */
+	interface?: string;
+	/** The capture file's comment on the packet, other than its peer. */
+	comment?: string;
+}
+
+export type TzspEntry = Extract<Entry, { tzsp: TzspDatagram }>;
+
 export interface PacketRecord {
 	type: "packet";
 	seq: number;
-	time: string;
-	/** The listener's label (its port number unless one was given). */
-	listener: string;
+	/** Absent when the input had no time (hex lines). */
+	time?: string;
+	/** The listener's label (its port number unless one was given); absent when the input names none. */
+	listener?: string;
 	line: string;
 	// summary and up
 	peer?: string;
+	/** The capture file's interface name (`decode`), such as `ether1 rx`. */
+	interface?: string;
 	/** The frame's length in bytes. */
 	length?: number;
 	protocols?: string[];
@@ -87,8 +150,13 @@ export interface PacketRecord {
 	reason?: string;
 	// layers and up
 	layers?: RecordLayer[];
+	/** The capture file's comment on the packet (`decode`), such as RouterOS's `cpu:0 fp:0`. */
+	comment?: string;
 	// full
-	/** The whole TZSP datagram, hex. */
+	/**
+	 * The bytes the layers' offsets index, hex: the whole TZSP datagram, or
+	 * the frame when the input held no TZSP (a file RouterOS saved).
+	 */
 	datagram?: string;
 }
 
@@ -96,18 +164,20 @@ export interface PacketRecord {
 export interface DatagramRecord {
 	type: "record";
 	seq: number;
-	time: string;
-	listener: string;
+	time?: string;
+	listener?: string;
 	line: string;
 	peer?: string;
+	interface?: string;
 	/** The datagram's length in bytes. */
 	length?: number;
 	kind?: "control" | "unsupported" | "invalid";
 	problem?: string;
-	/** `tzsp/<check>`, such as `tzsp/no-end-tag`. */
+	/** `tzsp/<check>`, such as `tzsp/no-end-tag`; `link/not-tzsp` for a packet in a capture that is not TZSP. */
 	reason?: string;
 	tzspType?: string;
 	tags?: TzspTag[];
+	comment?: string;
 	datagram?: string;
 }
 
@@ -168,7 +238,8 @@ export interface SummaryTables {
 	protocols: Record<string, number>;
 	/** Packet problems by `<protocol>/<check>`. */
 	problems: Record<string, number>;
-	senders: Ranked<{ listener: string; peer: string; datagrams: number }>;
+	/** `listener` or `peer` is absent when the input did not say it (`decode`). */
+	senders: Ranked<{ listener?: string; peer?: string; datagrams: number }>;
 	conversations: Ranked<{
 		protocol: string;
 		a: string;
@@ -179,7 +250,14 @@ export interface SummaryTables {
 }
 
 export type SummaryStatus = "complete" | "interrupted" | "incomplete" | "error";
-export type StopReason = "count" | "duration" | "idle" | "interrupt" | "error";
+/** `end`: `decode` read the whole input. */
+export type StopReason =
+	| "count"
+	| "duration"
+	| "idle"
+	| "end"
+	| "interrupt"
+	| "error";
 
 export interface SummaryRecord extends SummaryTables {
 	type: "summary";
@@ -199,11 +277,17 @@ export interface SummaryRecord extends SummaryTables {
 
 export type StreamRecord =
 	| HeaderRecord
+	| DecodeHeaderRecord
 	| PacketRecord
 	| DatagramRecord
 	| WarningRecord
 	| TipRecord
 	| SummaryRecord;
+
+/** What a capture yields: its header is `listen`'s. */
+export type CaptureRecord = Exclude<StreamRecord, DecodeHeaderRecord>;
+/** What a decode yields: its header is `decode`'s. */
+export type DecodeRecord = Exclude<StreamRecord, HeaderRecord>;
 
 /**
  * The fields `--fields` can name on a packet or record, each with the least
@@ -215,6 +299,7 @@ export const ENTRY_FIELDS = {
 	listener: "line",
 	line: "line",
 	peer: "summary",
+	interface: "summary",
 	length: "summary",
 	kind: "summary",
 	tzspType: "summary",
@@ -229,6 +314,7 @@ export const ENTRY_FIELDS = {
 	reason: "summary",
 	layers: "layers",
 	tags: "layers",
+	comment: "layers",
 	datagram: "full",
 } as const satisfies Record<string, Detail>;
 
@@ -447,8 +533,7 @@ export function packetLine(d: Dissection): string {
 	return parts.join(" ");
 }
 
-function tzspLayer(capture: Capture): RecordLayer {
-	const t = capture.tzsp;
+function tzspLayer(t: TzspDatagram): RecordLayer {
 	return {
 		protocol: "tzsp",
 		offset: 0,
@@ -464,24 +549,33 @@ function tzspLayer(capture: Capture): RecordLayer {
 	};
 }
 
+/** The fields every packet and record starts with, from what the entry has. */
+function entryHead(entry: Entry): {
+	seq: number;
+	time?: string;
+	listener?: string;
+} {
+	const head: { seq: number; time?: string; listener?: string } = {
+		seq: entry.seq,
+	};
+	if (entry.time !== undefined) head.time = isoTime(entry.time);
+	if (entry.listener) head.listener = entry.listener.label;
+	return head;
+}
+
 /** A frame's record at `detail`. */
 export function packetRecord(
-	capture: Capture,
+	entry: Entry,
 	d: Dissection,
 	detail: Detail,
 	line = packetLine(d),
 	view?: PacketView,
 ): PacketRecord {
-	const record: PacketRecord = {
-		type: "packet",
-		seq: capture.seq,
-		time: isoTime(capture.time),
-		listener: capture.listener.label,
-		line,
-	};
+	const record: PacketRecord = { type: "packet", ...entryHead(entry), line };
 	if (detail === "line") return record;
 	const v = view ?? viewPacket(d);
-	record.peer = formatPeer(capture.peer.address, capture.peer.port);
+	if (entry.peer) record.peer = formatPeer(entry.peer.address, entry.peer.port);
+	if (entry.interface !== undefined) record.interface = entry.interface;
 	record.length = d.frame.length;
 	record.protocols = d.protocols;
 	if (v.src !== undefined) record.src = v.src;
@@ -496,19 +590,25 @@ export function packetRecord(
 		record.reason = `${d.problem.protocol}/${d.problem.reason}`;
 	}
 	if (detail === "summary") return record;
-	const shift = capture.tzsp.datagram.length - capture.tzsp.payload.length;
-	record.layers = [
-		tzspLayer(capture),
-		...d.layers.map((l) => ({ ...l, offset: l.offset + shift })),
-	];
+	const t = entry.tzsp;
+	if (t) {
+		const shift = t.datagram.length - t.payload.length;
+		record.layers = [
+			tzspLayer(t),
+			...d.layers.map((l) => ({ ...l, offset: l.offset + shift })),
+		];
+	} else {
+		record.layers = d.layers.map((l) => ({ ...l }));
+	}
+	if (entry.comment !== undefined) record.comment = entry.comment;
 	if (detail === "layers") return record;
-	record.datagram = toHex(capture.datagram);
+	record.datagram = toHex(t ? t.datagram : entry.frame);
 	return record;
 }
 
 /** One line for a TZSP record that is not a frame. */
-export function datagramLine(capture: Capture): string {
-	const t = capture.tzsp;
+export function datagramLine(entry: TzspEntry): string {
+	const t = entry.tzsp;
 	if (t.kind === "control") return `tzsp ${t.typeName}`;
 	if (t.kind === "unsupported") {
 		const what =
@@ -525,19 +625,18 @@ export function datagramLine(capture: Capture): string {
 
 /** A non-frame TZSP record at `detail`. */
 export function datagramRecord(
-	capture: Capture,
+	entry: TzspEntry,
 	detail: Detail,
 ): DatagramRecord {
-	const t = capture.tzsp;
+	const t = entry.tzsp;
 	const record: DatagramRecord = {
 		type: "record",
-		seq: capture.seq,
-		time: isoTime(capture.time),
-		listener: capture.listener.label,
-		line: datagramLine(capture),
+		...entryHead(entry),
+		line: datagramLine(entry),
 	};
 	if (detail === "line") return record;
-	record.peer = formatPeer(capture.peer.address, capture.peer.port);
+	if (entry.peer) record.peer = formatPeer(entry.peer.address, entry.peer.port);
+	if (entry.interface !== undefined) record.interface = entry.interface;
 	record.length = t.datagram.length;
 	if (t.kind !== "packet") record.kind = t.kind;
 	if (t.kind !== "invalid") record.tzspType = t.typeName;
@@ -547,6 +646,7 @@ export function datagramRecord(
 	}
 	if (detail === "summary") return record;
 	if (t.tags.length) record.tags = t.tags;
+	if (entry.comment !== undefined) record.comment = entry.comment;
 	if (detail === "layers") return record;
 	record.datagram = toHex(t.datagram);
 	return record;

@@ -52,6 +52,7 @@ MikroTik
 mld # Multicast Listener Discovery (ICMPv6)
 mldv # as in mldv2-report
 MNDP # MikroTik Neighbor Discovery Protocol
+MTU # maximum transmission unit
 NIC # network interface card
 OSPF
 pcapng
@@ -73,6 +74,7 @@ SCP # secure copy
 shb # pcapng section header block
 shellcheck
 SLIRP # QEMU user-mode networking
+SLL # libpcap Linux cooked capture
 TCG # QEMU's software CPU emulator (Tiny Code Generator)
 TCI # 802.1Q tag control information
 tcpdump

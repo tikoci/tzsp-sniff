@@ -15,8 +15,8 @@ rather than as a general sniffer.
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
 > ICMP, UDP and TCP, and saves captures as pcapng (`--write`, `--format
-> pcapng`). `decode` and `setup` are designed ([DESIGN.md](DESIGN.md)) and
-> not built yet.
+> pcapng`); `decode` reads them again, and the files RouterOS saves.
+> `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
 
 ## Use
 
@@ -94,6 +94,48 @@ stdout with the filters applied, for a pipe or a redirect (it is refused on
 a terminal, and with `--fields`, `--stats` or `--detail`); the start line,
 warnings and the summary go to stderr.
 
+### `decode`: look again, with no network
+
+`tzsp-sniff decode <file>` (or `-` for stdin) runs the same pipeline over a
+capture file: the same records, filters, `--fields`, `--detail`, `--stats`,
+`--count` and `--expect`, and text or JSONL.
+
+```sh
+tzsp-sniff --duration 30s --write cmr.pcapng --stats        # capture once
+tzsp-sniff decode cmr.pcapng --proto tcp --port-match 54321 --detail layers
+tzsp-sniff decode sniffer-file.pcapng --format jsonl        # a file /tool/sniffer saved
+tzsp-sniff decode - --input hex < datagrams.hex             # one TZSP datagram per line
+```
+
+The format is told from the first bytes (pcapng, or pcap in either byte
+order and resolution); `--input pcapng|pcap|hex` sets it, and hex (one
+TZSP datagram per line; blank lines and `#` comments skipped) is never
+guessed. What a packet is depends on the file's link type:
+
+- **TZSP** (128, what `--write` saves): each packet is a datagram, with its
+  listener label and UDP peer restored, so a file decodes to the records
+  the capture printed.
+- **Ethernet**: a frame that is UDP to the TZSP port is unwrapped, with the
+  IP source as its peer and the port as its listener (a host capture of the
+  stream); any other frame is decoded as it is, with no listener or peer (a
+  file RouterOS saved). Such records carry the file's `interface` (`ether1
+  rx`), its `comment` (`cpu:0 fp:0`) at `--detail layers`, and the router's
+  time.
+- **Raw IP and Linux cooked** (`tshark -i any`): UDP to the TZSP port is
+  unwrapped; anything else is an `unsupported` record (`link/not-tzsp`).
+
+`--tzsp-port <port>` (repeatable) names the TZSP ports to unwrap; the
+default is 37008. IP fragments are not reassembled. Any other link type
+ends the stream with `decode/link-type`. Every length is checked before it
+is read (1 MiB per block, 128 KiB per hex line): a corrupt file prints the
+records before the damage, then ends with `decode/malformed` and exit 1; a
+file cut inside a block (still being written, or copied short) prints what
+is whole, warns `decode/truncated`, and its summary is `incomplete`.
+`listen`'s flags (`--port`, `--follow`, `--write` …) and `--format pcapng`
+are refused with `cli/wrong-command`, which names `listen`. The summary's
+`durationMs` is the span of the file's timestamps, and `stoppedBy` is `end`
+once the input is read.
+
 ### Library
 
 The package will be `@tikoci/tzsp-sniff`, and runs on Node 22 or later or on
@@ -127,6 +169,21 @@ pass the writer as `openCapture({ write })` to save every datagram, or as
 `{ write(chunk) }` that returns a promise; the writer waits for each block
 and ends the capture with `write/stalled` when a sink takes nothing for 30
 seconds.
+
+`openDecode(input, options)` is `decode`: `input` is the bytes, or any
+iterable of chunks (a file or stdin stream), and the stream has the same
+records, with a `decode` header:
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { openDecode } from "@tikoci/tzsp-sniff";
+
+for await (const record of await openDecode(await readFile("cmr.pcapng"), {
+  filter: { proto: ["tcp"] },
+})) {
+  if (record.type === "packet") console.log(record.listener, record.line);
+}
+```
 
 `listen()` is the layer below: the sockets and a bounded queue, yielding
 each datagram with its arrival time, UDP peer and listener label.

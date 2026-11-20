@@ -10,6 +10,16 @@ export {
 	openCapture,
 } from "./capture.ts";
 export {
+	type DecodeOptions,
+	type DecodeStream,
+	openDecode,
+} from "./decode.ts";
+export {
+	type DecodeInput,
+	MAX_BLOCK_BYTES,
+	MAX_HEX_LINE,
+} from "./input.ts";
+export {
 	type ArpFields,
 	type ArpLayer,
 	type DataFields,
@@ -77,14 +87,22 @@ export {
 	type QueueLimits,
 } from "./listen.ts";
 export {
+	type AnyHeaderRecord,
+	type CaptureRecord,
 	type Counters,
 	DETAILS,
 	type DatagramRecord,
+	type DecodeHeaderRecord,
+	type DecodeRecord,
 	type Detail,
 	datagramLine,
 	datagramRecord,
 	ENTRY_FIELDS,
+	type Entry,
+	type EntryBase,
 	type HeaderRecord,
+	INPUT_FORMATS,
+	type InputFormat,
 	type PacketRecord,
 	packetLine,
 	packetRecord,
@@ -99,6 +117,7 @@ export {
 	type SummaryTables,
 	selectFields,
 	type TipRecord,
+	type TzspEntry,
 	type WarningRecord,
 } from "./records.ts";
 export {

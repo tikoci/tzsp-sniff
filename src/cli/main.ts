@@ -10,12 +10,18 @@
  * cannot mistake a capture that never started for an empty one.
  */
 import { statSync } from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
 import { isIP } from "node:net";
 import {
 	type CaptureOptions,
 	type CaptureStream,
 	openCapture,
 } from "../capture.ts";
+import {
+	type DecodeOptions,
+	type DecodeStream,
+	openDecode,
+} from "../decode.ts";
 import { TzspSniffError } from "../errors.ts";
 import { type FileSinkOptions, fileSink } from "../file.ts";
 import {
@@ -24,12 +30,14 @@ import {
 	type FilterTerms,
 	senderAddress,
 } from "../filter.ts";
+import type { DecodeInput } from "../input.ts";
 import type { ListenerSpec } from "../listen.ts";
 import { type ByteSink, pcapngWriter } from "../pcapng.ts";
 import {
 	DETAILS,
 	type Detail,
 	ENTRY_FIELDS,
+	INPUT_FORMATS,
 	SUMMARY_FIELDS,
 	type StreamRecord,
 	selectFields,
@@ -38,6 +46,7 @@ import {
 import { TZSP_PORT } from "../tzsp.ts";
 import { VERSION } from "../version.ts";
 import {
+	type CommandName,
 	COMMANDS,
 	FIELD_NAMES,
 	FLAGS,
@@ -70,6 +79,8 @@ export interface Io {
 	 * `--write` refuses one of them.
 	 */
 	outputFiles?: readonly { dev: bigint; ino: bigint }[];
+	/** stdin, for `decode -`; a function, so a command that does not read it never opens it. */
+	stdin?: () => AsyncIterable<Uint8Array>;
 	/** For tests: makes `--write`'s sink in place of {@link fileSink}. */
 	writeSink?: (path: string, options: FileSinkOptions) => ByteSink;
 	/** Interrupt: ends the capture as `interrupted`, with the summary written. */
@@ -98,7 +109,8 @@ export function helpText(): string {
 	const lines = (flags: FlagSpec[]) =>
 		flags.map((f) => {
 			const left = `  --${f.name}${f.value ? ` ${f.value}` : ""}`;
-			return `${left}\n      ${f.help}`;
+			const only = f.commands.length === 1 ? `${f.commands[0]} only: ` : "";
+			return `${left}\n      ${only}${f.help}`;
 		});
 	const negated = FLAGS.filter((f) => f.negated);
 	return [
@@ -106,6 +118,7 @@ export function helpText(): string {
 		"mangle action=sniff-tzsp) on a plain UDP port, with no root, and decode them.",
 		"",
 		"Usage: tzsp-sniff [listen] [flags]",
+		"       tzsp-sniff decode <file|-> [flags]",
 		"",
 		"Commands:",
 		...Object.entries(COMMANDS).map(
@@ -139,6 +152,8 @@ export function helpText(): string {
 		"  tzsp-sniff --port 37008=router-a --port 37009=router-b --format jsonl --follow",
 		"  tzsp-sniff --duration 30s --write capture.pcapng --stats",
 		"  tzsp-sniff --proto icmp --format pcapng --follow | tshark -r -",
+		"  tzsp-sniff decode capture.pcapng --proto tcp --port-match 54321 --detail layers",
+		"  tzsp-sniff decode sniffer-file.pcapng --stats",
 		"",
 		"On the router (RouterOS 7), toward this host:",
 		`  /tool/sniffer/set streaming-enabled=yes streaming-server=<this host>:${TZSP_PORT}`,
@@ -237,8 +252,27 @@ function ports(texts: readonly string[] | undefined): ListenerSpec[] {
 	return specs;
 }
 
+/** `--tzsp-port`: UDP ports, comma lists and repeats alike. */
+function tzspPortsOf(texts: readonly string[]): number[] {
+	return listOf(texts).map((text) => {
+		const port = Number(text);
+		if (!/^[0-9]{1,5}$/.test(text) || port < 1 || port > 65535) {
+			throw invalid(
+				"tzsp-port",
+				`must be a UDP port from 1 to 65535, not ${JSON.stringify(text)}.`,
+				"Give it as --tzsp-port 37008; repeat it for more ports.",
+			);
+		}
+		return port;
+	});
+}
+
 interface Plan {
+	command: CommandName;
+	/** listen's capture options. */
 	options: CaptureOptions;
+	/** decode's input and options. */
+	decode?: { input: string; options: DecodeOptions };
 	format: Format;
 	tips: TipRecord[];
 	/** `--fields`, when given. */
@@ -274,15 +308,23 @@ function checkFields(
 	stats: boolean,
 	detail: Detail,
 	detailGiven: boolean,
+	command: CommandName,
 ): { fields: string[]; detail: Detail } {
 	const fields = [...new Set(listOf([text]))];
+	// Only a capture file names an interface or carries a comment.
+	const fileOnly = (f: string) =>
+		command === "listen" && (f === "interface" || f === "comment");
 	// The fields of the records --fields shapes in this output: with --stats
 	// the summary; in text, packet and record lines (the summary is on stderr,
 	// unshaped); in jsonl, both.
-	const entry = Object.keys(ENTRY_FIELDS);
+	const entry = Object.keys(ENTRY_FIELDS).filter((f) => !fileOnly(f));
 	const known: readonly string[] = [
 		"type",
-		...(stats ? SUMMARY_FIELDS : format === "text" ? entry : FIELD_NAMES),
+		...(stats
+			? SUMMARY_FIELDS
+			: format === "text"
+				? entry
+				: FIELD_NAMES.filter((f) => !fileOnly(f))),
 	];
 	const unknown = fields.filter((f) => !known.includes(f));
 	if (unknown.length || !fields.length) {
@@ -343,6 +385,13 @@ export function plan(args: ParsedArgs): Plan {
 		);
 	}
 	const format = choice("format", formatText, FORMATS);
+	if (args.command === "decode" && format === "pcapng") {
+		throw new TzspSniffError(
+			"cli/wrong-command",
+			"--format pcapng is a format of listen, not decode: decode prints text or jsonl.",
+			"Use --format jsonl or text. To save only what the filters keep, capture with tzsp-sniff listen and the filters, and --format pcapng.",
+		);
+	}
 	if (format === "pcapng") {
 		// A capture file has no detail, fields or summary to choose: refused,
 		// not ignored (tikoci-cli-mcp, "Refuse, never drop").
@@ -390,6 +439,7 @@ export function plan(args: ParsedArgs): Plan {
 			has("stats"),
 			detail,
 			detailText !== undefined,
+			args.command,
 		));
 	}
 	const options: CaptureOptions = {
@@ -450,6 +500,7 @@ export function plan(args: ParsedArgs): Plan {
 	}
 	const tips: TipRecord[] = [];
 	if (
+		args.command === "listen" &&
 		!has("follow") &&
 		options.count === undefined &&
 		options.durationMs === undefined &&
@@ -462,8 +513,25 @@ export function plan(args: ParsedArgs): Plan {
 			message: `No limit given, so this stops after ${DEFAULT_DURATION_MS / 1000}s: set one with --duration, --count or --idle, or run until Ctrl-C with --follow.`,
 		});
 	}
+	let decode: Plan["decode"];
+	if (args.command === "decode") {
+		const input = args.input ?? "-";
+		const d: DecodeOptions = { name: input, detail };
+		const inputFormat = one("input");
+		if (inputFormat !== undefined)
+			d.format = choice("input", inputFormat, INPUT_FORMATS);
+		const tzspPorts = args.flags.get("tzsp-port");
+		if (tzspPorts) d.tzspPorts = tzspPortsOf(tzspPorts);
+		if (options.filter) d.filter = options.filter;
+		if (options.count !== undefined) d.count = options.count;
+		if (options.expect !== undefined) d.expect = options.expect;
+		if (options.stats) d.stats = true;
+		decode = { input, options: d };
+	}
 	return {
+		command: args.command,
 		options,
+		...(decode ? { decode } : {}),
 		format,
 		tips,
 		...(fields ? { fields } : {}),
@@ -537,6 +605,7 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 		await io.stdout.write(`${VERSION}\n`);
 		return 0;
 	}
+	if (planned.decode) return runDecode(planned, planned.decode, io);
 	const { options, format, tips, fields, write } = planned;
 	if (io.signal) options.signal = io.signal;
 	if (write) {
@@ -581,9 +650,108 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 	}
 }
 
+/** A file `decode` reads: chunks as they are read, closed once, however reading ends. */
+interface FileInput extends AsyncIterable<Uint8Array> {
+	close(): Promise<void>;
+}
+
+const CHUNK_BYTES = 64 * 1024;
+
+async function openFile(path: string): Promise<FileInput> {
+	let handle: FileHandle | undefined;
+	try {
+		handle = await open(path, "r");
+		if ((await handle.stat()).isDirectory()) {
+			throw new Error(`${path} is a directory`);
+		}
+	} catch (error) {
+		await handle?.close().catch(() => {});
+		throw new TzspSniffError(
+			"decode/read-failed",
+			`Cannot read ${path}: ${error instanceof Error ? error.message : String(error)}`,
+			"Check the path and its permissions; give - to read stdin.",
+			{ cause: error },
+		);
+	}
+	const file = handle;
+	let closed: Promise<void> | undefined;
+	const close = () => {
+		closed ??= file.close().catch(() => {});
+		return closed;
+	};
+	return {
+		close,
+		[Symbol.asyncIterator]() {
+			return {
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					if (closed) return { done: true, value: undefined };
+					const buffer = new Uint8Array(CHUNK_BYTES);
+					const { bytesRead } = await file.read(buffer, 0, CHUNK_BYTES, null);
+					if (bytesRead === 0) {
+						await close();
+						return { done: true, value: undefined };
+					}
+					return { done: false, value: buffer.subarray(0, bytesRead) };
+				},
+				async return(): Promise<IteratorResult<Uint8Array>> {
+					await close();
+					return { done: true, value: undefined };
+				},
+			};
+		},
+	};
+}
+
+async function runDecode(
+	planned: Plan,
+	decode: NonNullable<Plan["decode"]>,
+	io: Io,
+): Promise<number> {
+	const { format, tips, fields } = planned;
+	const options = { ...decode.options };
+	if (io.signal) options.signal = io.signal;
+	let file: FileInput | undefined;
+	let stream: DecodeStream;
+	try {
+		let input: DecodeInput;
+		if (decode.input === "-") {
+			if (!io.stdin) {
+				throw new TzspSniffError(
+					"decode/read-failed",
+					"There is no stdin to read here.",
+					"Give a file path instead of -.",
+				);
+			}
+			input = io.stdin();
+		} else {
+			file = await openFile(decode.input);
+			input = file;
+		}
+		stream = await openDecode(input, options);
+	} catch (error) {
+		await file?.close();
+		if (error instanceof TzspSniffError) {
+			await io.stderr.write(errorText(error));
+			return 1;
+		}
+		// Interrupted before the first record: nothing was decoded.
+		if (io.signal?.aborted) return 130;
+		throw error;
+	}
+	try {
+		return await print(
+			stream,
+			{ format, tips, statsOnly: options.stats ?? false, fields },
+			io,
+		);
+	} finally {
+		await file?.close();
+	}
+}
+
 /** Render the stream in `format`; resolves to the exit code. */
 async function print(
-	stream: CaptureStream,
+	stream: CaptureStream | DecodeStream,
 	how: {
 		format: Format;
 		tips: TipRecord[];
@@ -593,7 +761,11 @@ async function print(
 	io: Io,
 ): Promise<number> {
 	const { format, tips, statsOnly, fields } = how;
-	const showListener = stream.header.listeners.length > 1;
+	// A capture names its listener when it has several; a decode names the
+	// listener or interface whenever the input does.
+	const header = stream.header;
+	const showListener =
+		header.command === "decode" || header.listeners.length > 1;
 	let exitCode = 0;
 
 	const render = async (record: StreamRecord) => {
@@ -636,7 +808,7 @@ async function print(
 				await (statsOnly ? io.stdout : io.stderr).write(
 					statsOnly && fields
 						? fieldsText(selectFields(record, fields))
-						: summaryText(record),
+						: summaryText(record, header.command),
 				);
 				if (record.error) await io.stderr.write(errorText(record.error));
 				break;

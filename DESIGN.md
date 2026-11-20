@@ -1,4 +1,4 @@
-<!-- cspell:ignore Tvb epan usr recvfrom libuv EPB IDB LINKTYPE WTAP ENCAP winbox ipc -- Wireshark, pcapng and system names -->
+<!-- cspell:ignore Tvb epan usr recvfrom libuv EPB IDB LINKTYPE WTAP ENCAP winbox ipc tsoffset -- Wireshark, pcapng and system names -->
 
 # Design
 
@@ -147,6 +147,7 @@ createFilter(spec): PacketFilter                         // exists: (capture, di
 selectFields(record, fields)                             // exists: --fields, for any surface
 pcapngWriter(sink): CaptureWriter                        // exists: streaming, with backpressure
 fileSink(path, { overwrite }): FileSink                  // exists: --write's file
+openDecode(input, options): Promise<DecodeStream>        // exists: decode, the same records from a file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
 ```
@@ -253,7 +254,8 @@ the default.
 - One registry declares each flag's arity, the commands it applies to, and
   the flags it conflicts with. A flag given to a command it does not apply to
   is refused with a code that names where it does apply (tikoci-cli-mcp,
-  "Refuse, never drop"): `decode --follow`; `--fields` or `--stats` with
+  "Refuse, never drop"): `decode --follow` (`cli/wrong-command`, whose
+  message names `listen`); `--fields` or `--stats` with
   `--format pcapng`; `--follow` with `--count`, `--duration` or
   `--idle`; `--detail` with `--stats`.
 - `--help` is answered before dispatch; the scan stops at a bare `--`. Tests
@@ -349,7 +351,7 @@ capture (`unread`), datagrams read whose save to `--write` or `--format
 pcapng` failed (`unsaved`, at most one: the capture ends there), and
 packets reported; all but the first add up to it.
 The summary also says what stopped the capture (`stoppedBy`: `count`,
-`duration`, `idle`, `interrupt` or `error`): whichever
+`duration`, `idle`, `interrupt` or `error`, and `end` for `decode`): whichever
 ended intake first, and nothing later changes it. `--count`
 and `--expect` count **packets reported** (after filters). `--idle` is time
 since the last datagram received, of any kind, starting when the sockets
@@ -543,6 +545,82 @@ packet (#5; fixtures in `test/fixtures/routeros/`). MikroTik's
 [Packet Sniffer](https://help.mikrotik.com/docs/spaces/ROS/pages/8323088/Packet%20Sniffer)
 page dates pcapng from 7.20. Unlike TZSP, such a file does carry an
 interface, a direction and the router's time.
+
+**Decided, `decode`** (maintainer, slice 5, 2026-11-19; recorded on #14):
+
+- **Unwrapping is per packet.** A frame that is UDP to a TZSP port is
+  unwrapped to its datagram, with the IP source and UDP source port as its
+  peer and the port as its listener, as `listen` labels a port; any other
+  Ethernet frame is an inner frame. The ports are 37008 unless the
+  decode-only, repeatable `--tzsp-port` names others, so one port per
+  router stays apart. Link types read: TZSP (128), Ethernet (1), raw IP
+  (101), IPv4 (228), IPv6 (229), Linux cooked SLL (113) and SLL2 (276),
+  which `tshark -i any` writes. A packet in an IP or cooked capture that is
+  not UDP to a TZSP port has no frame to dissect: it is an `unsupported`
+  record, `link/not-tzsp`. IP fragments are not reassembled (BACKLOG.md):
+  a first fragment unwraps to a datagram cut short, a later one is not UDP.
+- **`--write` and `--format pcapng` are refused under `decode`**
+  (`cli/wrong-command`, naming `listen`). Filtering a TZSP file down to a
+  smaller one is in BACKLOG.md.
+- **A file's own metadata is kept**: records gain `interface` (the
+  interface block's name, for link types other than TZSP) at `summary`
+  detail and `comment` (the packet block's comments, other than a peer) at
+  `layers`; both are `--fields` names under `decode`, and refused under
+  `listen`, whose records never have them. `time` is the file's timestamp. No
+  filter reads the interface yet (BACKLOG.md).
+- **Bad files**: a corrupt structure (a block length over the cap,
+  not a multiple of 4 or disagreeing with its trailer; a packet block
+  naming an interface the section lacks or holding less than it says; a
+  section header with no byte-order magic; a hex line that is not hex)
+  ends the stream after the records before it, with a summary whose status
+  is `error` and code `decode/malformed` (exit 1). An input that ends inside
+  a block warns `decode/truncated`, and the summary is `incomplete` (exit
+  0 unless `--expect` fails): every packet before it was whole, and a file
+  still being written looks like this. Caps: 1 MiB per pcapng block or
+  pcap record (`MAX_BLOCK_BYTES`), 128 KiB per hex line (`MAX_HEX_LINE`),
+  checked before anything is allocated for them.
+
+How it is met (`src/input.ts`, `src/decode.ts`; where #14 left a choice
+open, it was made in the slice, and each is tested in
+`test/unit/decode.test.ts`):
+
+- **Records are made from an `Entry`**: a datagram with its TZSP parse,
+  or a bare frame, plus whatever the source says (time, listener, peer,
+  interface, comment). A listener's `Capture` is one, so `packetRecord()`,
+  `datagramRecord()`, filters and `summarize()` serve both commands. A
+  field the input does not have is absent: a file RouterOS saved has no
+  listener or peer, a hex line no time. At `full` detail `datagram` is the
+  bytes the layers' offsets index: the TZSP datagram, or the frame when
+  there is no TZSP.
+- **Our own files decode to what was printed.** A TZSP packet's interface
+  name is the listener label and a `peer=<address>:<port>` comment the
+  peer; any other comment stays a `comment`. `seq` is the position in the
+  input, so a capture with no drops round-trips exactly (a unit test
+  through `openCapture` with a writer, and one through the CLI with
+  `--write`, compare the records at `full`).
+- **The stream**: a `decode` header (`command`, `input` with its name and
+  format, `tzspPorts`, `limits` with `count` and `expect`, filters,
+  detail); a `listen` header carries `command: "listen"` too. `stoppedBy`
+  is `end` when the input was read to its end; `durationMs` is the span of
+  the input's timestamps; `dropped`, `unread` and `unsaved` stay 0. An
+  input with no packets warns `decode/empty`; `capture/no-frames` and
+  `capture/all-filtered` keep their meaning. Senders count entries that
+  name a listener or a peer.
+- **Input is pulled a block at a time** (`ByteReader`), so stdin and large
+  files hold one block plus one chunk; `--count` and an early stop close
+  the input, and an abort ends a read waiting on stdin as `interrupted`.
+  Options, and an input whose first bytes name no format, are refused
+  before the first record (`decode/invalid-option`,
+  `decode/unknown-format`, whose fix names `--input hex` when the bytes
+  look like hex); a file that cannot be opened is `decode/read-failed`
+  (exit 1), as is a read that fails part way.
+- **pcapng** is read in either byte order, with new sections resetting
+  the interfaces; enhanced, simple and obsolete packet blocks are read,
+  other blocks skipped by their length, and `if_tsresol` (both bases) and
+  `if_tsoffset` applied. An option list that runs past its block is read
+  up to where it stops: options annotate a packet that is still whole.
+  **pcap** in either byte order, microsecond or nanosecond; the link type
+  is the low 16 bits of the header's field.
 
 ### Filters
 

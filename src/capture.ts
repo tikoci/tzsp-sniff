@@ -23,8 +23,8 @@ import {
 	type PacketRecord,
 	packetRecord,
 	SCHEMA_VERSION,
+	type CaptureRecord,
 	type StopReason,
-	type StreamRecord,
 	type SummaryRecord,
 	type SummaryStatus,
 	viewPacket,
@@ -78,7 +78,7 @@ export interface CaptureOptions extends ListenOptions {
  */
 export type CaptureListener = Omit<Listener, typeof Symbol.asyncIterator>;
 
-export interface CaptureStream extends AsyncIterable<StreamRecord> {
+export interface CaptureStream extends AsyncIterable<CaptureRecord> {
 	readonly header: HeaderRecord;
 	readonly listener: CaptureListener;
 }
@@ -149,6 +149,7 @@ export async function openCapture(
 		schemaVersion: SCHEMA_VERSION,
 		tool: "tzsp-sniff",
 		version: VERSION,
+		command: "listen",
 		time: isoTime(Date.now()),
 		bind: listener.bind,
 		listeners: listener.listeners.map(({ port, label }) => ({ port, label })),
@@ -254,7 +255,7 @@ export async function openCapture(
 		return writersClosed;
 	};
 
-	async function* run(): AsyncGenerator<StreamRecord> {
+	async function* run(): AsyncGenerator<CaptureRecord> {
 		const counters: Counters = {
 			datagrams: 0,
 			packets: 0,
@@ -519,7 +520,7 @@ export async function openCapture(
 	return {
 		header,
 		listener: view,
-		[Symbol.asyncIterator](): AsyncIterator<StreamRecord> {
+		[Symbol.asyncIterator](): AsyncIterator<CaptureRecord> {
 			if (used) {
 				throw new TzspSniffError(
 					"capture/reused",

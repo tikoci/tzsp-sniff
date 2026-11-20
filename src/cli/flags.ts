@@ -11,6 +11,8 @@ import { ENTRY_FIELDS, SUMMARY_FIELDS } from "../records.ts";
 export const COMMANDS = {
 	listen:
 		"Receive and print, until a limit is met or, with --follow, until interrupted. The default command.",
+	decode:
+		"Read a capture file (pcapng or pcap, detected) or hex lines (--input hex), or stdin as -, and print it as listen does. No network.",
 } as const;
 export type CommandName = keyof typeof COMMANDS;
 
@@ -27,6 +29,8 @@ export interface FlagSpec {
 	/** A `--not-` filter flag: help lists these together. */
 	negated?: boolean;
 }
+
+const BOTH = ["listen", "decode"] as const;
 
 /** What each filter flag keeps; `--src-` and `--dst-` forms fix the direction. */
 const FILTER_HELP: Record<FilterKey, { value: string; help: string }> = {
@@ -76,7 +80,7 @@ const filterFlags = (negated: boolean): FlagSpec[] =>
 		name: `${negated ? "not-" : ""}${filterFlag(key)}`,
 		value: FILTER_HELP[key].value,
 		repeatable: true,
-		commands: ["listen"],
+		commands: BOTH,
 		help: negated
 			? `Remove the packets --${filterFlag(key)} would keep.`
 			: FILTER_HELP[key].help,
@@ -106,7 +110,7 @@ export const FLAGS: readonly FlagSpec[] = [
 	{
 		name: "count",
 		value: "<n>",
-		commands: ["listen"],
+		commands: BOTH,
 		conflicts: ["follow"],
 		help: "Stop after <n> packets are reported.",
 	},
@@ -133,14 +137,14 @@ export const FLAGS: readonly FlagSpec[] = [
 	{
 		name: "expect",
 		value: "<n>",
-		commands: ["listen"],
+		commands: BOTH,
 		help: "Exit 1 with capture/expect-unmet when fewer than <n> packets are reported, also after Ctrl-C.",
 	},
 	{
 		name: "format",
 		value: "text|jsonl|pcapng",
-		commands: ["listen"],
-		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array. pcapng: the datagrams the filters keep, as a capture file on stdout (as --write saves them), for a pipe or a redirect, not a terminal; everything else on stderr. --fields, --stats and --detail do not apply to it.",
+		commands: BOTH,
+		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array. pcapng (listen only): the datagrams the filters keep, as a capture file on stdout (as --write saves them), for a pipe or a redirect, not a terminal; everything else on stderr. --fields, --stats and --detail do not apply to it.",
 	},
 	{
 		name: "write",
@@ -156,32 +160,45 @@ export const FLAGS: readonly FlagSpec[] = [
 	{
 		name: "detail",
 		value: "line|summary|layers|full",
-		commands: ["listen"],
+		commands: BOTH,
 		conflicts: ["stats"],
 		help: "How much each packet carries: line (text's default), summary (adds addresses, ports, protocols, flags; jsonl's default), layers (adds every layer's fields), full (adds the datagram as hex).",
 	},
 	{
 		name: "stats",
-		commands: ["listen"],
+		commands: BOTH,
 		conflicts: ["detail"],
 		help: "Print only the summary, to stdout: counters, protocols, senders and conversations.",
 	},
 	{
 		name: "fields",
 		value: "<a,b,…>",
-		commands: ["listen"],
+		commands: BOTH,
 		help: `Only these fields of each packet and record, and of the summary in jsonl or with --stats, in this order; type, and a summary's status, always stay. In text, the record's type comes first and the fields follow as key=value, in this order; layers, tags and datagram take lines of their own where they are named. Without --detail, the detail is the least that carries them. Fields: ${FIELD_NAMES.join(", ")}.`,
+	},
+	{
+		name: "input",
+		value: "pcapng|pcap|hex",
+		commands: ["decode"],
+		help: "The input's format. Default: detected from its first bytes, pcapng or pcap. hex, one TZSP datagram per line (blank lines and # comments skipped), is never guessed.",
+	},
+	{
+		name: "tzsp-port",
+		value: "<port>",
+		repeatable: true,
+		commands: ["decode"],
+		help: "In an Ethernet, raw IP or Linux cooked capture (tshark's), UDP to this port is TZSP and is unwrapped; any other Ethernet frame is decoded as captured (a file RouterOS saved). Default 37008; repeat for one port per router.",
 	},
 	...filterFlags(false),
 	...filterFlags(true),
 	{
 		name: "help",
-		commands: ["listen"],
+		commands: BOTH,
 		help: "Show this help (also -h).",
 	},
 	{
 		name: "version",
-		commands: ["listen"],
+		commands: BOTH,
 		help: "Print the version.",
 	},
 ];
@@ -194,6 +211,8 @@ const isCommand = (name: string): name is CommandName =>
 
 export interface ParsedArgs {
 	command: CommandName;
+	/** decode's file, or `-` for stdin. */
+	input?: string;
 	/** Flag name to its values, in order; a switch has one empty string. */
 	flags: Map<string, string[]>;
 }
@@ -202,6 +221,8 @@ const usage = (
 	code:
 		| "cli/unknown-command"
 		| "cli/unknown-flag"
+		| "cli/wrong-command"
+		| "cli/missing-argument"
 		| "cli/missing-value"
 		| "cli/invalid-value"
 		| "cli/repeated-flag"
@@ -241,32 +262,56 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 		i = 1;
 	}
 	const flags = new Map<string, string[]>();
+	let input: string | undefined;
+	/** decode takes one file; anything else, or a second one, is refused. */
+	const positional = (arg: string) => {
+		if (command === "decode" && input === undefined) {
+			input = arg;
+			return;
+		}
+		throw usage(
+			"cli/unexpected-argument",
+			command === "decode"
+				? `decode reads one input, and got a second: ${JSON.stringify(arg)}.`
+				: `${command} takes no arguments, and got ${JSON.stringify(arg)}.`,
+			command === "decode"
+				? "Decode one file at a time."
+				: "Remove it; to read a capture file, run tzsp-sniff decode <file>.",
+		);
+	};
 	for (; i < argv.length; i++) {
 		const arg = argv[i] as string;
 		if (arg === "--") {
-			const rest = argv.slice(i + 1);
-			if (rest.length) {
-				throw usage(
-					"cli/unexpected-argument",
-					`${command} takes no arguments, and got ${JSON.stringify(rest[0])}.`,
-					"Remove it; run tzsp-sniff --help for the flags.",
-				);
-			}
+			for (const rest of argv.slice(i + 1)) positional(rest);
 			break;
+		}
+		// `-` is stdin, not a flag.
+		if (arg === "-" || !arg.startsWith("-")) {
+			positional(arg);
+			continue;
 		}
 		if (!arg.startsWith("--")) {
 			throw usage(
-				arg.startsWith("-") ? "cli/unknown-flag" : "cli/unexpected-argument",
-				arg.startsWith("-")
-					? `${arg} is not a flag; flags are long, such as --count.`
-					: `${command} takes no arguments, and got ${JSON.stringify(arg)}.`,
+				"cli/unknown-flag",
+				`${arg} is not a flag; flags are long, such as --count.`,
 				"Run tzsp-sniff --help for the flags.",
 			);
 		}
 		const eq = arg.indexOf("=");
 		const name = arg.slice(2, eq < 0 ? undefined : eq);
 		const spec = BY_NAME.get(name);
-		if (!spec?.commands.includes(command)) {
+		if (spec && !spec.commands.includes(command)) {
+			// Refused, not dropped, and named: an agent learns where it belongs.
+			const owners = spec.commands.join(" and ");
+			throw usage(
+				"cli/wrong-command",
+				`--${name} is a flag of ${owners}, not ${command}.`,
+				command === "decode"
+					? `Drop it: decode reads a file to its end, with no network. To capture, run tzsp-sniff listen --${name}.`
+					: `Drop it, or run tzsp-sniff ${owners} --${name}.`,
+			);
+		}
+		if (!spec) {
 			throw usage(
 				"cli/unknown-flag",
 				`--${name} is not a flag of ${command}.`,
@@ -319,5 +364,12 @@ export function parseArgs(argv: readonly string[]): ParsedArgs {
 			}
 		}
 	}
-	return { command, flags };
+	if (command === "decode" && input === undefined && !flags.has("version")) {
+		throw usage(
+			"cli/missing-argument",
+			"decode needs an input: a capture file, or - for stdin.",
+			"Give it as tzsp-sniff decode capture.pcapng, or pipe into tzsp-sniff decode -.",
+		);
+	}
+	return input === undefined ? { command, flags } : { command, flags, input };
 }

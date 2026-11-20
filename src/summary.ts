@@ -6,8 +6,8 @@
  */
 import type { Dissection } from "./dissect.ts";
 import { TzspSniffError } from "./errors.ts";
-import type { Capture } from "./listen.ts";
 import {
+	type Entry,
 	formatPeer,
 	type PacketView,
 	type Ranked,
@@ -71,7 +71,8 @@ class Table<T extends object> {
 	}
 }
 
-type Sender = { listener: string; peer: string; datagrams: number };
+/** An entry with neither (a file RouterOS saved) is not in the table. */
+type Sender = { listener?: string; peer?: string; datagrams: number };
 type Conversation = {
 	protocol: string;
 	a: string;
@@ -81,8 +82,11 @@ type Conversation = {
 };
 
 export interface StatsAccumulator {
-	/** Count a datagram toward its sender, whatever its kind. */
-	addDatagram(capture: Capture): void;
+	/**
+	 * Count a datagram toward its sender, whatever its kind. An entry with no
+	 * listener and no peer has no sender, and is not counted here.
+	 */
+	addDatagram(entry: Entry): void;
 	/** Count a reported frame toward protocols, problems and conversations. */
 	addPacket(dissection: Dissection, view?: PacketView): void;
 	tables(): SummaryTables;
@@ -113,15 +117,23 @@ export function summarize(options: SummaryOptions = {}): StatsAccumulator {
 	const conversations = new Table<Conversation>(track, (e) => e.packets);
 
 	return {
-		addDatagram(capture) {
-			const listener = capture.listener.label;
-			const peer = formatPeer(capture.peer.address, capture.peer.port);
-			const entry = senders.get(
-				`${listener} ${peer}`,
-				() => ({ listener, peer, datagrams: 0 }),
+		addDatagram(entry) {
+			const listener = entry.listener?.label;
+			const peer = entry.peer
+				? formatPeer(entry.peer.address, entry.peer.port)
+				: undefined;
+			if (listener === undefined && peer === undefined) return;
+			const row = senders.get(
+				// JSON, so a label with a space cannot collide with another pair.
+				JSON.stringify([listener, peer]),
+				() => ({
+					...(listener !== undefined ? { listener } : {}),
+					...(peer !== undefined ? { peer } : {}),
+					datagrams: 0,
+				}),
 				1,
 			);
-			if (entry) entry.datagrams += 1;
+			if (row) row.datagrams += 1;
 		},
 		addPacket(d, view = viewPacket(d)) {
 			// Protocols are a small fixed set, so this table needs no cap.

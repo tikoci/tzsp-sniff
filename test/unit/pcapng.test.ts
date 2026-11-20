@@ -514,7 +514,7 @@ async function drain(
 	const seen: StreamRecord[] = [];
 	for await (const r of stream) {
 		seen.push(r);
-		if (r.type === "header")
+		if (r.type === "header" && r.command === "listen")
 			await send(r.listeners[0]?.port as number, datagrams);
 	}
 	return seen;

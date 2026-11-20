@@ -61,3 +61,11 @@ Small items, one or two sentences each, deleted when done or declined
 - pcapng: microsecond arrival times (`performance.timeOrigin +
   performance.now()`, `if_tsresol` 6), if a lab needs finer ordering than
   the sequence number gives.
+- `decode --format pcapng` (refused in slice 5): filter a TZSP file down to
+  a smaller one; inputs with no TZSP datagram (a file RouterOS saved) would
+  still be refused.
+- A filter on a decoded file's `interface` (`ether1 rx`), if a lab asks for
+  the direction.
+- `decode`: reassemble IP fragments of UDP to the TZSP port, so a TZSP
+  datagram over the path MTU (the `filter-stream=no` loop, #5) decodes
+  whole.
