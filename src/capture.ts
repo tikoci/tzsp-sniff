@@ -219,8 +219,18 @@ export async function openCapture(
 		}
 	} catch (error) {
 		listener.close();
-		await Promise.all(acquired.map((w) => w.close().catch(() => {})));
+		// As at the end of a capture: a writer that failed to close outranks
+		// the reason opening stopped (a closed stdout must not hide it).
+		let closeFailure: unknown;
+		await Promise.all(
+			acquired.map((w) =>
+				w.close().catch((closeError: unknown) => {
+					if (closeError instanceof TzspSniffError) closeFailure ??= closeError;
+				}),
+			),
+		);
 		await listener.closed;
+		if (closeFailure instanceof TzspSniffError) throw closeFailure;
 		throw error;
 	}
 

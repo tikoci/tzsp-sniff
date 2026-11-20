@@ -888,3 +888,50 @@ describe("capture shutdown with writers", () => {
 		expect(summary.written?.datagrams).toBe(1);
 	});
 });
+
+describe("writer edge cases from CodeRabbit", () => {
+	test("a sink that throws instead of rejecting: the failure sticks, and the sink is not called again", async () => {
+		const error = new TzspSniffError("write/failed", "sync");
+		let writes = 0;
+		const w = pcapngWriter({
+			write: ((_chunk: Uint8Array) => {
+				writes += 1;
+				if (writes === 3) throw error;
+				return Promise.resolve();
+			}) as ByteSink["write"],
+		});
+		await w.open([LISTENER_A]);
+		expect(await rejection(w.write(capture(REQUEST)))).toBe(error);
+		expect(await rejection(w.write(capture(REQUEST)))).toBe(error);
+		expect(writes).toBe(3);
+	});
+
+	test("an open that settles after close has stopped waiting is still closed", async () => {
+		const late = deferred();
+		let held = false;
+		let closes = 0;
+		const w = pcapngWriter(
+			{
+				async open() {
+					await late.promise;
+					held = true;
+				},
+				async write() {},
+				async close() {
+					closes += 1;
+					held = false;
+				},
+			},
+			{ stallMs: 20 },
+		);
+		expect(
+			((await rejection(w.open([LISTENER_A]))) as TzspSniffError).code,
+		).toBe("write/stalled");
+		await w.close().catch(() => {});
+		// Close has given up waiting; the open finishes only now.
+		expect(held).toBe(false);
+		late.resolve();
+		await until(() => closes === 2);
+		expect(held).toBe(false);
+	});
+});

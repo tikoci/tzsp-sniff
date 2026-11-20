@@ -76,14 +76,23 @@ describe.skipIf(!LIVE)("TShark reads tzsp-sniff's pcapng", () => {
 	// Made once, for every test, so any one of them runs alone.
 	beforeAll(async () => {
 		const w = pcapngWriter(fileSink(path), { target: path });
-		await w.open(LISTENERS);
-		await w.write(
-			capture(1, REQUEST, LISTENERS[0] as BoundListener, "10.0.2.15"),
-		);
-		await w.write(
-			capture(2, CONTROL, LISTENERS[1] as BoundListener, "fe80::1"),
-		);
-		await w.close();
+		let failed = true;
+		try {
+			await w.open(LISTENERS);
+			await w.write(
+				capture(1, REQUEST, LISTENERS[0] as BoundListener, "10.0.2.15"),
+			);
+			await w.write(
+				capture(2, CONTROL, LISTENERS[1] as BoundListener, "fe80::1"),
+			);
+			failed = false;
+		} finally {
+			// Closed however setup ends; after a failure, that failure is the
+			// one reported, not the close's.
+			const closing = w.close();
+			if (failed) await closing.catch(() => {});
+			else await closing;
+		}
 	});
 
 	test("as a non-root user, at the pinned version", async () => {

@@ -465,7 +465,12 @@ pins that version).
   consumer's own error is (the CLI's closed stdout is one: it stops
   quietly, as in text), unless a writer then fails to close, whose coded
   error is thrown instead, so the CLI exits 1 for a file that is not
-  whole.
+  whole; the same holds when stdout closes while the writers open, and
+  when the CLI's own write to stdout fails (it leaves its loop normally,
+  so the stream's `return()` can report the file). A sink that throws
+  instead of rejecting fails the same way, and a sink call still running
+  when `close` stops waiting is followed by another `sink.close()` once it
+  settles (CodeRabbit on 6065e1c).
 - **The header names the file** (`write`), and the summary counts what
   was written (`written`: datagrams and bytes, headers included), so the
   first look says whether the file is worth reading.

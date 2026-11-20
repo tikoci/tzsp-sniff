@@ -281,7 +281,8 @@ export function pcapngWriter(
 	/** One sink call, timed; its failure is the writer's failure from now on. */
 	async function call(what: string, run: () => Promise<void>): Promise<void> {
 		if (failure !== undefined) throw failure;
-		const work = run();
+		// A sink that throws instead of rejecting fails the same way.
+		const work = (async () => run())();
 		inflight = work.then(
 			() => {},
 			() => {},
@@ -359,14 +360,27 @@ export function pcapngWriter(
 			}
 			// A call that timed out may still be running (a slow open that
 			// will hold a file): let it settle before closing the sink.
-			if (inflight) {
-				await timed(inflight, stallMs, "finishing its last call").catch(
-					(error: unknown) => {
-						failure ??= error;
-					},
-				);
+			const pending = inflight;
+			let settled = true;
+			if (pending) {
+				settled = false;
+				await timed(
+					pending.then(() => {
+						settled = true;
+					}),
+					stallMs,
+					"finishing its last call",
+				).catch((error: unknown) => {
+					failure ??= error;
+				});
 			}
 			const close = sink.close;
+			// Still running after that wait: close the sink again once it
+			// settles, so whatever it acquired late is released. Nothing is
+			// written after it.
+			if (pending && !settled) {
+				void pending.then(() => close.call(sink)).catch(() => {});
+			}
 			// After a failure the sink is still closed, but the first failure is
 			// the one reported.
 			const before = failure;

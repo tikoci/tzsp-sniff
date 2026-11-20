@@ -31,6 +31,7 @@ import {
 	type Detail,
 	ENTRY_FIELDS,
 	SUMMARY_FIELDS,
+	type StreamRecord,
 	selectFields,
 	type TipRecord,
 } from "../records.ts";
@@ -595,14 +596,14 @@ async function print(
 	const showListener = stream.header.listeners.length > 1;
 	let exitCode = 0;
 
-	for await (const record of stream) {
+	const render = async (record: StreamRecord) => {
 		if (record.type === "summary" && record.status === "error") exitCode = 1;
 		if (
 			format === "pcapng" &&
 			(record.type === "packet" || record.type === "record")
 		) {
 			// The capture writes these to stdout itself.
-			continue;
+			return;
 		}
 		if (format === "jsonl") {
 			const shaped = fields ? selectFields(record, fields) : record;
@@ -611,7 +612,7 @@ async function print(
 				for (const tip of tips)
 					await io.stdout.write(`${JSON.stringify(tip)}\n`);
 			}
-			continue;
+			return;
 		}
 		switch (record.type) {
 			case "header":
@@ -640,6 +641,21 @@ async function print(
 				if (record.error) await io.stderr.write(errorText(record.error));
 				break;
 		}
+	};
+
+	// A failed render (stdout closed or failed) leaves the loop normally, so
+	// the stream's return() runs and a capture file that fails to close is
+	// reported over it; thrown from inside the loop, return()'s error would
+	// be dropped in favour of the render's.
+	let renderFailure: { error: unknown } | undefined;
+	for await (const record of stream) {
+		try {
+			await render(record);
+		} catch (error) {
+			renderFailure = { error };
+			break;
+		}
 	}
+	if (renderFailure) throw renderFailure.error;
 	return exitCode;
 }

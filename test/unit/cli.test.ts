@@ -1004,6 +1004,47 @@ describe("--write and --format pcapng", () => {
 		expect(m.stderr()).toContain("error write/failed: Closing c.pcapng failed");
 	});
 
+	test("stdout closed on the section header, and the file fails to close: exit 1", async () => {
+		const m = memoryIo({ stdoutFailsAfter: 0 });
+		m.io.writeSink = () => failingSink({ closeFails: true });
+		expect(
+			await main(
+				[
+					"--port",
+					"0",
+					"--count",
+					"1",
+					"--format",
+					"pcapng",
+					"--write",
+					"c.pcapng",
+				],
+				m.io,
+			),
+		).toBe(1);
+		expect(m.stderr()).toContain("error write/failed: Closing c.pcapng failed");
+	});
+
+	test("text: stdout closed at a packet line, and the file fails to close: exit 1", async () => {
+		const m = memoryIo({ stdoutFailsAfter: 0 });
+		m.io.writeSink = () => failingSink({ closeFails: true });
+		const run = main(["--port", "0", "--follow", "--write", "c.pcapng"], m.io);
+		await until(() => m.err.length > 0);
+		await send(boundPort(m.stderr()), [REQUEST]);
+		expect(await run).toBe(1);
+		expect(m.stderr()).toContain("error write/failed: Closing c.pcapng failed");
+		// And with the file closing cleanly, the closed stdout stays quiet.
+		const q = memoryIo({ stdoutFailsAfter: 0 });
+		q.io.writeSink = () => failingSink({});
+		const quiet = main(
+			["--port", "0", "--follow", "--write", "c.pcapng"],
+			q.io,
+		);
+		await until(() => q.err.length > 0);
+		await send(boundPort(q.stderr()), [REQUEST]);
+		expect(await quiet).toBe(0);
+	});
+
 	test("--format pcapng with only control records: the warning's fix works with pcapng", async () => {
 		const m = memoryIo();
 		const run = main(
