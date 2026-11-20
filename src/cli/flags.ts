@@ -138,9 +138,20 @@ export const FLAGS: readonly FlagSpec[] = [
 	},
 	{
 		name: "format",
-		value: "text|jsonl",
+		value: "text|jsonl|pcapng",
 		commands: ["listen"],
-		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array.",
+		help: "text (default): a line per packet or record on stdout; the start line, warnings, tips and the summary on stderr (the summary on stdout with --stats). jsonl: a JSON record per line, header first, summary last; jq reads it, and `jq -s .` makes one array. pcapng: the datagrams the filters keep, as a capture file on stdout (as --write saves them), for a pipe or a redirect, not a terminal; everything else on stderr. --fields, --stats and --detail do not apply to it.",
+	},
+	{
+		name: "write",
+		value: "<file>",
+		commands: ["listen"],
+		help: "Also save every datagram the capture reads, as received, to <file>, a pcapng capture with link type TZSP: before filters, whatever --format, --detail and --stats print (the summary's dropped and unread count what was never read). The file is new and owner-only, and not the file stdout or stderr goes to; the summary says what was written. Read it again with Wireshark or TShark.",
+	},
+	{
+		name: "overwrite",
+		commands: ["listen"],
+		help: "Let --write replace a regular file that is already there, with a new owner-only file: a reader of the old one never sees the capture.",
 	},
 	{
 		name: "detail",

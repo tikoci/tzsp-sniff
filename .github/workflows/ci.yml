@@ -6,6 +6,7 @@
 #   lint ──────┤
 #   unit ──────┼─→ smoke  (a CHR, integration.yml; skipped for docs-only diffs)
 #   node ──────┤     │
+#   tshark ────┤     │
 #   audit ─────┴─────┴─→ gate  (the one required check)
 #                         └─→ report  (a scheduled run opens or updates its issue)
 name: CI
@@ -232,6 +233,39 @@ jobs:
       - name: Node terminal
         run: bun run test:node-terminal
 
+  # Wireshark's reading of our pcapng (DESIGN.md, "`--write`"): TShark from
+  # the runner image's Ubuntu archive, as the runner's non-root user. The
+  # image is named, not `ubuntu-latest`, and the test fails on any TShark
+  # but the pinned one, so a moved version is a red job, not a silent change.
+  tshark:
+    name: TShark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          bun-version-file: package.json
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Install TShark
+        # Noninteractive: the package's question about capture by non-root
+        # users is left at its default (no); reading a file needs nothing.
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tshark
+      - name: TShark reads our pcapng
+        env:
+          TZSP_SNIFF_TSHARK_VERSION: "4.2.2"
+        run: |
+          bun run test:tshark 2>&1 | tee "$RUNNER_TEMP/tshark.txt"
+          echo "- $(grep -m1 '^tshark: ' "$RUNNER_TEMP/tshark.txt")" >> "$GITHUB_STEP_SUMMARY"
+
   # bun audit (tikoci-ci, "Dependency audit"). Never on an ordinary PR: a PR
   # or push audits only when it changes bun.lock or any package.json, and the
   # scheduled run audits everything, with the report job filing what it
@@ -303,7 +337,7 @@ jobs:
   gate:
     name: CI gate
     if: ${{ always() }}
-    needs: [changes, lint, unit, node, audit, smoke]
+    needs: [changes, lint, unit, node, tshark, audit, smoke]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

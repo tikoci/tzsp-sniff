@@ -42,6 +42,26 @@ export const CODES = {
 		kind: "error",
 		summary: "Writing to stdout failed (not a reader that went away).",
 	},
+	"write/invalid-option": {
+		kind: "error",
+		summary:
+			"A pcapng writer option is out of range, or the writer was used out of order.",
+	},
+	"write/exists": {
+		kind: "error",
+		summary:
+			"The --write file already exists; it is replaced only with --overwrite.",
+	},
+	"write/failed": {
+		kind: "error",
+		summary:
+			"Creating, writing or closing the capture file failed; the capture ended.",
+	},
+	"write/stalled": {
+		kind: "error",
+		summary:
+			"The capture file's sink took no data for too long; the capture ended rather than wait.",
+	},
 	"cli/unknown-command": {
 		kind: "error",
 		summary: "The first argument is not a command.",
@@ -69,6 +89,15 @@ export const CODES = {
 	"cli/unexpected-argument": {
 		kind: "error",
 		summary: "A positional argument the command does not take.",
+	},
+	"cli/write-to-output": {
+		kind: "error",
+		summary:
+			"--write names the file stdout or stderr already goes to; the two would overwrite each other.",
+	},
+	"cli/binary-to-terminal": {
+		kind: "error",
+		summary: "--format pcapng would write binary to a terminal.",
 	},
 	"capture/dropped": {
 		kind: "warning",

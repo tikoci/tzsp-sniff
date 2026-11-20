@@ -5,6 +5,7 @@
  * `.env`, which Bun loads, changes nothing (DESIGN.md, "Decided: Node and
  * npx").
  */
+import { fstatSync } from "node:fs";
 import { type Io, main } from "./main.ts";
 import { streamSink, terminalStream } from "./sink.ts";
 
@@ -40,7 +41,23 @@ const stderr = streamSink(terminalStream(process.stderr, 2), {
 	graceMs: GRACE_MS,
 	signal: interrupt.signal,
 });
-const io: Io = { stdout, stderr, signal: interrupt.signal };
+const io: Io = {
+	stdout,
+	stderr,
+	signal: interrupt.signal,
+	stdoutTerminal: process.stdout.isTTY === true,
+	outputFiles: [1, 2].flatMap((fd) => {
+		try {
+			// Every kind of target, not only a regular file: a FIFO or a device
+			// named by --write is the same destination too (Copilot review of
+			// cdcd610). An inode of 0 (Windows consoles and pipes) names nothing.
+			const s = fstatSync(fd, { bigint: true });
+			return s.ino === 0n ? [] : [{ dev: s.dev, ino: s.ino }];
+		} catch {
+			return [];
+		}
+	}),
+};
 
 let code = 1;
 try {

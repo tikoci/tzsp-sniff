@@ -34,7 +34,8 @@ export function headerText(h: HeaderRecord): string {
 		: "until interrupted";
 	const flags = filterFlags(h.filters);
 	const keeping = flags.length ? `, keeping ${flags.join(" ")}` : "";
-	return `listening on UDP ${where}, ${limit}${keeping}\n`;
+	const saving = h.write ? `, saving every datagram to ${h.write}` : "";
+	return `listening on UDP ${where}, ${limit}${keeping}${saving}\n`;
 }
 
 const value = (v: unknown): string => {
@@ -151,8 +152,13 @@ export function summaryText(s: SummaryRecord): string {
 	const c = s.counters;
 	const lines = [
 		`summary: ${s.status}, stopped by ${s.stoppedBy} after ${seconds(s.durationMs)}`,
-		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}`,
+		`  datagrams ${c.datagrams}: packets ${c.packets}, filtered ${c.filtered}, control ${c.control}, unsupported ${c.unsupported}, invalid ${c.invalid}, dropped ${c.dropped}, unread ${c.unread}${c.unsaved ? `, unsaved ${c.unsaved}` : ""}`,
 	];
+	if (s.written) {
+		lines.push(
+			`  written: ${s.written.datagrams} datagrams, ${s.written.bytes} bytes`,
+		);
+	}
 	const counts = (o: Record<string, number>) =>
 		Object.entries(o)
 			.map(([k, n]) => `${k} ${n}`)

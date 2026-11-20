@@ -41,6 +41,8 @@ export interface HeaderRecord {
 	queue: { datagrams: number; bytes: number };
 	detail: Detail;
 	stats: boolean;
+	/** Where every datagram is saved (`--write`), when it is. */
+	write?: string;
 }
 
 /** A layer as a record carries it: offsets index the datagram, not the frame. */
@@ -136,6 +138,11 @@ export interface Counters {
 	dropped: number;
 	/** Datagrams still queued when the capture stopped. */
 	unread: number;
+	/**
+	 * Datagrams read but neither counted above nor reported, because saving
+	 * them (`--write`, `--format pcapng`) failed; the capture ended there.
+	 */
+	unsaved: number;
 }
 
 export interface Ranked<T> {
@@ -185,6 +192,8 @@ export interface SummaryRecord extends SummaryTables {
 	stoppedBy: StopReason;
 	durationMs: number;
 	counters: Counters;
+	/** What `--write` saved: every datagram read, before filters. */
+	written?: { datagrams: number; bytes: number };
 	error?: { code: ErrorCode; message: string; fix?: string; case?: Code };
 }
 
@@ -233,6 +242,7 @@ export const SUMMARY_FIELDS = [
 	"problems",
 	"senders",
 	"conversations",
+	"written",
 	"error",
 ] as const;
 

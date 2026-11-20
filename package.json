@@ -41,6 +41,7 @@
 		"test": "bun test test/unit",
 		"test:coverage": "bun test --coverage test/unit",
 		"test:integration": "TZSP_SNIFF_INTEGRATION=1 bun test test/integration",
+		"test:tshark": "TZSP_SNIFF_TSHARK=1 bun test test/tshark",
 		"build": "rm -rf dist && bun build src/index.ts src/cli/bin.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
 		"test:node": "node test/smoke/node-smoke.mjs",
 		"test:node-terminal": "bun test test/node",

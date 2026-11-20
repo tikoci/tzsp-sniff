@@ -145,7 +145,8 @@ openCapture(options): Promise<CaptureStream>             // exists: limits, coun
 summarize(): StatsAccumulator                            // exists: bounded, see Limits
 createFilter(spec): PacketFilter                         // exists: (capture, dissection?) => boolean
 selectFields(record, fields)                             // exists: --fields, for any surface
-pcapngWriter(sink): CaptureWriter                        // streaming, with backpressure
+pcapngWriter(sink): CaptureWriter                        // exists: streaming, with backpressure
+fileSink(path, { overwrite }): FileSink                  // exists: --write's file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // what can be decoded
 ```
@@ -344,7 +345,9 @@ its `tools` commands return; `tools btest` has the same question there.
 control records, unsupported records, invalid datagrams (truncated or
 malformed TZSP, the `invalid` kind), packets removed by filters, datagrams
 dropped by the queue, datagrams still queued when a limit stopped the
-capture (`unread`), and packets reported; all but the first add up to it.
+capture (`unread`), datagrams read whose save to `--write` or `--format
+pcapng` failed (`unsaved`, at most one: the capture ends there), and
+packets reported; all but the first add up to it.
 The summary also says what stopped the capture (`stoppedBy`: `count`,
 `duration`, `idle`, `interrupt` or `error`): whichever
 ended intake first, and nothing later changes it. `--count`
@@ -359,7 +362,7 @@ different fix:
 | Case | Warning | Tip names |
 | --- | --- | --- |
 | nothing arrived | `capture/no-datagrams` | `tzsp-sniff setup`, and checking the router's sniffer is running |
-| only control, unsupported or malformed records | `capture/no-frames` | `--detail full` to see them |
+| only control, unsupported or malformed records | `capture/no-frames` | `--detail full` (in text or jsonl) to see them |
 | frames arrived, filters removed all | `capture/all-filtered` | the filter flags in effect |
 
 **Decided:** `--expect N` turns fewer than N packets reported into exit 1
@@ -408,9 +411,87 @@ improves. One interface block per listener carries its label and port;
 the block timestamp is the arrival time; the UDP peer goes in a per-packet
 option. `--format pcapng` writes the same representation. Filters never
 apply to `--write`; they apply to `--format pcapng` on stdout.
-**Unverified**: that Wireshark and TShark open it this way
-(`WTAP_ENCAP_TZSP` is registered in `packet-tzsp.c`) and show the peer
-option; checked by a test before the format ships.
+**Verified** (slice 4, 2026-11-19): TShark 4.2.2 (Ubuntu 24.04's
+`4.2.2-1.1build3`), run as a non-root user, reads a file `pcapngWriter`
+made as TZSP: `frame.protocols` starts `tzsp:eth:ethertype:ip:icmp`, the
+inner `ip.src`, `ip.dst` and `icmp.type` are there, `frame.interface_name`
+is the listener's label, `frame.comment` is the peer and
+`frame.time_epoch` the arrival time (`test/tshark/pcapng.test.ts`, run
+locally in a Docker image of Ubuntu 24.04 and by CI's `tshark` job, which
+pins that version).
+
+**Decided, the file's shape** (maintainer, slice 4, 2026-11-19):
+
+- **The peer is the packet block's `opt_comment`**, as
+  `peer=<address>:<port>` (an IPv6 address in brackets). pcapng has no
+  standard option for a packet's sender, and a custom option needs an IANA
+  Private Enterprise Number this project does not have; Wireshark and
+  TShark show a comment as `frame.comment` with no setup, and `decode`
+  reads it back. The cost: it shares the slot people annotate with.
+- **Blocks**: little-endian; a section header with `shb_userappl`
+  `tzsp-sniff <version>` and an unknown section length (-1); one interface
+  block per listener in `--port` order, with `if_name` its label,
+  `if_description` `TZSP on UDP <bind>:<port>`, no snap length (0) and
+  `if_tsresol` 3, milliseconds, the precision of the arrival time; one
+  enhanced packet block per datagram, captured and original length both
+  the datagram's.
+- **One sink write per block, each awaited.** A slow sink slows the
+  capture loop and the bounded queue absorbs the burst (drops are
+  counted); a sink call that takes longer than 30 s is `write/stalled`.
+  stdout's own sink times itself out (`output/stalled`), so the writer
+  behind `--format pcapng` adds no timer. A call that timed out may still
+  finish: `close` waits for it (up to another 30 s) before closing the
+  sink; still running then, the stall is reported and the sink's one
+  `close` runs when that call settles, never alongside it, so a slow
+  open's file is closed too (final review of ecd23b1), and `written` counts only
+  blocks the sink acknowledged in time. An option over 65535 bytes (a
+  long label) is `write/invalid-option` before the sink is touched. Sink
+  calls run one at a time in the order made, so a library caller that
+  writes without awaiting still gets whole blocks in order, and the first
+  failure sticks whatever its value, `undefined` included (Copilot review
+  of cdcd610).
+- **The writers sit in `openCapture()`**: `write` (every datagram the
+  capture reads, before filters) and `writeReported` (each datagram the
+  stream reports: the frames the filters keep, and every control,
+  unsupported and invalid record). A datagram is saved, then counted, then
+  handed over: a record the caller sees is already in the file, and a
+  datagram whose save failed is counted once, as `unsaved` (cross-review
+  of 52e53d5). A write failure does not change `stoppedBy` when a limit or
+  signal had already ended intake: after a signal it stays `interrupt`
+  (final review of ecd23b1). A writer opens after the bind (a port
+  that fails leaves no file) and before the header (a file that cannot be
+  made opens no capture), with the limits already running from the bind;
+  a failed open closes every writer this capture began to open, even one
+  whose sink failed with `write/invalid-option`, and one close that throws
+  does not skip the next; only a writer refused because it was already
+  open is left to whoever opened it (final review of ecd23b1). Writers close on every way out:
+  when intake ends and the datagram being saved is saved, even while
+  nobody reads or the reader is paused, and at the end of the stream,
+  `return()` and `throw()`, each after a write in flight. A close failure
+  makes the summary an error, or rejects `return()` when the caller
+  stopped early. A sink error that is a `TzspSniffError` ends the capture
+  with it in the summary; any other is thrown from the iteration, as a
+  consumer's own error is (the CLI's closed stdout is one: it stops
+  quietly, as in text), unless a writer then fails to close, whose coded
+  error is thrown instead, so the CLI exits 1 for a file that is not
+  whole; the same holds when stdout closes while the writers open, and
+  when the CLI's own write to stdout fails (it leaves its loop normally,
+  so the stream's `return()` can report the file). A sink that throws
+  instead of rejecting fails the same way, and a sink call still running
+  when `close` stops waiting is followed by the sink's one `close` once it
+  settles (CodeRabbit on 6065e1c; made a single call in the final review
+  of ecd23b1).
+- **The header names the file** (`write`), and the summary counts what
+  was written (`written`: datagrams and bytes, headers included), so the
+  first look says whether the file is worth reading.
+- **`--format pcapng` is refused on a terminal** (`cli/binary-to-terminal`,
+  exit 2, before the bind), and with `--fields`, `--stats` or `--detail`
+  (`cli/flag-conflict`): none of them changes a capture file, so they are
+  refused rather than ignored. Its header, warnings, tips and summary go to
+  stderr as text. `--write -` is refused with a fix naming it, and so is
+  a `--write` path that is the file stdout or stderr is redirected to
+  (`cli/write-to-output`, by device and inode, whatever the target is: a
+  file, a FIFO or a device), since both would write the same inode.
 
 **Requirement, file lifecycle:** the file is created exclusively (an
 existing file is an error naming `--overwrite`), with owner-only
@@ -420,6 +501,27 @@ so a SIGINT leaves a valid file up to the last whole block. A write or
 close failure (disk full) ends the capture with a coded error and a
 non-zero exit, even if packets were already printed. The examples use a
 path in the working directory, not a shared `/tmp`.
+
+How it is met (`src/file.ts`): created with `O_CREAT|O_EXCL` and mode
+0600 (`write/exists` when it is there). `--overwrite` never opens the old
+file: it refuses anything at the path that is not a regular file (a
+symbolic link, a directory, a pipe, a device: `write/failed`), creates a
+new 0600 file beside it with `O_EXCL` (a short random name, not derived
+from the file's, so a name near the 255-byte limit still works), and
+renames it over the old one before the first block. A process that had the old file open keeps
+reading the old inode and never sees the capture, and a pipe cannot block
+the open (cross-review of 52e53d5: changing the mode does not revoke a
+descriptor opened before, and `O_NOFOLLOW` is missing on Windows). Each
+block goes to the OS with its own `write()`, with no buffer in the
+process, so whatever the capture handed over survives the process; the
+file is not `fsync`ed. A block the OS takes only part of (a full disk, a
+file size limit: `EFBIG` in the final review of ecd23b1) is cut off with
+`ftruncate`, so the file ends at the last whole block. Nothing touches the disk until the ports are bound.
+On Windows the mode is only the read-only bit, and the rename replaces the
+old file there too, except while another process holds it open: Windows
+refuses that rename (`EPERM` on windows-latest, Bun 1.4.4, CI run
+44650284299), so `--overwrite` fails with `write/failed` and the old file
+is left as it was.
 
 ### `decode` input
 
@@ -807,6 +909,15 @@ workflow's packed-tarball smoke test (tikoci-release) is what proves it.
   (`pgrep -af "qemu-system.*/machines/<name>/"`), since `remove` deletes
   such a directory without stopping it (tikoci/quickchr#294). CI sets
   `QUICKCHR_DATA_DIR` under the runner's temp directory.
+- **TShark** (`test/tshark`, `bun run test:tshark`, which sets
+  `TZSP_SNIFF_TSHARK=1`): TShark reads a pcapng that `pcapngWriter` and
+  `fileSink` made, as a non-root user, and the test checks the link type,
+  an inner field, the interface name, the peer comment and the time. It
+  fails rather than skips when `tshark` is missing, and fails on any
+  version but `TZSP_SNIFF_TSHARK_VERSION` when that is set. CI's `tshark`
+  job runs it on `ubuntu-24.04` with the archive's TShark, pinned to
+  4.2.2; locally, any TShark on `PATH` (a Docker image of Ubuntu 24.04
+  gives CI's).
 - **Fixtures** are small and sanitized, as hex in tests or capture files
   under `test/fixtures/` with a README saying where each came from.
 

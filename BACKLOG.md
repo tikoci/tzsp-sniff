@@ -56,3 +56,8 @@ Small items, one or two sentences each, deleted when done or declined
   place of `./.github/workflows/…`; actionlint 1.7.12 rejects that form,
   so switch once actionlint accepts it.
 - `--port-match` ranges (`8000-8100`), if a lab asks for one.
+- pcapng: an interface statistics block at close (`isb_ifrecv`,
+  `isb_ifdrop` per listener), once the listener counts drops per port.
+- pcapng: microsecond arrival times (`performance.timeOrigin +
+  performance.now()`, `if_tsresol` 6), if a lab needs finer ordering than
+  the sequence number gives.
