@@ -500,7 +500,10 @@ block goes to the OS with its own `write()`, with no buffer in the
 process, so whatever the capture handed over survives the process; the
 file is not `fsync`ed. Nothing touches the disk until the ports are bound.
 On Windows the mode is only the read-only bit, and the rename replaces the
-old file there too.
+old file there too, except while another process holds it open: Windows
+refuses that rename (`EPERM` on windows-latest, Bun 1.4.4, CI run
+44650284299), so `--overwrite` fails with `write/failed` and the old file
+is left as it was.
 
 ### `decode` input
 

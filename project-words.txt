@@ -23,6 +23,7 @@ dont # as in dontFragment, the IPv4 DF flag
 ece # TCP ECN-echo flag
 endofopt # pcapng opt_endofopt
 EPB # pcapng enhanced packet block
+EPERM # errno: operation not permitted
 EtherType
 EtherTypes
 FFI # foreign function interface

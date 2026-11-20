@@ -388,14 +388,23 @@ describe("fileSink", () => {
 		const fd = openSync(path, "r");
 		try {
 			const sink = fileSink(path, { overwrite: true });
-			await sink.open();
-			await sink.write(Uint8Array.of(7, 7, 7, 7, 7));
-			await sink.close();
+			if (POSIX) {
+				await sink.open();
+				await sink.write(Uint8Array.of(7, 7, 7, 7, 7));
+				await sink.close();
+				expect([...readFileSync(path)]).toEqual([7, 7, 7, 7, 7]);
+				expect(statSync(path).mode & 0o777).toBe(0o600);
+			} else {
+				// Windows will not rename over a file another handle holds open
+				// (`EPERM` on windows-latest, Bun 1.4.4): the overwrite fails,
+				// and the old file stays as it was.
+				const error = (await rejection(sink.open())) as TzspSniffError;
+				expect(error.code).toBe("write/failed");
+				expect(readFileSync(path, "utf8")).toBe("old");
+			}
 			const buffer = Buffer.alloc(16);
 			const n = readSync(fd, buffer, 0, 16, 0);
 			expect(buffer.subarray(0, n).toString()).toBe("old");
-			expect([...readFileSync(path)]).toEqual([7, 7, 7, 7, 7]);
-			if (POSIX) expect(statSync(path).mode & 0o777).toBe(0o600);
 			// No temporary file is left beside it.
 			expect(readdirSync(dir).filter((f) => f.endsWith(".tzsp-sniff"))).toEqual(
 				[],
