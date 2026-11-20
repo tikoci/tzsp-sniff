@@ -67,9 +67,20 @@ function pcapngBuilder(little = true) {
 	};
 	const text = (s: string) => Buffer.from(s).toString("hex");
 	return {
-		/** A section header; `length` is the section's, -1 for unknown. */
-		section: (length = -1n) =>
-			block(0x0a0d0d0a, u32(0x1a2b3c4d) + u16(1) + u16(0) + u64(length)),
+		/**
+		 * A section header; `length` is the section's, -1 for unknown: what
+		 * follows the header, not the header itself (draft-ietf-opsawg-pcapng-06,
+		 * 4.1). `comment` gives the header an option, so it is over 28 bytes.
+		 */
+		section: (length = -1n, comment?: string) =>
+			block(
+				0x0a0d0d0a,
+				u32(0x1a2b3c4d) +
+					u16(1) +
+					u16(0) +
+					u64(length) +
+					options(comment === undefined ? [] : [option(1, text(comment))]),
+			),
 		iface: (
 			linkType: number,
 			o: {
@@ -908,6 +919,18 @@ describe("cross-review of 7d0d428: structure the readers must refuse or keep", (
 		);
 		expect(packetsOf(exact)).toHaveLength(2);
 		expect(summaryOf(exact).status).toBe("complete");
+		// A header with options: the length still starts after the whole
+		// header, not 28 bytes into it (Copilot review of 69114b4).
+		const optioned = await decode(
+			n.section(size(iface + packet), "a header comment") +
+				iface +
+				packet +
+				n.section() +
+				iface +
+				packet,
+		);
+		expect(packetsOf(optioned)).toHaveLength(2);
+		expect(summaryOf(optioned).status).toBe("complete");
 		// Not a multiple of 4 (Copilot review of 10ada3c): malformed, not cut short.
 		for (const length of [1n, size(iface) + 2n]) {
 			expect({
