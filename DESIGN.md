@@ -623,14 +623,19 @@ open, it was made in the slice, and each is tested in
   `--count` and an early stop close the input. An abort ends a read
   waiting on the input, whatever the pull returned (a promise from
   another realm, any thenable), also when the source aborts from inside
-  `next()`, and also when that pull settled as the signal fired (a chunk
-  or the end): the stream ends `interrupted` (or `openDecode` rejects,
+  `next()`, also when that pull settled as the signal fired (a chunk
+  or the end), and also when the source rejects the pull because of the
+  abort (final review of 5ea61d0): the stream ends `interrupted` (or `openDecode` rejects,
   during detection, rather than call the input empty). The signal is
   checked before each packet is asked for, so bytes already buffered (a
   bad hex line) cannot turn an abort into `decode/malformed`, and an
   abort seen when the input has ended is `interrupted` too, not `end`;
   a `count` already reached stays the reason. On an abort the source's
-  `return()` is called but not awaited, during detection too: a source
+  `return()` is called but not awaited, during detection too, and with
+  no pull running (a caller that aborts before reading a record still
+  releases the input); a wait on `return()` that began before the abort
+  ends at the abort too, in the reader and the stdin adapter (final
+  review of 5ea61d0). A source
   slow to clean up cannot hold the summary, and an async generator
   queues `return()` behind a read still pending. The CLI's stdin adapter destroys the
   stream there, so Ctrl-C ends `decode -` while the producer still holds
@@ -667,9 +672,13 @@ open, it was made in the slice, and each is tested in
   cut to the snap length, padded (computed without a 32-bit mask, which
   wraps a length near 2^32 to 0), and nothing else; an enhanced or
   obsolete one may not capture more than its interface's snap length,
-  when that is set (0 is no limit, and the writer's files use 0), or
-  more than its own original length (Copilot review of 4a2508e).
-  Timestamps apply `if_tsresol` (both bases) and the signed `if_tsoffset`
+  when that is set (0 is no limit, and the writer's files use 0).
+  A captured length over the packet's original length is read as
+  captured, not refused: libpcap keeps such a record (tcpdump 4.99.7 on
+  libpcap 1.11.0 prints `[Invalid header: len(33) < caplen(34)]` and reads
+  the next), so one contradictory packet does not end the decode (final
+  review of 5ea61d0, which undid 5ea61d0's refusal). The same holds for
+  pcap. Timestamps apply `if_tsresol` (both bases) and the signed `if_tsoffset`
   exactly, in BigInt; the exact time is checked against what a Date holds
   before it rounds down to the ms, so both ends hold and a time a
   microsecond past either is malformed. Names and comments keep a leading U+FEFF, so a label round
@@ -677,8 +686,8 @@ open, it was made in the slice, and each is tested in
   to where it stops: options annotate a packet that is still whole.
 - **pcap** in either byte order, microsecond or nanosecond, version 2
   only; the magic number is checked also under `--input pcap`. A record
-  over the header's snap length (when it sets one), over its own original
-  length, or over 1 MiB with its 16-byte header, is malformed. The link type is the low 16 bits of the
+  over the header's snap length (when it sets one), or over 1 MiB with its
+  16-byte header, is malformed. The link type is the low 16 bits of the
   header's field. The fraction is rounded down to the ms before the
   seconds are added: in the sum, 999,999 ns would round up a ms. A
   fraction of a whole second or more (1e9 ns, 1e6 µs) is malformed,

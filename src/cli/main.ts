@@ -30,7 +30,7 @@ import {
 	type FilterTerms,
 	senderAddress,
 } from "../filter.ts";
-import type { DecodeInput } from "../input.ts";
+import { type DecodeInput, untilAbort } from "../input.ts";
 import type { ListenerSpec } from "../listen.ts";
 import { type ByteSink, pcapngWriter } from "../pcapng.ts";
 import {
@@ -741,14 +741,16 @@ function streamInput(
 				return;
 			}
 			// No destroy (an async generator): its return() runs its cleanup.
-			// It is waited for on a normal stop, not after an abort, and not
+			// It is waited for on a normal stop, until an abort, and not
 			// while a read is pending, which it would queue behind. A throw
 			// from it, sync or not, is the source's own and is dropped.
 			const returned = (async () => iterator.return?.())().then(
 				() => {},
 				() => {},
 			);
-			if (!pending && !signal?.aborted) await returned;
+			if (pending) return;
+			if (signal) await untilAbort(returned, signal);
+			else await returned;
 		})().catch(() => {});
 		return closed;
 	};

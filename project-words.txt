@@ -7,6 +7,7 @@ backpressure
 BPF # Berkeley Packet Filter
 btest # MikroTik bandwidth test
 bunx # Bun's npx
+caplen # pcap record captured length (libpcap)
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
 CHR # Cloud Hosted Router: RouterOS as a VM
 cmdline # /proc/<pid>/cmdline
@@ -44,6 +45,7 @@ keepalive
 keepalives
 KVM
 libc
+libpcap
 LINKTYPE # tcpdump link-layer header type, LINKTYPE_TZSP
 LLDP
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir

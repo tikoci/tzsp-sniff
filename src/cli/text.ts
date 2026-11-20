@@ -104,9 +104,12 @@ export function entryText(
 		? undefined
 		: (r.listener ??
 			(r.interface === undefined ? undefined : `[${r.interface}]`));
-	const head = [r.time?.slice(11, 23), source, r.line].filter(
-		(part) => part !== undefined,
+	// From the T: a year past 9999 is written +275760-..., not at a fixed place.
+	const clock = r.time?.slice(
+		r.time.indexOf("T") + 1,
+		r.time.indexOf("T") + 13,
 	);
+	const head = [clock, source, r.line].filter((part) => part !== undefined);
 	let text = `${head.join(" ")}\n`;
 	text += summaryFields(r);
 	if (r.type === "packet" && r.layers) text += r.layers.map(layerText).join("");

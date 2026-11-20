@@ -71,6 +71,29 @@ const isAsync = (x: object): x is AsyncIterable<Uint8Array> =>
  * source is not asked for the next chunk until this one is used up. One
  * huge chunk therefore costs what a block or a line needs, not its size.
  */
+/** Settles when `work` does or `signal` aborts, whichever is first; never rejects. */
+export async function untilAbort(
+	work: Promise<unknown>,
+	signal: AbortSignal,
+): Promise<void> {
+	if (signal.aborted) return;
+	let onAbort = () => {};
+	try {
+		await Promise.race([
+			work.then(
+				() => {},
+				() => {},
+			),
+			new Promise<void>((resolve) => {
+				onAbort = resolve;
+				signal.addEventListener("abort", onAbort, { once: true });
+			}),
+		]);
+	} finally {
+		signal.removeEventListener("abort", onAbort);
+	}
+}
+
 export class ByteReader {
 	/** Chunks not yet taken start at `head`, from `offset` in it. */
 	private chunks: Uint8Array[] = [];
@@ -87,11 +110,16 @@ export class ByteReader {
 	/** A pull from the input has not settled (an abort stopped waiting for it). */
 	private pulling = false;
 	private readonly signal: AbortSignal | undefined;
+	/** Closes the input on an abort, even with no pull running. */
+	private readonly onAbort = () => {
+		void this.close(false);
+	};
 	/** Bytes taken so far: where the next read starts. */
 	position = 0;
 
 	constructor(input: DecodeInput, signal?: AbortSignal) {
 		this.signal = signal;
+		signal?.addEventListener("abort", this.onAbort, { once: true });
 		if (input instanceof Uint8Array) {
 			if (input.length) this.push(input);
 			this.ended = true;
@@ -145,6 +173,10 @@ export class ByteReader {
 						if (signal.aborted) onAbort();
 					}),
 				]);
+			} catch (error) {
+				// A source that rejects its read because of the abort: the abort.
+				if (signal.aborted) throw new InputAborted();
+				throw error;
 			} finally {
 				signal.removeEventListener("abort", onAbort);
 			}
@@ -275,9 +307,11 @@ export class ByteReader {
 	 * may also still be waiting on the input (stdin with nothing to read),
 	 * and an async generator queues `return()` behind it, so then it is not
 	 * waited for either: the source releases itself (the CLI destroys stdin
-	 * there). An abort while it waits ends the wait as well.
+	 * there). An abort while it waits ends the wait as well, and an abort
+	 * with the reader still open closes it, a pull running or not.
 	 */
 	async close(wait = true): Promise<void> {
+		this.signal?.removeEventListener("abort", this.onAbort);
 		const iterator = this.iterator;
 		this.iterator = undefined;
 		this.ended = true;
@@ -291,21 +325,9 @@ export class ByteReader {
 			() => {},
 			() => {},
 		);
-		const signal = this.signal;
-		if (!wait || this.pulling || signal?.aborted) return;
-		if (!signal) return done;
-		let onAbort = () => {};
-		try {
-			await Promise.race([
-				done,
-				new Promise<void>((resolve) => {
-					onAbort = resolve;
-					signal.addEventListener("abort", onAbort, { once: true });
-				}),
-			]);
-		} finally {
-			signal.removeEventListener("abort", onAbort);
-		}
+		if (!wait || this.pulling) return;
+		if (this.signal) await untilAbort(done, this.signal);
+		else await done;
 	}
 }
 
@@ -607,12 +629,6 @@ async function* pcapng(
 					`The packet block at byte ${start} says it captured ${captured} bytes, more than the block holds.`,
 				);
 			}
-			const original = body.getUint32(16, little);
-			if (captured > original) {
-				throw malformed(
-					`The packet block at byte ${start} says it captured ${captured} bytes of a packet of ${original}.`,
-				);
-			}
 			// Zero is no limit, as in pcap.
 			if (iface.snapLength && captured > iface.snapLength) {
 				throw malformed(
@@ -696,12 +712,6 @@ async function* pcap(
 		if (snapLength && captured > snapLength) {
 			throw malformed(
 				`The record at byte ${start} declares ${captured} bytes, more than the file's snap length of ${snapLength}.`,
-			);
-		}
-		const original = v.getUint32(12, little);
-		if (captured > original) {
-			throw malformed(
-				`The record at byte ${start} declares ${captured} bytes of a packet of ${original}.`,
 			);
 		}
 		const seconds = v.getUint32(0, little);

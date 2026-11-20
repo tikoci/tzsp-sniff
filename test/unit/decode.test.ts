@@ -1398,33 +1398,108 @@ describe("CodeRabbit review of f3e1d01", () => {
 	}, 2000);
 });
 
-describe("Copilot review of 4a2508e", () => {
-	test("a packet that says it captured more than its original length is malformed", async () => {
+describe("final review of 5ea61d0", () => {
+	test("a packet that says it captured more than its original length is kept, as libpcap keeps it", async () => {
 		const n = pcapngBuilder();
 		const p = pcapBuilder({ linkType: 128 });
 		const length = KEEPALIVE.length / 2;
-		const inputs = (original: number) => ({
-			epb: n.section() + n.iface(128) + n.packet(0, KEEPALIVE, { original }),
-			pb: n.section() + n.iface(128) + n.obsolete(0, KEEPALIVE, { original }),
-			pcap: p.header() + p.record(KEEPALIVE, 0, 0, original),
-		});
-		for (const [name, input] of Object.entries(inputs(length - 1))) {
-			const summary = summaryOf(await decode(input));
-			expect({ name, code: summary.error?.code }).toEqual({
-				name,
-				code: "decode/malformed",
-			});
-		}
-		// Equal, or a packet cut to fewer bytes than it had, decodes.
-		for (const original of [length, length + 100]) {
-			for (const [name, input] of Object.entries(inputs(original))) {
-				const records = entriesOf(await decode(input));
-				expect({ name, original, kinds: records.map((r) => r.type) }).toEqual({
+		for (const original of [length - 1, length, length + 100]) {
+			const inputs = {
+				epb:
+					n.section() +
+					n.iface(128) +
+					n.packet(0, KEEPALIVE, { original }) +
+					n.packet(0, KEEPALIVE),
+				pb:
+					n.section() +
+					n.iface(128) +
+					n.obsolete(0, KEEPALIVE, { original }) +
+					n.obsolete(0, KEEPALIVE),
+				pcap:
+					p.header() +
+					p.record(KEEPALIVE, 0, 0, original) +
+					p.record(KEEPALIVE),
+			};
+			for (const [name, input] of Object.entries(inputs)) {
+				const records = await decode(input);
+				expect({
 					name,
 					original,
-					kinds: ["record"],
+					kinds: entriesOf(records).map((r) => (r as DatagramRecord).kind),
+					status: summaryOf(records).status,
+				}).toEqual({
+					name,
+					original,
+					kinds: ["control", "control"],
+					status: "complete",
 				});
 			}
 		}
 	});
+
+	test("an abort with no record pulled yet closes the input", async () => {
+		const n = pcapngBuilder();
+		const controller = new AbortController();
+		let returned = false;
+		const source = {
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					return {
+						done: false,
+						value: Buffer.from(n.section() + n.iface(128), "hex"),
+					};
+				},
+				async return(): Promise<IteratorResult<Uint8Array>> {
+					returned = true;
+					return { done: true, value: undefined };
+				},
+			}),
+		};
+		const stream = await openDecode(source, { signal: controller.signal });
+		expect(stream.header.input.format).toBe("pcapng");
+		controller.abort();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(returned).toBe(true);
+	});
+
+	test("a source that rejects its read with the abort: the abort, not decode/read-failed", async () => {
+		const source = (signal: AbortSignal, first?: Uint8Array) => ({
+			[Symbol.asyncIterator]: () => {
+				let sent = first === undefined;
+				return {
+					next(): Promise<IteratorResult<Uint8Array>> {
+						if (!sent && first) {
+							sent = true;
+							return Promise.resolve({ done: false, value: first });
+						}
+						return new Promise((_, reject) =>
+							signal.addEventListener("abort", () => reject(signal.reason)),
+						);
+					},
+				};
+			},
+		});
+		// During detection.
+		const early = new AbortController();
+		const opening = openDecode(source(early.signal), { signal: early.signal });
+		setTimeout(() => early.abort(), 10);
+		expect(
+			await opening.then(
+				() => undefined,
+				(e: unknown) => e,
+			),
+		).toMatchObject({ name: "AbortError" });
+		// After the header: interrupted, not an error.
+		const late = new AbortController();
+		const stream = await openDecode(
+			source(late.signal, new TextEncoder().encode(`${KEEPALIVE}\n`)),
+			{ format: "hex", signal: late.signal },
+		);
+		const records: StreamRecord[] = [];
+		for await (const r of stream) {
+			records.push(r);
+			if (r.type === "record") setTimeout(() => late.abort(), 10);
+		}
+		expect(summaryOf(records)).toMatchObject({ status: "interrupted" });
+	}, 2000);
 });

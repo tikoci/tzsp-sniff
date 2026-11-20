@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMMANDS, FLAGS, parseArgs, wantsHelp } from "../../src/cli/flags.ts";
+import { entryText } from "../../src/cli/text.ts";
 import {
 	DEFAULT_DURATION_MS,
 	helpText,
@@ -1370,6 +1371,24 @@ describe("decode", () => {
 		).toBe(0);
 	}, 2000);
 
+	test("stdin: an abort ends the wait on a return() that began before it (final review of 5ea61d0)", async () => {
+		const controller = new AbortController();
+		const m = memoryIo({ signal: controller.signal });
+		m.io.stdin = () => ({
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					return { done: false, value: new TextEncoder().encode("zzzz") };
+				},
+				// Not a format: cleanup starts with no abort, then stalls.
+				return(): Promise<IteratorResult<Uint8Array>> {
+					setTimeout(() => controller.abort(), 20);
+					return new Promise(() => {});
+				},
+			}),
+		});
+		expect(await main(["decode", "-"], m.io)).toBe(130);
+	}, 2000);
+
 	test.skipIf(process.platform === "win32")(
 		"a named pipe is refused without waiting for a writer, and the fix says to pipe it to - (final review of 71d400c)",
 		async () => {
@@ -1471,4 +1490,28 @@ describe("decode", () => {
 		expect(packets(decoded.stdout())).toEqual(before);
 		// Past the 5 s capture budget, with room to set up and decode.
 	}, 15_000);
+});
+
+describe("text output (final review of 5ea61d0)", () => {
+	test("the clock is read from the T, so a six-digit year does not move it", () => {
+		const at = (time: string) =>
+			entryText(
+				{
+					type: "record",
+					seq: 1,
+					time,
+					kind: "control",
+					tzspType: "keepalive",
+					length: 4,
+					line: "tzsp keepalive",
+				} as Parameters<typeof entryText>[0],
+				false,
+			);
+		expect(at("2026-11-20T09:16:57.123Z")).toStartWith(
+			"09:16:57.123 tzsp keepalive\n",
+		);
+		expect(at("+275760-09-13T00:00:00.000Z")).toStartWith(
+			"00:00:00.000 tzsp keepalive\n",
+		);
+	});
 });
