@@ -1053,6 +1053,70 @@ describe("capture startup and stop reasons (final review)", () => {
 	});
 });
 
+describe("writer edge cases from the Copilot review", () => {
+	test("writes made without awaiting reach the sink one at a time, in order", async () => {
+		let running = 0;
+		let overlapped = false;
+		const order: number[] = [];
+		const w = pcapngWriter({
+			async write(chunk) {
+				running += 1;
+				if (running > 1) overlapped = true;
+				// Later blocks finish faster: a race would reorder them.
+				await new Promise((r) => setTimeout(r, 30 - order.length * 5));
+				order.push(chunk.length);
+				running -= 1;
+			},
+			async close() {
+				if (running > 0) overlapped = true;
+			},
+		});
+		await w.open([LISTENER_A]);
+		const headers = order.length;
+		await Promise.all([
+			w.write(capture(REQUEST, { seq: 1 })),
+			w.write(capture(CONTROL, { seq: 2 })),
+			w.write(capture(INVALID, { seq: 3 })),
+		]);
+		await w.close();
+		expect(overlapped).toBe(false);
+		expect(order.slice(headers)).toEqual([
+			packetBlock(0, capture(REQUEST)).length,
+			packetBlock(0, capture(CONTROL)).length,
+			packetBlock(0, capture(INVALID)).length,
+		]);
+		expect(w.written.datagrams).toBe(3);
+	});
+
+	test("a sink that rejects with undefined still fails the writer for good", async () => {
+		let writes = 0;
+		const w = pcapngWriter({
+			write() {
+				writes += 1;
+				return writes === 3 ? Promise.reject(undefined) : Promise.resolve();
+			},
+			async close() {},
+		});
+		await w.open([LISTENER_A]);
+		let rejected = false;
+		await w.write(capture(REQUEST)).catch(() => {
+			rejected = true;
+		});
+		expect(rejected).toBe(true);
+		rejected = false;
+		await w.write(capture(REQUEST)).catch(() => {
+			rejected = true;
+		});
+		expect(rejected).toBe(true);
+		expect(writes).toBe(3);
+		rejected = false;
+		await w.close().catch(() => {
+			rejected = true;
+		});
+		expect(rejected).toBe(true);
+	});
+});
+
 describe("writer edge cases from CodeRabbit", () => {
 	test("a sink that throws instead of rejecting: the failure sticks, and the sink is not called again", async () => {
 		const error = new TzspSniffError("write/failed", "sync");

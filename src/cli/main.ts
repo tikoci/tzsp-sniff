@@ -521,7 +521,7 @@ async function run(argv: readonly string[], io: Io): Promise<number> {
 			) {
 				throw new TzspSniffError(
 					"cli/write-to-output",
-					`--write ${checked.write.path} is the file stdout or stderr is redirected to; the capture and the output would overwrite each other.`,
+					`--write ${checked.write.path} is where stdout or stderr is redirected; the capture and the output would overwrite each other.`,
 					"Redirect the output elsewhere, or give --write another path.",
 				);
 			}

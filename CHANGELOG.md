@@ -26,7 +26,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 - `--format pcapng`: the same format on stdout, with filters applied
   (control and invalid records included). Refused on a terminal
   (`cli/binary-to-terminal`) and with `--fields`, `--stats` or `--detail`.
-- `pcapngWriter(sink)`, `fileSink(path, { overwrite })` and
+- `pcapngWriter(sink)` (sink calls run one at a time, in order, even when
+  writes are not awaited), `fileSink(path, { overwrite })` and
   `LINKTYPE_TZSP` in the library; `openCapture()` takes `write` and
   `writeReported` writers.
 - Filters: `--proto`, `--host`, `--net`, `--port-match`, `--mac`,

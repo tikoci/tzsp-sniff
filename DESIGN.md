@@ -445,7 +445,11 @@ pins that version).
   `close` runs when that call settles, never alongside it, so a slow
   open's file is closed too (final review of ecd23b1), and `written` counts only
   blocks the sink acknowledged in time. An option over 65535 bytes (a
-  long label) is `write/invalid-option` before the sink is touched.
+  long label) is `write/invalid-option` before the sink is touched. Sink
+  calls run one at a time in the order made, so a library caller that
+  writes without awaiting still gets whole blocks in order, and the first
+  failure sticks whatever its value, `undefined` included (Copilot review
+  of cdcd610).
 - **The writers sit in `openCapture()`**: `write` (every datagram the
   capture reads, before filters) and `writeReported` (each datagram the
   stream reports: the frames the filters keep, and every control,
@@ -486,8 +490,8 @@ pins that version).
   refused rather than ignored. Its header, warnings, tips and summary go to
   stderr as text. `--write -` is refused with a fix naming it, and so is
   a `--write` path that is the file stdout or stderr is redirected to
-  (`cli/write-to-output`, by device and inode), since both would write
-  the same inode.
+  (`cli/write-to-output`, by device and inode, whatever the target is: a
+  file, a FIFO or a device), since both would write the same inode.
 
 **Requirement, file lifecycle:** the file is created exclusively (an
 existing file is an error naming `--overwrite`), with owner-only

@@ -297,6 +297,39 @@ describe("tzsp-sniff executable", () => {
 			expect(readFileSync(path).length).toBe(0);
 		});
 
+		test.if(process.platform !== "win32")(
+			"--write naming the device stdout goes to: exit 2, refused before the bind",
+			async () => {
+				const fd = openSync("/dev/null", "w");
+				try {
+					const proc = Bun.spawn(
+						[
+							process.execPath,
+							"--no-env-file",
+							BIN,
+							"--count",
+							"1",
+							"--write",
+							"/dev/null",
+						],
+						{ env, stdout: fd, stderr: "pipe" },
+					);
+					const killer = setTimeout(() => proc.kill("SIGKILL"), CHILD_MS);
+					try {
+						expect(await proc.exited).toBe(2);
+						expect(await new Response(proc.stderr).text()).toContain(
+							"error cli/write-to-output",
+						);
+					} finally {
+						clearTimeout(killer);
+						proc.kill("SIGKILL");
+					}
+				} finally {
+					closeSync(fd);
+				}
+			},
+		);
+
 		// libc pseudo-terminals: Linux and macOS.
 		test.skipIf(process.platform === "win32")(
 			"--format pcapng with stdout on a terminal: exit 2, nothing written there",

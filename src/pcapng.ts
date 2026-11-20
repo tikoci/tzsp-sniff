@@ -250,7 +250,22 @@ export function pcapngWriter(
 	const written: WrittenCounts = { datagrams: 0, bytes: 0 };
 	const interfaces = new Map<BoundListener, number>();
 	let state: "new" | "open" | "closed" = "new";
+	/** Set by the first failure; `failure` may be any value, `undefined` too. */
+	let failed = false;
 	let failure: unknown;
+	const fail = (error: unknown) => {
+		if (!failed) {
+			failed = true;
+			failure = error;
+		}
+		return failure;
+	};
+	/**
+	 * Sink calls run one at a time, in the order they were made: settles when
+	 * the last call made has finished or timed out. A library caller that
+	 * writes without awaiting still gets whole blocks in order.
+	 */
+	let turn: Promise<void> = Promise.resolve();
 	/** The sink was asked to open, so it must be asked to close. */
 	let touched = false;
 	/** The last sink call, settled or not: close waits for one that timed out. */
@@ -290,20 +305,30 @@ export function pcapngWriter(
 		}
 	}
 
-	/** One sink call, timed; its failure is the writer's failure from now on. */
+	/**
+	 * One sink call, timed, after the calls made before it; its failure is
+	 * the writer's failure from now on, and no sink call follows one.
+	 */
 	async function call(what: string, run: () => Promise<void>): Promise<void> {
-		if (failure !== undefined) throw failure;
-		// A sink that throws instead of rejecting fails the same way.
-		const work = (async () => run())();
-		inflight = work.then(
-			() => {},
-			() => {},
-		);
+		const before = turn;
+		let done = () => {};
+		turn = new Promise<void>((resolve) => {
+			done = resolve;
+		});
 		try {
+			await before;
+			if (failed) throw failure;
+			// A sink that throws instead of rejecting fails the same way.
+			const work = (async () => run())();
+			inflight = work.then(
+				() => {},
+				() => {},
+			);
 			await timed(work, stallMs, what);
 		} catch (error) {
-			failure ??= error;
-			throw failure;
+			throw fail(error);
+		} finally {
+			done();
 		}
 	}
 
@@ -369,9 +394,11 @@ export function pcapngWriter(
 			if (state === "closed") return;
 			state = "closed";
 			if (!touched || !sink.close) {
-				if (failure !== undefined) throw failure;
+				if (failed) throw failure;
 				return;
 			}
+			// Writes made before close go first: each finishes or times out.
+			await turn;
 			// A call that timed out may still be running (a slow open that
 			// will hold a file): let it settle before closing the sink.
 			const pending = inflight;
@@ -384,9 +411,7 @@ export function pcapngWriter(
 					}),
 					stallMs,
 					"finishing its last call",
-				).catch((error: unknown) => {
-					failure ??= error;
-				});
+				).catch(fail);
 			}
 			const close = sink.close;
 			// Still running after that wait: the sink's one close waits until
@@ -396,19 +421,14 @@ export function pcapngWriter(
 				void pending.then(() => close.call(sink)).catch(() => {});
 				throw failure;
 			}
-			// After a failure the sink is still closed, but the first failure is
-			// the one reported.
-			const before = failure;
-			failure = undefined;
+			// After a failure the sink is still closed, and the first failure
+			// is the one reported.
 			try {
-				await call("closing it", () => close.call(sink));
+				await timed((async () => close.call(sink))(), stallMs, "closing it");
 			} catch (error) {
-				if (before === undefined) throw error;
+				throw fail(error);
 			}
-			if (before !== undefined) {
-				failure = before;
-				throw before;
-			}
+			if (failed) throw failure;
 		},
 	};
 }

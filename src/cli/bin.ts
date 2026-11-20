@@ -48,8 +48,11 @@ const io: Io = {
 	stdoutTerminal: process.stdout.isTTY === true,
 	outputFiles: [1, 2].flatMap((fd) => {
 		try {
+			// Every kind of target, not only a regular file: a FIFO or a device
+			// named by --write is the same destination too (Copilot review of
+			// cdcd610). An inode of 0 (Windows consoles and pipes) names nothing.
 			const s = fstatSync(fd, { bigint: true });
-			return s.isFile() ? [{ dev: s.dev, ino: s.ino }] : [];
+			return s.ino === 0n ? [] : [{ dev: s.dev, ino: s.ino }];
 		} catch {
 			return [];
 		}
