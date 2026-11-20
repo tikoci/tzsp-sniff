@@ -37,6 +37,17 @@ const IF_NAME = 2;
 const IF_DESCRIPTION = 3;
 const IF_TSRESOL = 9;
 
+/** Errors a writer's `open` threw because it was opened before: see {@link wasAlreadyOpened}. */
+const alreadyOpened = new WeakSet<object>();
+
+/**
+ * For openCapture, not part of the package's API: `error` is a writer
+ * refusing a second open, so whoever opened it first still owns it and
+ * this capture must not close it. A sink's own error never is.
+ */
+export const wasAlreadyOpened = (error: unknown): boolean =>
+	typeof error === "object" && error !== null && alreadyOpened.has(error);
+
 /** Where a writer's bytes go. */
 export interface ByteSink {
 	/** Called once, before the first write: create the file, for example. */
@@ -218,9 +229,10 @@ export function packetBlock(interfaceId: number, capture: Capture): Uint8Array {
  * time, each a whole block, so a file cut short by an interrupt or a full
  * disk ends at a block boundary or inside the last block, never before
  * one that was acknowledged. After the first failure every call rejects
- * with that failure, and `close` still closes the sink, once any sink call
- * that timed out has settled (for up to another `stallMs`), so a late open
- * is closed too. `written` counts only what the sink acknowledged in time.
+ * with that failure, and `close` still closes the sink, once, after any
+ * sink call that timed out has settled: it waits up to another `stallMs`,
+ * then reports the stall and leaves the sink's close to run when that call
+ * settles, so a late open is closed too and close never overlaps a call. `written` counts only what the sink acknowledged in time.
  */
 export function pcapngWriter(
 	sink: ByteSink,
@@ -305,7 +317,9 @@ export function pcapngWriter(
 		written,
 		async open(listeners) {
 			if (state !== "new") {
-				throw misuse(`${target} was already opened.`);
+				const error = misuse(`${target} was already opened.`);
+				alreadyOpened.add(error);
+				throw error;
 			}
 			// Every block that open writes is made first: an option too long
 			// for pcapng is refused before the sink is touched.
@@ -375,11 +389,12 @@ export function pcapngWriter(
 				});
 			}
 			const close = sink.close;
-			// Still running after that wait: close the sink again once it
-			// settles, so whatever it acquired late is released. Nothing is
-			// written after it.
+			// Still running after that wait: the sink's one close waits until
+			// that call settles, so whatever it acquired late is released, and
+			// close never overlaps another sink call. The stall is reported now.
 			if (pending && !settled) {
 				void pending.then(() => close.call(sink)).catch(() => {});
+				throw failure;
 			}
 			// After a failure the sink is still closed, but the first failure is
 			// the one reported.

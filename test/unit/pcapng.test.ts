@@ -15,6 +15,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { open as openFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
 import { TzspSniffError } from "../../src/errors.ts";
@@ -358,6 +359,7 @@ describe("fileSink", () => {
 			code: "ENOSPC",
 		});
 		let closed = 0;
+		const truncated: number[] = [];
 		const sink = fileSink(
 			fresh(),
 			{},
@@ -365,6 +367,9 @@ describe("fileSink", () => {
 				open: (async () => ({
 					write: async () => {
 						throw enospc;
+					},
+					truncate: async (len: number) => {
+						truncated.push(len);
 					},
 					close: async () => {
 						closed += 1;
@@ -378,9 +383,66 @@ describe("fileSink", () => {
 		)) as TzspSniffError;
 		expect(error.code).toBe("write/failed");
 		expect(error.cause).toBe(enospc);
+		expect(truncated).toEqual([0]);
 		await sink.close();
 		expect(closed).toBe(1);
 	});
+
+	test("a block cut short by the disk is cut off: the file ends at a whole block", async () => {
+		const path = fresh();
+		const efbig = Object.assign(new Error("EFBIG: file too large"), {
+			code: "EFBIG",
+		});
+		let writes = 0;
+		const sink = fileSink(
+			path,
+			{},
+			{
+				open: (async (...args: Parameters<typeof openFile>) => {
+					const h = await openFile(...args);
+					return new Proxy(h, {
+						get(target, key) {
+							if (key === "write") {
+								return async (buf: Uint8Array, off: number, len: number) => {
+									writes += 1;
+									if (writes === 2) {
+										// Half the block lands, then the limit is hit.
+										await target.write(buf, off, Math.floor(len / 2));
+										throw efbig;
+									}
+									return target.write(buf, off, len);
+								};
+							}
+							const value = Reflect.get(target, key);
+							return typeof value === "function" ? value.bind(target) : value;
+						},
+					});
+				}) as never,
+			},
+		);
+		await sink.open();
+		await sink.write(Uint8Array.of(1, 2, 3, 4));
+		const error = (await rejection(
+			sink.write(Uint8Array.of(5, 6, 7, 8, 9, 10, 11, 12)),
+		)) as TzspSniffError;
+		expect(error.code).toBe("write/failed");
+		expect(error.cause).toBe(efbig);
+		await sink.close();
+		expect([...readFileSync(path)]).toEqual([1, 2, 3, 4]);
+	});
+
+	test.if(POSIX)(
+		"overwrite: a name near the 255-byte limit still works",
+		async () => {
+			const path = join(dir, `${"c".repeat(240)}.pcapng`);
+			writeFileSync(path, "old");
+			const sink = fileSink(path, { overwrite: true });
+			await sink.open();
+			await sink.write(Uint8Array.of(9));
+			await sink.close();
+			expect([...readFileSync(path)]).toEqual([9]);
+		},
+	);
 
 	test("overwrite: a reader that had the old file open never sees the capture", async () => {
 		const path = fresh();
@@ -889,6 +951,108 @@ describe("capture shutdown with writers", () => {
 	});
 });
 
+describe("capture startup and stop reasons (final review)", () => {
+	test("a sink that opens and then rejects with write/invalid-option is still closed", async () => {
+		let held = false;
+		const error = (await rejection(
+			openCapture({
+				ports: [{ port: 0 }],
+				bind: "127.0.0.1",
+				write: pcapngWriter({
+					async open() {
+						held = true;
+						throw new TzspSniffError("write/invalid-option", "sink's own");
+					},
+					async write() {},
+					async close() {
+						held = false;
+					},
+				}),
+			}),
+		)) as TzspSniffError;
+		expect(error.message).toBe("sink's own");
+		expect(held).toBe(false);
+	});
+
+	test("a writer whose close throws does not keep the next one from closing", async () => {
+		const first: CaptureWriter = {
+			target: "first",
+			written: { datagrams: 0, bytes: 0 },
+			async open() {},
+			async write() {},
+			close: (() => {
+				throw new Error("sync close");
+			}) as CaptureWriter["close"],
+		};
+		let held = false;
+		const second = pcapngWriter({
+			async open() {
+				held = true;
+				throw new TzspSniffError("write/failed", "second failed to open");
+			},
+			async write() {},
+			async close() {
+				held = false;
+			},
+		});
+		const error = (await rejection(
+			openCapture({
+				ports: [{ port: 0 }],
+				bind: "127.0.0.1",
+				write: first,
+				writeReported: second,
+			}),
+		)) as TzspSniffError;
+		expect(error.message).toBe("second failed to open");
+		expect(held).toBe(false);
+	});
+
+	test("a write that fails after a signal ended intake: interrupt stays the reason", async () => {
+		const held = deferred();
+		let writing = false;
+		const writer: CaptureWriter = {
+			target: "bare",
+			written: { datagrams: 0, bytes: 0 },
+			async open() {},
+			async write() {
+				writing = true;
+				await held.promise;
+				throw new TzspSniffError("write/failed", "late failure");
+			},
+			async close() {},
+		};
+		const abort = new AbortController();
+		const stream = await openCapture({
+			ports: [{ port: 0 }],
+			bind: "127.0.0.1",
+			durationMs: 3000,
+			signal: abort.signal,
+			write: writer,
+		});
+		const iterator = stream[Symbol.asyncIterator]();
+		const header = (await iterator.next()).value as {
+			listeners: { port: number }[];
+		};
+		const records: StreamRecord[] = [];
+		const reading = (async () => {
+			for (;;) {
+				const r = await iterator.next();
+				if (r.done) break;
+				records.push(r.value);
+			}
+		})();
+		await send(header.listeners[0]?.port as number, [REQUEST]);
+		await until(() => writing);
+		abort.abort();
+		await stream.listener.closed;
+		held.resolve();
+		await reading;
+		const summary = summaryOf(records);
+		expect(summary.error?.code).toBe("write/failed");
+		expect(summary.stoppedBy).toBe("interrupt");
+	});
+});
+
 describe("writer edge cases from CodeRabbit", () => {
 	test("a sink that throws instead of rejecting: the failure sticks, and the sink is not called again", async () => {
 		const error = new TzspSniffError("write/failed", "sync");
@@ -928,10 +1092,54 @@ describe("writer edge cases from CodeRabbit", () => {
 			((await rejection(w.open([LISTENER_A]))) as TzspSniffError).code,
 		).toBe("write/stalled");
 		await w.close().catch(() => {});
-		// Close has given up waiting; the open finishes only now.
-		expect(held).toBe(false);
+		// Close has given up waiting; the open finishes only now, and the
+		// sink's one close follows it rather than overlapping it.
+		expect(closes).toBe(0);
 		late.resolve();
-		await until(() => closes === 2);
+		await until(() => closes === 1);
+		expect(held).toBe(false);
+		await new Promise((r) => setTimeout(r, 10));
+		expect(closes).toBe(1);
+	});
+
+	test("close is called once, never while another sink call runs", async () => {
+		const late = deferred();
+		let running = 0;
+		let overlapped = false;
+		let closes = 0;
+		let held = false;
+		const w = pcapngWriter(
+			{
+				async open() {
+					running += 1;
+					await late.promise;
+					held = true;
+					running -= 1;
+				},
+				async write() {},
+				async close() {
+					if (running > 0) {
+						overlapped = true;
+						throw new Error("close while open is running");
+					}
+					closes += 1;
+					// A slow close: the open settles while it would still run.
+					await new Promise((r) => setTimeout(r, 30));
+					held = false;
+				},
+			},
+			{ stallMs: 20 },
+		);
+		expect(
+			((await rejection(w.open([LISTENER_A]))) as TzspSniffError).code,
+		).toBe("write/stalled");
+		const closing = w.close().catch(() => {});
+		setTimeout(late.resolve, 30);
+		await closing;
+		await until(() => closes === 1 && !held);
+		await new Promise((r) => setTimeout(r, 50));
+		expect(overlapped).toBe(false);
+		expect(closes).toBe(1);
 		expect(held).toBe(false);
 	});
 });

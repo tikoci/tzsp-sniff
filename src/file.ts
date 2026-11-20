@@ -2,7 +2,8 @@
  * The file `--write` saves to (DESIGN.md, "Requirement, file lifecycle"):
  * a new inode, owner-only where the OS has permissions, written block by
  * block with no buffer in the process, so whatever the capture handed over
- * is in the OS when it stops, however it stops.
+ * is in the OS when it stops, however it stops. A block that fails partway
+ * is cut back off, so the file ends at a block boundary.
  */
 import { randomBytes } from "node:crypto";
 import {
@@ -12,7 +13,7 @@ import {
 	rename,
 	unlink,
 } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { TzspSniffError } from "./errors.ts";
 import type { ByteSink } from "./pcapng.ts";
 
@@ -64,6 +65,8 @@ export function fileSink(
 ): FileSink {
 	const open = internals.open ?? openFile;
 	let handle: FileHandle | undefined;
+	/** Bytes of the chunks written whole: the file's length after each write. */
+	let size = 0;
 
 	/** Create `at` new, owner-only; an existing file is `write/exists`. */
 	async function create(at: string): Promise<FileHandle> {
@@ -98,9 +101,11 @@ export function fileSink(
 				"Give the path of a regular file, or a new one.",
 			);
 		}
+		// Not named after the file: a name near the 255-byte limit would
+		// make the temporary name too long.
 		const temp = join(
 			dirname(path),
-			`.${basename(path)}.${randomBytes(6).toString("hex")}.tzsp-sniff`,
+			`.${randomBytes(6).toString("hex")}.tzsp-sniff`,
 		);
 		const h = await create(temp);
 		try {
@@ -134,7 +139,11 @@ export function fileSink(
 					const { bytesWritten } = await h.write(chunk, at, chunk.length - at);
 					at += bytesWritten;
 				}
+				size += chunk.length;
 			} catch (error) {
+				// A chunk cut short (a full disk, a file size limit) is cut off:
+				// the file ends at the last whole block, not inside one.
+				await h.truncate(size).catch(() => {});
 				throw failed(`Writing ${path} failed`, error);
 			}
 		},

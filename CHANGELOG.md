@@ -19,7 +19,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   block by block so Ctrl-C leaves a valid file, and named in the header;
   the summary gains `written` (datagrams and bytes). A write or close
   failure ends the capture with `write/failed` (or `write/stalled`) and
-  exit 1, and the datagram being saved counts in the new `unsaved` counter.
+  exit 1, the file still ending at its last whole block, and the datagram
+  being saved counts in the new `unsaved` counter.
   The file stdout or stderr is redirected to is refused
   (`cli/write-to-output`).
 - `--format pcapng`: the same format on stdout, with filters applied

@@ -88,7 +88,8 @@ capture), is owner-only where the OS has permissions, and is written block
 by block, so Ctrl-C leaves a valid file. It cannot be the file stdout or
 stderr is redirected to. The header names the file, the summary counts
 what was written, and a failed write ends the capture with
-`write/failed` and exit 1 (the datagram it was saving counts as `unsaved`). `--format pcapng` writes the same format to
+`write/failed` and exit 1, the file ending at its last whole block (the
+datagram it was saving counts as `unsaved`). `--format pcapng` writes the same format to
 stdout with the filters applied, for a pipe or a redirect (it is refused on
 a terminal, and with `--fields`, `--stats` or `--detail`); the start line,
 warnings and the summary go to stderr.

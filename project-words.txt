@@ -21,12 +21,14 @@ dissector
 dissectors
 dont # as in dontFragment, the IPv4 DF flag
 ece # TCP ECN-echo flag
+EFBIG # errno: file too large
 endofopt # pcapng opt_endofopt
 EPB # pcapng enhanced packet block
 EPERM # errno: operation not permitted
 EtherType
 EtherTypes
 FFI # foreign function interface
+ftruncate # cut a file to a length
 GRE
 hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward

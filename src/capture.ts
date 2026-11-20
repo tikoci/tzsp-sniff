@@ -30,7 +30,7 @@ import {
 	viewPacket,
 	type WarningRecord,
 } from "./records.ts";
-import type { CaptureWriter } from "./pcapng.ts";
+import { type CaptureWriter, wasAlreadyOpened } from "./pcapng.ts";
 import { summarize } from "./summary.ts";
 import { VERSION } from "./version.ts";
 
@@ -210,10 +210,7 @@ export async function openCapture(
 				await w.open(listener.listeners);
 				acquired.push(w);
 			} catch (error) {
-				const inUse =
-					error instanceof TzspSniffError &&
-					error.code === "write/invalid-option";
-				if (!inUse) acquired.push(w);
+				if (!wasAlreadyOpened(error)) acquired.push(w);
 				throw error;
 			}
 		}
@@ -222,9 +219,10 @@ export async function openCapture(
 		// As at the end of a capture: a writer that failed to close outranks
 		// the reason opening stopped (a closed stdout must not hide it).
 		let closeFailure: unknown;
+		// A close that throws instead of rejecting must not skip the others.
 		await Promise.all(
 			acquired.map((w) =>
-				w.close().catch((closeError: unknown) => {
+				(async () => w.close())().catch((closeError: unknown) => {
 					if (closeError instanceof TzspSniffError) closeFailure ??= closeError;
 				}),
 			),
@@ -270,6 +268,8 @@ export async function openCapture(
 		};
 		const stats = summarize();
 		let failure: TzspSniffError | undefined;
+		/** How intake had ended when a save failed, if it had. */
+		let endedBeforeFailure: CaptureListener["ended"];
 		let escaping: { error: unknown } | undefined;
 		let dropWarned = false;
 		const dropWarning = (): WarningRecord => ({
@@ -304,6 +304,8 @@ export async function openCapture(
 							await saving;
 						} catch (error) {
 							counters.unsaved += 1;
+							// Read now: leaving the loop closes the listener itself.
+							endedBeforeFailure = listener.ended;
 							throw error;
 						} finally {
 							inWrite = undefined;
@@ -342,8 +344,13 @@ export async function openCapture(
 			} catch (error) {
 				if (!(error instanceof TzspSniffError)) throw error;
 				failure = error;
-				// A limit or signal that stopped intake first stays the reason.
-				stoppedBy ??= "error";
+				// A limit or signal that stopped intake first stays the reason:
+				// a signal sets no stop reason of its own, so a save that failed
+				// after one ended intake leaves it an interrupt.
+				stoppedBy ??=
+					endedBeforeFailure === "aborted" || endedBeforeFailure === "closed"
+						? "interrupt"
+						: "error";
 			}
 		} catch (error) {
 			// Not a capture outcome (a consumer's own error, or a sink error with no

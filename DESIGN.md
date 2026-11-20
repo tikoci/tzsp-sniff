@@ -441,7 +441,9 @@ pins that version).
   stdout's own sink times itself out (`output/stalled`), so the writer
   behind `--format pcapng` adds no timer. A call that timed out may still
   finish: `close` waits for it (up to another 30 s) before closing the
-  sink, so a slow open's file is closed too, and `written` counts only
+  sink; still running then, the stall is reported and the sink's one
+  `close` runs when that call settles, never alongside it, so a slow
+  open's file is closed too (final review of ecd23b1), and `written` counts only
   blocks the sink acknowledged in time. An option over 65535 bytes (a
   long label) is `write/invalid-option` before the sink is touched.
 - **The writers sit in `openCapture()`**: `write` (every datagram the
@@ -451,11 +453,14 @@ pins that version).
   handed over: a record the caller sees is already in the file, and a
   datagram whose save failed is counted once, as `unsaved` (cross-review
   of 52e53d5). A write failure does not change `stoppedBy` when a limit or
-  signal had already ended intake. A writer opens after the bind (a port
+  signal had already ended intake: after a signal it stays `interrupt`
+  (final review of ecd23b1). A writer opens after the bind (a port
   that fails leaves no file) and before the header (a file that cannot be
   made opens no capture), with the limits already running from the bind;
-  a failed open closes only the writers this capture opened, so a writer
-  another capture holds is left to it. Writers close on every way out:
+  a failed open closes every writer this capture began to open, even one
+  whose sink failed with `write/invalid-option`, and one close that throws
+  does not skip the next; only a writer refused because it was already
+  open is left to whoever opened it (final review of ecd23b1). Writers close on every way out:
   when intake ends and the datagram being saved is saved, even while
   nobody reads or the reader is paused, and at the end of the stream,
   `return()` and `throw()`, each after a write in flight. A close failure
@@ -469,8 +474,9 @@ pins that version).
   when the CLI's own write to stdout fails (it leaves its loop normally,
   so the stream's `return()` can report the file). A sink that throws
   instead of rejecting fails the same way, and a sink call still running
-  when `close` stops waiting is followed by another `sink.close()` once it
-  settles (CodeRabbit on 6065e1c).
+  when `close` stops waiting is followed by the sink's one `close` once it
+  settles (CodeRabbit on 6065e1c; made a single call in the final review
+  of ecd23b1).
 - **The header names the file** (`write`), and the summary counts what
   was written (`written`: datagrams and bytes, headers included), so the
   first look says whether the file is worth reading.
@@ -496,14 +502,17 @@ How it is met (`src/file.ts`): created with `O_CREAT|O_EXCL` and mode
 0600 (`write/exists` when it is there). `--overwrite` never opens the old
 file: it refuses anything at the path that is not a regular file (a
 symbolic link, a directory, a pipe, a device: `write/failed`), creates a
-new 0600 file beside it with `O_EXCL`, and renames it over the old one
-before the first block. A process that had the old file open keeps
+new 0600 file beside it with `O_EXCL` (a short random name, not derived
+from the file's, so a name near the 255-byte limit still works), and
+renames it over the old one before the first block. A process that had the old file open keeps
 reading the old inode and never sees the capture, and a pipe cannot block
 the open (cross-review of 52e53d5: changing the mode does not revoke a
 descriptor opened before, and `O_NOFOLLOW` is missing on Windows). Each
 block goes to the OS with its own `write()`, with no buffer in the
 process, so whatever the capture handed over survives the process; the
-file is not `fsync`ed. Nothing touches the disk until the ports are bound.
+file is not `fsync`ed. A block the OS takes only part of (a full disk, a
+file size limit: `EFBIG` in the final review of ecd23b1) is cut off with
+`ftruncate`, so the file ends at the last whole block. Nothing touches the disk until the ports are bound.
 On Windows the mode is only the read-only bit, and the rename replaces the
 old file there too, except while another process holds it open: Windows
 refuses that rename (`EPERM` on windows-latest, Bun 1.4.4, CI run
