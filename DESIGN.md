@@ -130,7 +130,11 @@ differently, which is why centrs sets it for MNDP; that does not carry over.)
 listeners for host-to-guest traffic. TZSP flows guest to host, and
 tzsp-sniff must own the host UDP socket, so adding TZSP to that map would
 have QEMU hold the receiver's port. If quickchr wants to help, it advertises
-a receiver endpoint per VM (BACKLOG.md).
+a receiver endpoint per VM: tikoci/quickchr#299 asks for a named
+guest-to-host receive port per machine, reserved but never bound by quickchr,
+and listed in `quickchr inspect --json`. Every CHR's gateway is `10.0.2.2`
+and SLIRP rewrites the source to loopback, so a port per machine is the only
+label that tells two routers' streams apart.
 
 ## Library
 
@@ -855,7 +859,7 @@ next one only through them; `dissectors()`, the `dissectors` command and
 `FILTER_PROTOCOLS` read the same list. The alternative, declarations kept
 beside the hand-written switches with tests to hold them together, was
 smaller but left two lists to drift; a registry is what DESIGN.md asked for
-from the start, and the dissectors after 0.1.0 (DNS, DHCP, OSPF …) each
+from the start, and the later dissectors (DHCP, MNDP, DNS, OSPF …) each
 become a module and a line.
 
 - **Fields are declared against the fields interface.** A declaration is
@@ -880,7 +884,9 @@ become a module and a line.
   and the heuristic hook for protocols on unusual ports. No 0.1.0 dissector
   is reached either way. #25 as filed had the registry accept a port match;
   the maintainer agreed to leave it out (2026-11-20, on PR #27), so it comes
-  with its first user, DNS or DHCP after 0.1.0 (BACKLOG.md).
+  with its first user. That is now DHCP in slice 6c (#29), before 0.1.0:
+  `DissectorMatch` is exported, and adding port variants after the release
+  would widen a public union (maintainer, 2026-11-20, on #18).
 - **How port matches fit, when they come.** The additions: `udpPort` and
   `tcpPort` variants of `Match` and `DissectorMatch`, two dispatch maps,
   and, where UDP and TCP now pass their payload to a `data` layer, a lookup
@@ -970,7 +976,20 @@ before WinBox, CMR or BGP message decoding goes past that.
    MNDP. It starts as raw TLVs named from m2ir's grounded wire map
    (`work/2026-11-mndp-grounding/`), with every TLV's bytes kept; it moves
    to generated tables when m2ir's MNDP profile has canonical YAML, and does
-   not wait for quickchr.
+   not wait for quickchr. *Superseded by the move below: MNDP starts from
+   generated tables.*
+
+**Moved before 0.1.0** (maintainer, 2026-11-20, on #18), to try the parts of
+the registry and the m2ir path that LLDP did not reach, using protocols that
+fit in one packet and that a CHR sends:
+
+- DHCPv4, from order 2, as the first dissector reached by UDP port (slice
+  6c, #29);
+- MNDP, from order 4, as the first table generated from m2ir (6d, #31). It
+  skips the raw-TLV stage, so it waits on tikoci/m2ir#8 (LICENSE) and
+  tikoci/m2ir#9 (canonical MNDP YAML);
+- one service-discovery protocol, a class this order did not list: mDNS,
+  SSDP or NAT-PMP, picked by a CHR lab of what RouterOS sends (6e, #30).
 
 **Tables from m2ir, not by hand.** Where m2ir has a schema, field names and
 enums are generated from its YAML (tikoci-data-contracts). m2ir's dissector
@@ -987,7 +1006,7 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
   meaning is not presented as fact;
 - **Unverified, licensing:** m2ir's README says its schema content is
   CC0-1.0, but the repo has no LICENSE file (GitHub's license API returns
-  404). Nothing is generated from m2ir until it has one (BACKLOG.md).
+  404). Nothing is generated from m2ir until it has one (tikoci/m2ir#8).
 
 ## Decided: no embedded Lua or Wireshark
 
