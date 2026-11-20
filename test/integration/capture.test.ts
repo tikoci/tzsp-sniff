@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
+import type { FilterSpec } from "../../src/filter.ts";
 import type {
 	PacketRecord,
 	StreamRecord,
@@ -54,6 +55,7 @@ import {
 	Router,
 	SETTLE,
 	snifferStream,
+	snifferStreamAll,
 } from "../chr/router.ts";
 
 const LIVE = Boolean(process.env.TZSP_SNIFF_INTEGRATION);
@@ -146,6 +148,7 @@ function echoes(list: PacketRecord[]) {
 async function capture(
 	count: number,
 	arm: (port: number) => Promise<void>,
+	filter?: FilterSpec,
 ): Promise<StreamRecord[]> {
 	const abort = new AbortController();
 	const stream = await openCapture({
@@ -155,6 +158,7 @@ async function capture(
 		durationMs: CAPTURE_MS,
 		detail: "layers",
 		signal: abort.signal,
+		...(filter ? { filter } : {}),
 	});
 	const reading = Array.fromAsync(stream);
 	try {
@@ -302,6 +306,54 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 			// The output chain sees only the requests (REPORT.md, mangle chains).
 			expect(echoes(list)).toEqual({ requests: 2, replies: 0 });
 			results.passed.push({ test: "mangle-opencapture", packets: list.length });
+		},
+		TEST_MS,
+	);
+
+	test(
+		"the router's own LLDP decodes with no problem",
+		async () => {
+			// RouterOS sends LLDP on ether1 every discover-interval (30 s as
+			// booted), whatever the sniffer does (test/lab/lldp/REPORT.md); the
+			// capture waits out one interval, inside CAPTURE_MS.
+			const identity = (
+				(await router.read("/system/identity")) as { name?: string }
+			).name;
+			const ports = (await router.read("/interface/ethernet?name=ether1")) as {
+				"mac-address"?: string;
+			}[];
+			const mac = ports[0]?.["mac-address"]?.toLowerCase();
+			expect(identity).toMatch(/\S/);
+			expect(mac).toMatch(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/);
+			let records: StreamRecord[] = [];
+			await withUndo(
+				async () => {
+					records = await capture(
+						1,
+						async (port) => {
+							await router.exec(snifferStreamAll(port));
+							await router.exec("/tool/sniffer/start");
+							await router.sniffing();
+						},
+						{ proto: ["lldp"] },
+					);
+				},
+				() => router.exec("/tool/sniffer/stop"),
+			);
+			expect(summaryOf(records)?.stoppedBy).toBe("count");
+			const [p] = packets(records);
+			expect(p?.protocols).toEqual(["ethernet", "lldp"]);
+			expect(p?.problem).toBeUndefined();
+			expect(
+				p?.layers?.find((l) => l.protocol === "lldp")?.fields,
+			).toMatchObject({
+				chassisIdSubtype: "mac-address",
+				chassisId: mac,
+				portIdSubtype: "interface-name",
+				portId: "ether1",
+				systemName: identity,
+			});
+			results.passed.push({ test: "lldp-own", packets: 1 });
 		},
 		TEST_MS,
 	);

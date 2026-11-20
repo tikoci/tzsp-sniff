@@ -1,0 +1,110 @@
+[
+	{
+		"file": "7.24.6-x86-default.hex",
+		"experiment": "default",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:0d:eb:3d:6f:50",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-optional-tlvs.hex",
+		"experiment": "optional-tlvs",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:0d:eb:3d:6f:50",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-identity-utf8.hex",
+		"experiment": "identity-utf8",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:0d:eb:3d:6f:50",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.25.1-arm64-default.hex",
+		"experiment": "default",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:a2:5e:57:18:67",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-arm64-optional-tlvs.hex",
+		"experiment": "optional-tlvs",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:a2:5e:57:18:67",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-arm64-identity-utf8.hex",
+		"experiment": "identity-utf8",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-20",
+		"mac": "02:a2:5e:57:18:67",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-x86-default.hex",
+		"experiment": "default",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:a6:62:cb:fc:bf",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-optional-tlvs.hex",
+		"experiment": "optional-tlvs",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:a6:62:cb:fc:bf",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-identity-utf8.hex",
+		"experiment": "identity-utf8",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-20",
+		"mac": "02:a6:62:cb:fc:bf",
+		"identity": "CHR",
+		"evidence": "test/lab/lldp/evidence/7.25.1-x86.json"
+	}
+]

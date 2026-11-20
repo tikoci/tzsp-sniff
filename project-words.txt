@@ -4,10 +4,12 @@
 ack # TCP acknowledgment
 actionlint # GitHub Actions workflow linter
 backpressure
+BER # ASN.1 Basic Encoding Rules (an LLDP OID)
 BPF # Berkeley Packet Filter
 btest # MikroTik bandwidth test
 bunx # Bun's npx
 caplen # pcap record captured length (libpcap)
+CDP # Cisco Discovery Protocol
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
 CHR # Cloud Hosted Router: RouterOS as a VM
 cmdline # /proc/<pid>/cmdline
@@ -20,14 +22,17 @@ datagrams
 dgram # node:dgram, the UDP socket module
 dissector
 dissectors
+DOCSIS # cable modem standard (an LLDP capability)
 dont # as in dontFragment, the IPv4 DF flag
 ece # TCP ECN-echo flag
 EFBIG # errno: file too large
 endofopt # pcapng opt_endofopt
+epan # Wireshark's dissector library directory
 EPB # pcapng enhanced packet block
 EPERM # errno: operation not permitted
 EtherType
 EtherTypes
+EUI # EUI-64 IPv6 interface identifier
 FFI # foreign function interface
 ftruncate # cut a file to a length
 GRE
@@ -48,8 +53,11 @@ libc
 libpcap
 LINKTYPE # tcpdump link-layer header type, LINKTYPE_TZSP
 LLDP
+LLDPDU # an LLDP frame's data unit
+LLDPDUs
 m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
+MDI # medium dependent interface (LLDP power via MDI)
 MikroTik
 mld # Multicast Listener Discovery (ICMPv6)
 mldv # as in mldv2-report
@@ -57,9 +65,11 @@ MNDP # MikroTik Neighbor Discovery Protocol
 MTU # maximum transmission unit
 NIC # network interface card
 NONBLOCK # as in O_NONBLOCK, the open(2) flag
+OID # SNMP object identifier
 OSPF
 pcapng
 pgrep # procps process lookup by command line
+PHY # Ethernet physical layer
 pim # Protocol Independent Multicast
 plen # ARP protocol address length
 postrouting # RouterOS firewall chain
@@ -83,9 +93,11 @@ TCI # 802.1Q tag control information
 tcpdump
 tikoci
 TLV # type, length, value
+TLVs
 tsc
 TSHARK
 tsresol # pcapng if_tsresol, the timestamp resolution option
+TTL # time to live
 TZSP # TaZmen Sniffer Protocol
 UDP
 UEFI # firmware standard, arm64 CHR boots under it
@@ -95,4 +107,5 @@ VID # 802.1Q VLAN identifier
 VRRP
 Wireshark
 Wireshark's
+WLAN
 zizmor # GitHub Actions security linter, https://github.com/zizmorcore/zizmor

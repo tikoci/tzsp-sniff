@@ -149,6 +149,30 @@ export const fixtureInfo = (name: string) => {
 	return entry;
 };
 
+const LLDP_FIXTURES = join(import.meta.dir, "..", "fixtures", "lldp");
+
+/** An LLDP fixture's TZSP datagrams, hex, one per line (test/fixtures/lldp/). */
+export const lldpFixture = (file: string) =>
+	readFileSync(join(LLDP_FIXTURES, file), "utf8").trim().split("\n");
+
+/** Every LLDP fixture's provenance, and what its router reported. */
+export const lldpFixtureIndex = () =>
+	JSON.parse(readFileSync(join(LLDP_FIXTURES, "index.json"), "utf8")) as {
+		file: string;
+		experiment: string;
+		routeros: string;
+		architecture: string;
+		mac: string;
+		identity: string;
+	}[];
+
+/** An LLDP TLV, hex: the 7-bit type and 9-bit length, then the value. */
+export const tlv = (type: number, value: string) =>
+	h16((type << 9) | (value.length / 2)) + value;
+
+/** Hex of a string's UTF-8 bytes. */
+export const utf8 = (s: string) => Buffer.from(s, "utf8").toString("hex");
+
 /** Send each datagram to 127.0.0.1:port, in order, from one socket. */
 export async function send(port: number, datagrams: (Uint8Array | string)[]) {
 	const socket = createSocket("udp4");

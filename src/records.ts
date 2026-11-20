@@ -479,6 +479,10 @@ const TCP_LETTERS: Record<string, string> = {
 	ack: ".",
 };
 
+/** A value as one word of a line: quoted as JSON when empty or when it has spaces, quotes or control characters. */
+const word = (s: string) =>
+	s === "" || /[\s"\\\p{Cc}]/u.test(s) ? JSON.stringify(s) : s;
+
 const hostPort = (host: string | undefined, port: number) =>
 	host?.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
 
@@ -491,6 +495,7 @@ export function packetLine(d: Dissection): string {
 	if (vlans.length) parts.push(`vlan ${vlans.join(",")}`);
 	const eth = find(d, "ethernet");
 	const arp = find(d, "arp");
+	const lldp = find(d, "lldp");
 	const ip = find(d, "ipv4", "ipv6");
 	const icmp = find(d, "icmp", "icmpv6");
 	const udp = find(d, "udp");
@@ -505,6 +510,16 @@ export function packetLine(d: Dissection): string {
 		} else {
 			parts.push(`arp ${f.operationName}`);
 		}
+	} else if (lldp?.fields && eth?.fields) {
+		const f = lldp.fields;
+		const lldpParts = [`${eth.fields.src} > ${eth.fields.dst} lldp`];
+		if (f.chassisId !== undefined)
+			lldpParts.push(`chassis ${word(f.chassisId)}`);
+		if (f.portId !== undefined) lldpParts.push(`port ${word(f.portId)}`);
+		if (f.ttl !== undefined) lldpParts.push(`ttl ${f.ttl}`);
+		if (f.systemName !== undefined)
+			lldpParts.push(`name ${word(f.systemName)}`);
+		parts.push(lldpParts.join(" "));
 	} else if (ip?.fields) {
 		const f = ip.fields;
 		if (tcp?.fields) {

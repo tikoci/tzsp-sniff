@@ -18,6 +18,7 @@ import { ETHERNET } from "./ethernet.ts";
 import { ICMP, ICMPV6 } from "./icmp.ts";
 import { IPV4 } from "./ipv4.ts";
 import { IPV6 } from "./ipv6.ts";
+import { LLDP } from "./lldp.ts";
 import { TCP } from "./tcp.ts";
 import { UDP } from "./udp.ts";
 import { VLAN } from "./vlan.ts";
@@ -27,6 +28,7 @@ export const REGISTRATIONS: readonly Registration[] = [
 	ETHERNET,
 	VLAN,
 	ARP,
+	LLDP,
 	IPV4,
 	IPV6,
 	ICMP,
@@ -90,8 +92,9 @@ export interface DissectorInfo {
 	matches: DissectorMatch[];
 	/**
 	 * The layer's fields, as records carry them at `--detail layers`. A field
-	 * not `optional` is in every layer that has `fields`, which a layer lacks
-	 * only when the fixed part of its header is cut short or unreadable.
+	 * not `optional` is in every layer that has `fields` (an item's field, in
+	 * every item of its list); a layer lacks `fields` only when the fixed
+	 * part of its header is cut short or unreadable.
 	 */
 	fields: FieldInfo[];
 }

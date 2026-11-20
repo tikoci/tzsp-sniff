@@ -906,6 +906,41 @@ become a module and a line.
   dissector reads, and TZSP is the record around the frame, read by
   `parseTzsp`.
 
+**Decided: LLDP as named fields** (#26; maintainer, 2026-11-20). What
+RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
+7.25.1 arm64 CHRs).
+
+- **Named fields, not a TLV list.** Each basic TLV is a field of its own
+  (`chassisId`, `portId`, `ttl`, `systemName` …), so `jq` and `--fields`
+  reach it by name; management addresses are a list. Every other TLV goes
+  in `otherTlvs` as type, length and hex, an organizationally specific one
+  with its OUI and subtype, named for IEEE 802.1, IEEE 802.3 and LLDP-MED
+  (TIA-1057). LLDP-MED and the 802.1 and 802.3 TLVs are not decoded further.
+  The order of TLVs on the wire is not kept.
+- **Repeats follow the standard's words.** Chassis id, port id and TTL
+  "shall" appear exactly once, first and in that order: out of order is
+  `malformed` (`order`), a second one `malformed` (`repeated`). Port
+  description, system name, system description and capabilities "should
+  not" appear more than once (802.1AB-2005, each TLV's clause), so a second
+  is kept raw in `otherTlvs` and is not a problem; the first is the field.
+  The maintainer had first chosen `malformed` for these too, before the
+  wording was checked.
+- **Problems.** A TLV header or value past the frame is `truncated`
+  (`tlv`); bytes that end with no End TLV are `truncated` (`end`); a TLV
+  whose length is wrong for its type is `malformed` (`tlv-length`) and kept
+  raw; an id subtype or string TLV that is not UTF-8 is `malformed`
+  (`text`), read with replacement characters; a management address OID that
+  does not parse is `malformed` (`oid`). After 64 TLVs (`MAX_LLDP_TLVS`;
+  RouterOS sends 11 to 14) the layer is `unsupported` (`tlv-limit`).
+- **The layer ends at End.** Bytes after it are not LLDP's and get no
+  layer, as Ethernet padding after ARP or IPv4 gets none.
+- **Text is UTF-8.** RouterOS sends a system identity of `lab-café` as
+  UTF-8 (the lab's `identity-utf8`), so UTF-8 is checked rather than ASCII.
+- **Sources.** Types, subtypes, capability bits and organizationally
+  specific subtypes are from IEEE 802.1AB, IEEE 802.1Q Annex D, IEEE 802.3
+  clause 79 and TIA-1057, checked against Wireshark's
+  `epan/dissectors/packet-lldp.c` at ffc784d8541a (numbers only).
+
 **Decided: one packet at a time; no TCP stream reassembly yet.** TCP can
 split a length prefix across segments or carry several messages in one,
 and WinBox adds its own chunking above TCP (m2ir
