@@ -11,7 +11,7 @@ import {
 	MAX_HEX_LINE,
 	MAX_INTERFACES,
 } from "../../src/input.ts";
-import { type ByteSink, pcapngWriter } from "../../src/pcapng.ts";
+import { type ByteSink, pcapngWriter, peerComment } from "../../src/pcapng.ts";
 import type {
 	DatagramRecord,
 	PacketRecord,
@@ -1347,4 +1347,39 @@ describe("final review of 71d400c", () => {
 			n.section() + n.iface(128, { snapLength: 2 }) + n.obsolete(0, KEEPALIVE);
 		expect(await errorOf(snapped)).toBe("decode/malformed");
 	});
+});
+
+describe("CodeRabbit review of f3e1d01", () => {
+	test("a scoped IPv6 peer comes back from the comment the writer puts", async () => {
+		const n = pcapngBuilder();
+		const input =
+			n.section() +
+			n.iface(128, { name: "37008", tsresol: 3 }) +
+			n.packet(0, KEEPALIVE, {
+				comments: [peerComment("fe80::1%eth0", 5000)],
+			});
+		const records = entriesOf(await decode(input));
+		expect(records[0]).toMatchObject({ peer: "[fe80::1%eth0]:5000" });
+		expect(records[0]).not.toHaveProperty("comment");
+	});
+
+	test("an abort while an unknown input's return() hangs: the wait ends, and it is the abort", async () => {
+		const controller = new AbortController();
+		const source = {
+			[Symbol.asyncIterator]: () => ({
+				async next(): Promise<IteratorResult<Uint8Array>> {
+					return { done: false, value: new TextEncoder().encode("zzzz") };
+				},
+				return(): Promise<IteratorResult<Uint8Array>> {
+					setTimeout(() => controller.abort(), 20);
+					return new Promise(() => {});
+				},
+			}),
+		};
+		const error = await openDecode(source, { signal: controller.signal }).then(
+			() => undefined,
+			(e: unknown) => e,
+		);
+		expect(error).toMatchObject({ name: "AbortError" });
+	}, 2000);
 });

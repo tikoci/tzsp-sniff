@@ -54,6 +54,7 @@ mldv # as in mldv2-report
 MNDP # MikroTik Neighbor Discovery Protocol
 MTU # maximum transmission unit
 NIC # network interface card
+NONBLOCK # as in O_NONBLOCK, the open(2) flag
 OSPF
 pcapng
 pgrep # procps process lookup by command line

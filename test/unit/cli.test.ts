@@ -1371,12 +1371,12 @@ describe("decode", () => {
 	}, 2000);
 
 	test.skipIf(process.platform === "win32")(
-		"a named pipe is refused before it is opened, and the fix says to pipe it to - (final review of 71d400c)",
+		"a named pipe is refused without waiting for a writer, and the fix says to pipe it to - (final review of 71d400c)",
 		async () => {
 			const fifo = join(dir, "pipe");
 			expect(spawnSync("mkfifo", [fifo]).status).toBe(0);
 			const m = memoryIo();
-			// Opening it would wait for a writer: refused from its kind first.
+			// No writer ever comes: a blocking open would never return.
 			expect(await main(["decode", fifo], m.io)).toBe(1);
 			expect(m.stderr()).toStartWith("error decode/read-failed: ");
 			expect(m.stderr()).toContain("not a regular file");
@@ -1469,5 +1469,6 @@ describe("decode", () => {
 		expect(before).toHaveLength(6);
 		expect(before[0]).toMatchObject({ listener: "router-a" });
 		expect(packets(decoded.stdout())).toEqual(before);
-	});
+		// Past the 5 s capture budget, with room to set up and decode.
+	}, 15_000);
 });

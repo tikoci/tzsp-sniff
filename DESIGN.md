@@ -425,7 +425,7 @@ pins that version).
 **Decided, the file's shape** (maintainer, slice 4, 2026-11-19):
 
 - **The peer is the packet block's `opt_comment`**, as
-  `peer=<address>:<port>` (an IPv6 address in brackets). pcapng has no
+  `peer=<address>:<port>` (an IPv6 address in brackets, with its zone if it has one: `peer=[fe80::1%eth0]:5000`). pcapng has no
   standard option for a packet's sender, and a custom option needs an IANA
   Private Enterprise Number this project does not have; Wireshark and
   TShark show a comment as `frame.comment` with no setup, and `decode`
@@ -647,9 +647,12 @@ open, it was made in the slice, and each is tested in
 - **A path must be a regular file.** A `FileHandle` read on a named pipe
   or a device cannot be cancelled, so Ctrl-C printed the interrupted
   summary and then waited for the producer to close the pipe (final
-  review of 71d400c, on Node with a FIFO held open). The path's kind is
-  checked before it is opened (opening a FIFO waits for a writer) and
-  again after; anything else is `decode/read-failed`, whose fix says to
+  review of 71d400c, on Node with a FIFO held open). The file is opened
+  non-blocking (`O_NONBLOCK` where the platform has it), so a FIFO opens
+  without waiting for a writer, and the kind is checked on the open
+  descriptor, not the path, so nothing can swap the path between the
+  check and the read (CodeQL `js/file-system-race` on f3e1d01); anything
+  else is `decode/read-failed`, whose fix says to
   pipe it to `decode -`, where stdin is a stream that can be destroyed.
   Reading a FIFO through a cancellable stream is in BACKLOG.md.
 - **pcapng** is read in either byte order, with new sections resetting

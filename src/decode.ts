@@ -124,11 +124,15 @@ const positive = (name: string, value: number | undefined) => {
 	}
 };
 
-/** `peer=10.0.2.15:37008` or `peer=[::1]:37008`, as the pcapng writer puts it. */
+/**
+ * `peer=10.0.2.15:37008`, `peer=[::1]:37008` or, with a zone,
+ * `peer=[fe80::1%eth0]:37008`, as the pcapng writer puts it.
+ */
 function peerOf(comment: string): Peer | undefined {
-	const m = /^peer=(?:\[([0-9A-Fa-f:.]+)\]|([0-9.]+)):([0-9]{1,5})$/.exec(
-		comment,
-	);
+	const m =
+		/^peer=(?:\[([0-9A-Fa-f:.]+(?:%[^\]]+)?)\]|([0-9.]+)):([0-9]{1,5})$/.exec(
+			comment,
+		);
 	const port = Number(m?.[3]);
 	if (!m || port > 65535) return undefined;
 	const address = (m[1] ?? m[2]) as string;
@@ -350,6 +354,8 @@ export async function openDecode(
 		format = detectFormat(head);
 		if (format === undefined) {
 			await reader.close().catch(() => {});
+			// Aborted while the source cleaned up: that is the outcome.
+			if (signal?.aborted) throw signal.reason;
 			const text = /^[0-9a-fA-F#\s]+$/.test(new TextDecoder().decode(head));
 			throw new TzspSniffError(
 				"decode/unknown-format",

@@ -9,8 +9,8 @@
  * 130 on a second Ctrl-C). 130 is the shell's code for SIGINT, so a caller
  * cannot mistake a capture that never started for an empty one.
  */
-import { statSync } from "node:fs";
-import { type FileHandle, open, stat } from "node:fs/promises";
+import { constants, statSync } from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
 import { isIP } from "node:net";
 import {
 	type CaptureOptions,
@@ -659,12 +659,17 @@ interface FileInput extends AsyncIterable<Uint8Array> {
 }
 
 const CHUNK_BYTES = 64 * 1024;
+// Non-blocking, so a named pipe opens at once instead of waiting for a
+// writer, and the check on the open descriptor refuses it; a regular file
+// reads the same. Windows has no such flag, and no FIFO at a file path.
+const READ_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 
 async function openFile(path: string): Promise<FileInput> {
 	let handle: FileHandle | undefined;
 	// Only a regular file: a read from a named pipe or a device cannot be
 	// cancelled, so Ctrl-C would print its summary and then wait for the
-	// producer. Checked before opening, which for a pipe waits for a writer.
+	// producer. Checked on the open descriptor, not the path, so the path
+	// cannot change between the check and the read.
 	const notFile = () =>
 		new TzspSniffError(
 			"decode/read-failed",
@@ -672,9 +677,7 @@ async function openFile(path: string): Promise<FileInput> {
 			`Pipe it to stdin instead: ... | tzsp-sniff decode -`,
 		);
 	try {
-		const kind = await stat(path);
-		if (!kind.isFile() && !kind.isDirectory()) throw notFile();
-		handle = await open(path, "r");
+		handle = await open(path, READ_FLAGS);
 		const opened = await handle.stat();
 		if (opened.isDirectory()) throw new Error(`${path} is a directory`);
 		if (!opened.isFile()) throw notFile();

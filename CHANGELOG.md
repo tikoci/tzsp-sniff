@@ -12,7 +12,7 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   (detected from its first bytes, either byte order), hex lines (`--input
   hex`) or stdin, with no network: the same records, filters, `--fields`,
   `--detail`, `--stats`, `--count` and `--expect`. A `--write` file decodes
-  to the records the capture printed (listener label and peer restored); a
+  to the records the capture printed (listener label and peer restored, an IPv6 zone too); a
   file RouterOS saved decodes as Ethernet frames with their `interface` and
   `comment`; UDP to the TZSP port in an Ethernet, raw IP or Linux cooked
   capture is unwrapped (`--tzsp-port` to change the port). Other link types

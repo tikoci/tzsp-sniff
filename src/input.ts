@@ -275,7 +275,7 @@ export class ByteReader {
 	 * may also still be waiting on the input (stdin with nothing to read),
 	 * and an async generator queues `return()` behind it, so then it is not
 	 * waited for either: the source releases itself (the CLI destroys stdin
-	 * there).
+	 * there). An abort while it waits ends the wait as well.
 	 */
 	async close(wait = true): Promise<void> {
 		const iterator = this.iterator;
@@ -291,7 +291,21 @@ export class ByteReader {
 			() => {},
 			() => {},
 		);
-		if (wait && !this.pulling) await done;
+		const signal = this.signal;
+		if (!wait || this.pulling || signal?.aborted) return;
+		if (!signal) return done;
+		let onAbort = () => {};
+		try {
+			await Promise.race([
+				done,
+				new Promise<void>((resolve) => {
+					onAbort = resolve;
+					signal.addEventListener("abort", onAbort, { once: true });
+				}),
+			]);
+		} finally {
+			signal.removeEventListener("abort", onAbort);
+		}
 	}
 }
 
