@@ -81,6 +81,8 @@ Small items, one or two sentences each, deleted when done or declined
   and a way for a port match to decline, each with its first user (a TCP
   port dissector needs decline or the flow layer); DESIGN.md, "Decided:
   port matches".
+- LLDP: decode text with `ignoreBOM: true` as DHCP does, so a leading
+  byte-order mark is kept rather than stripped (cross-review of PR #34).
 - DHCP: follow option overload (52) into `file` and `sname` (RFC 2131 4.1),
   and decode option 82 (relay agent) sub-options, if a lab shows either
   from RouterOS.
