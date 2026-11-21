@@ -14,7 +14,7 @@ rather than as a general sniffer.
 
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
-> ICMP, UDP, TCP, LLDP and DHCPv4, and saves captures as pcapng (`--write`, `--format
+> ICMP, UDP, TCP, LLDP, DHCPv4 and MNDP, and saves captures as pcapng (`--write`, `--format
 > pcapng`); `decode` reads them again, and the files RouterOS saves;
 > `dissectors` lists what is decoded. `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
 
@@ -162,7 +162,7 @@ The protocol names are the ones records carry in `protocols` and the ones
 `--proto` takes. Bytes no dissector reads are a `data` layer, which is not
 listed.
 
-A dissector reached by port (DHCPv4 on UDP 67 and 68) is tried on either
+A dissector reached by port (DHCPv4 on UDP 67 and 68, MNDP on UDP 5678) is tried on either
 port, the lower one first when both ports have a dissector, and takes the
 bytes whatever they are: other traffic on UDP 67 is a `dhcp` layer with a
 `problem`. A first IP fragment's payload is not dispatched by port (it is
@@ -172,6 +172,21 @@ cut short and not reassembled); it stays `data`.
 tzsp-sniff --proto dhcp                       # renew a lease on the router to see one
 tzsp-sniff --proto dhcp --format jsonl --detail layers |
   jq -c '.layers[]? | select(.protocol == "dhcp" and .fields != null) | .fields | {messageTypeName, chaddr, yiaddr, hostname}'
+```
+
+MNDP's TLV names, types and lengths are generated from
+[m2ir](https://github.com/tikoci/m2ir)'s MNDP profile, not written by hand.
+Each MNDP field in `dissectors` says how sure m2ir is of it (`documented`
+or `observed-only`), the RouterOS versions it was seen on, and `since` when
+older versions did not send it. The 4-byte header is a counter in the
+sender's CPU byte order, which a receiver cannot know, so it is given read
+both ways (`counterLe`, `counterBe`); `request` says whether the datagram
+asks routers to announce now.
+
+```sh
+tzsp-sniff --proto mndp                       # every router on the segment, every discover-interval
+tzsp-sniff --proto mndp --format jsonl --detail layers |
+  jq -c '.layers[]? | select(.protocol == "mndp" and .fields != null) | .fields | {identity, macAddress, version, board, address4}'
 ```
 
 ### Library
@@ -297,8 +312,16 @@ inner field, the interface and the peer comment. It needs `tshark` on
 `PATH` (`apt install tshark`, `brew install wireshark`); CI runs it on
 Ubuntu 24.04's TShark and sets `TZSP_SNIFF_TSHARK_VERSION` to pin it.
 
+MNDP's table, `src/dissect/mndp-table.ts`, is generated from a snapshot of
+m2ir's YAML in `vendor/m2ir/`; do not edit it by hand. `bun run
+m2ir:refresh` (networked) vendors m2ir's `main`, or `bun run m2ir:refresh
+<commit>` a commit on it, and regenerates; review the diff like any other
+change. `bun run m2ir:generate` regenerates from the snapshot, and `bun run
+lint` checks both, offline.
+
 Agent instructions are in [AGENTS.md](AGENTS.md).
 
 ## License
 
-MIT
+MIT. The vendored m2ir files in `vendor/m2ir/`, and the table generated
+from them, are CC0-1.0 ([vendor/m2ir/LICENSE](vendor/m2ir/LICENSE)).

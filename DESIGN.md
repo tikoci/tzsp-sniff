@@ -1003,6 +1003,60 @@ test/lab/dhcp/REPORT.md.
 - **Sources.** Message types and option codes are from RFC 2132, RFC 3203,
   RFC 4388 and IANA's "DHCP and BOOTP Parameters" registry.
 
+**Decided: MNDP from the m2ir table** (maintainer, 2026-11-21, on
+issue #31). The TLVs are named, typed and checked from `src/dissect/mndp-table.ts`,
+generated from m2ir ("Tables from m2ir, not by hand" below); `mndp.ts` is
+only the reader. What RouterOS sends, and where it differs from or adds to
+m2ir, is in test/lab/mndp/REPORT.md.
+
+- **The header in both orders.** It is an announcement counter in the
+  sender's CPU byte order (m2ir `u32-sender-order`: little-endian on x86_64,
+  arm and arm64, big-endian on mipsbe), which a receiver cannot know. The
+  layer has `header` as hex and `counterLe` and `counterBe`, for the
+  caller to pick from; no single `counter` is presented as fact.
+- **`request`** is m2ir's structured request rule, generated: the TLVs end
+  at the datagram's end, and the header is zero or a TLV 6 is empty. A
+  router's first announcement after boot has a zero header, so it is a
+  request too, as m2ir says. A datagram whose reading stopped early (a TLV
+  past the end, the TLV limit) is not one.
+- **Names are m2ir's, camelCased** (`macAddress`, `softwareId`,
+  `ipv6Enabled`, `interfaceName` …). A `bytes` TLV gets a `Hex` suffix
+  (`aggregatedSizeHex`, `requestHex`); an enum adds `<name>Name` (`ttlName:
+  dying-gasp`), a bitmask `<name>Flags` (`runningFlags`, a bit m2ir does not
+  name as `bit-0x04`); an `empty` TLV is `true`; a repeating TLV (only 15,
+  `address6`) a list. m2ir's `neighbor-field` names were the other choice,
+  but TLVs 6, 9 and 19 have none and TLVs 2 to 4 share `unpack`.
+- **Scope and confidence go in `dissectors`, structured**, not in each
+  record: the exported `FieldInfo` has optional `confidence`
+  (`documented` or `observed-only`), `versionsSeen` and `since`, filled
+  from m2ir for each generated field, and the text output prints them in
+  brackets. An enum's or bitmask's name field takes its values' weakest
+  confidence and every version any was seen on. A TLV, value or bit m2ir
+  marks `inferred`, `guessed` or `superseded` gets no name: its bytes stay
+  raw. A version-scoped meaning (TLV 14's `meaning-by-version`, TLV 9's
+  `encoding-by-architecture`) is written into the field's description with
+  its confidence, so `disable-ipv6 on 7.21 to 7.25.1 (guessed)` reads as a
+  guess.
+- **TLV 9 stays hex.** m2ir reads it as u32le from x86_64 senders only, and
+  a receiver can only guess the sender's architecture.
+- **Repeats.** A second TLV of a type that does not repeat is kept raw in
+  `otherTlvs`, with no problem, as LLDP's "should not" TLVs; the first one
+  read is the field (a first of the wrong length does not take it). m2ir
+  does not call a repeat malformed.
+- **Problems.** Under 4 bytes is `truncated` (`header`) with no fields; a
+  TLV header or value past the datagram `truncated` (`tlv`), the TLVs
+  before it kept. m2ir's framing rule calls such a datagram malformed (no
+  router answers it); here `truncated` names what the reader met, as DHCP
+  and LLDP do, and the capture may be what cut it. A value whose length is
+  wrong for its type is `malformed` (`tlv-length`), kept in `otherTlvs`
+  with its m2ir name; text that is not UTF-8 `malformed` (`text`), read with
+  replacement characters, a leading byte-order mark kept. After 64 TLVs
+  (`MAX_MNDP_TLVS`) the layer is `unsupported` (`tlv-limit`).
+- **The layer runs to the end of the datagram**; MNDP has no End TLV.
+- **The lab redacts the software id** (TLV 11), which m2ir says to treat as
+  device-identifying: its value is overwritten with as many `X` bytes, so
+  lengths stay as sent (test/lab/mndp/lab.ts).
+
 **Decided: LLDP as named fields** (#26; maintainer, 2026-11-20). What
 RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
 7.25.1 arm64 CHRs).
@@ -1095,9 +1149,38 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
 - generated tables keep m2ir's scope and confidence: a field scoped to a
   handler or RouterOS version is labelled that way, and an unconfirmed
   meaning is not presented as fact;
-- **Unverified, licensing:** m2ir's README says its schema content is
-  CC0-1.0, but the repo has no LICENSE file (GitHub's license API returns
-  404). Nothing is generated from m2ir until it has one (tikoci/m2ir#8).
+- **Settled, licensing** (was **Unverified**): m2ir has a root LICENSE,
+  CC0-1.0, since tikoci/m2ir#10 (tikoci/m2ir#8, closed 2026-11-20). Its
+  README lists the third-party material that keeps its own terms; none of
+  it is in the MNDP YAML. The LICENSE is vendored with the files.
+
+**Built in slice 6d** (#31), for MNDP:
+
+- **The snapshot** is `vendor/m2ir/`: m2ir's `physical/mndp.yaml`,
+  `profiles/mndp/profile.yaml` and `LICENSE`, byte for byte, and
+  `SOURCE.json` with the commit, its date and each file's sha256. Biome
+  skips it (it would reformat the YAML).
+- **`bun run m2ir:refresh [ref]`** is the one networked step: it resolves
+  `ref` (default `main`) to a commit, refuses one that is not on m2ir's
+  `main` (GitHub's compare API), fetches the files at that commit and
+  regenerates. Its output is a change to review.
+- **`bun run m2ir:generate`** writes `src/dissect/mndp-table.ts` from the
+  snapshot alone: the TLV specs the reader walks, the request rule, the
+  `MndpTlvFields` interface and its field declarations with confidence,
+  versions and `since`. The file is formatted by Biome and checked by
+  `tsc`, so it reads like the rest of `src/` and runs on Node.
+- **`bun run lint:m2ir`** (`--check`, part of `bun run lint` and so of
+  `check`) fails when a vendored file is not the one `SOURCE.json` names,
+  or the table is not what the snapshot generates. Offline.
+- **The generator refuses what it does not know** rather than leaving it
+  out: an encoding the reader does not read, a length that does not fit its
+  encoding, a repeating non-string, a header that is not one
+  `u32-sender-order` at offset 0, a request clause other than `header` or
+  `has-tlv`, a version outside `scope.versions-observed`, a TLV record that
+  is not u16be type and length, a field name taken twice
+  (test/unit/m2ir.test.ts).
+- **`versions-seen: all`** becomes m2ir's `scope.versions-observed`, so a
+  field's `versionsSeen` is always a list.
 
 ## Decided: no embedded Lua or Wireshark
 

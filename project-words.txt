@@ -10,6 +10,7 @@ BPF # Berkeley Packet Filter
 btest # MikroTik bandwidth test
 bunx # Bun's npx
 caplen # pcap record captured length (libpcap)
+capsman # RouterOS CAPsMAN, as MNDP TLV 18 names its bit (m2ir)
 CAPWAP # Control And Provisioning of Wireless Access Points (DHCP option 138)
 CDP # Cisco Discovery Protocol
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
@@ -89,6 +90,7 @@ pcapng
 pcode # DHCP option 100, POSIX time zone (IANA name)
 pgrep # procps process lookup by command line
 PHY # Ethernet physical layer
+PIIX # Intel PCI-ISA bridge, in the QEMU board name a CHR reports
 pim # Protocol Independent Multicast
 plen # ARP protocol address length
 PMP # NAT Port Mapping Protocol (RFC 6886)

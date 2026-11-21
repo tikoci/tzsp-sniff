@@ -34,6 +34,8 @@ import {
 	lldpFixtureIndex,
 	MAC_A,
 	MAC_B,
+	mndpFixture,
+	mndpFixtureIndex,
 	mndpFrame,
 	mtlv,
 	opt,
@@ -2149,6 +2151,104 @@ describe("dissect: MNDP", () => {
 		return { d, l, f: l.fields };
 	};
 	const ID = mtlv(5, utf8("MikroTik"));
+
+	// test/lab/mndp/ (REPORT.md): RouterOS 7.25.1 and 7.24.6, x86_64 and
+	// arm64 CHRs, their own announcements as /tool/sniffer streams them.
+	test("what RouterOS announces decodes whole, with no problem, as m2ir's table reads it", () => {
+		const index = mndpFixtureIndex();
+		const experiments = [
+			"default",
+			"discover-interval",
+			"identity-utf8",
+			"ipv6-disabled",
+			"packing",
+		];
+		expect(index.map((e) => e.file).sort()).toEqual(
+			["7.24.6-arm64", "7.24.6-x86", "7.25.1-arm64", "7.25.1-x86"].flatMap(
+				(s) => experiments.map((e) => `${s}-${e}.hex`),
+			),
+		);
+		// m2ir layouts, 7.24.5 and later: the packing TLVs follow TLV 1.
+		const LAYOUT = [1, 5, 7, 8, 10, 11, 12, 14, 16, 18, 19, 17, 15];
+		const PACKED = [1, 2, 3, 4, 9, ...LAYOUT.slice(1)];
+		let datagrams = 0;
+		for (const entry of index) {
+			const counters = new Set<number>();
+			for (const hex of mndpFixture(entry.file)) {
+				const frame = frameOf(hex);
+				const d = dissect(frame);
+				expect(d.protocols.slice(2)).toEqual(["udp", "mndp"]);
+				expect(d.problem).toBeUndefined();
+				const l = mndpOf(d);
+				expect(l.offset + l.length).toBe(frame.length);
+				const f = l.fields;
+				const v6 = d.protocols[1] === "ipv6";
+				const packed = ["packing", "ipv6-disabled"].includes(entry.experiment);
+				const off = entry.experiment === "ipv6-disabled";
+				// Every TLV is one the table names, in m2ir's order.
+				const types: number[] = [];
+				for (let o = 4; o < l.length; ) {
+					types.push((frame[l.offset + o]! << 8) | frame[l.offset + o + 1]!);
+					o += 4 + ((frame[l.offset + o + 2]! << 8) | frame[l.offset + o + 3]!);
+				}
+				const want = packed ? PACKED : LAYOUT;
+				expect(types).toEqual(off ? want.filter((t) => t !== 15) : want);
+				expect(f?.otherTlvs).toEqual([]);
+				expect(f).toMatchObject({
+					request: false,
+					macAddress: entry.mac,
+					identity: ["default", "discover-interval"].includes(entry.experiment)
+						? entry.identity
+						: "lab-café",
+					platform: "MikroTik",
+					board: "CHR",
+					interfaceName: "ether1",
+					address4: "10.0.2.15",
+					running: 0,
+					runningFlags: [],
+					// m2ir's formula: 30 s as booted, then 10 s.
+					ttl: entry.experiment === "default" ? 121 : 41,
+					// Turned off at once by disable-ipv6=yes on both versions.
+					ipv6Enabled: off ? 0 : 1,
+					ipv6EnabledName: off ? "disabled" : "enabled",
+				});
+				// The software id is redacted at capture, its length kept.
+				expect(f?.softwareId).toMatch(/^X+$/);
+				// TLV 7: the channel until 7.25 (m2ir version formats).
+				expect(f?.version).toBe(
+					entry.routeros === "7.24.6"
+						? `${entry.versionString} 2026-10-30 08:24:29`
+						: `${entry.versionString} 2026-11-02 12:39:53`,
+				);
+				// x86_64 and arm64 both send the counter little-endian.
+				expect(f?.counterLe).toBeLessThan(16);
+				counters.add(f?.counterLe ?? -1);
+				if (off) {
+					// No TLV 15, and no IPv6 copy, once IPv6 is disabled.
+					expect(f?.address6).toBeUndefined();
+					expect(v6).toBe(false);
+				} else expect(f?.address6).toEqual([expect.stringMatching(/^fe80::/)]);
+				if (packed) {
+					expect(f).toMatchObject({
+						unpackSimple: true,
+						unpackHeaders: true,
+						unpackAll: true,
+						// 1500, little-endian, on arm64 as on x86_64.
+						aggregatedSizeHex: "dc050000",
+					});
+				} else expect(f?.aggregatedSizeHex).toBeUndefined();
+				expect(packetLine(d)).toContain(
+					`mndp identity ${f?.identity} mac ${entry.mac} version "${f?.version}" board CHR`,
+				);
+				datagrams++;
+			}
+			expect(counters.size).toBe(
+				["default", "ipv6-disabled"].includes(entry.experiment) ? 2 : 1,
+			);
+		}
+		// Per router: 4 as booted, 2 each for the three triggered, 2 IPv4 only after.
+		expect(datagrams).toBe(48);
+	});
 
 	test("an announcement: each TLV named and typed from the m2ir table", () => {
 		// The TLVs of a 7.26beta5 announcement as m2ir lists them (layouts),

@@ -24,6 +24,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { openCapture } from "../../src/capture.ts";
+import type { MndpFields } from "../../src/dissect.ts";
 import type { FilterSpec } from "../../src/filter.ts";
 import type {
 	PacketRecord,
@@ -354,6 +355,60 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 				systemName: identity,
 			});
 			results.passed.push({ test: "lldp-own", packets: 1 });
+		},
+		TEST_MS,
+	);
+
+	test(
+		"the router's own MNDP decodes with no problem",
+		async () => {
+			// RouterOS announces on ether1 every discover-interval (30 s as
+			// booted), over IPv4 and as an IPv6 copy (test/lab/mndp/REPORT.md);
+			// the capture waits out one interval, inside CAPTURE_MS.
+			const identity = (
+				(await router.read("/system/identity")) as { name?: string }
+			).name;
+			const ports = (await router.read("/interface/ethernet?name=ether1")) as {
+				"mac-address"?: string;
+			}[];
+			const mac = ports[0]?.["mac-address"]?.toLowerCase();
+			expect(identity).toMatch(/\S/);
+			expect(mac).toMatch(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/);
+			let records: StreamRecord[] = [];
+			await withUndo(
+				async () => {
+					records = await capture(
+						1,
+						async (port) => {
+							await router.exec(snifferStreamAll(port));
+							await router.exec("/tool/sniffer/start");
+							await router.sniffing();
+						},
+						{ proto: ["mndp"] },
+					);
+				},
+				() => router.exec("/tool/sniffer/stop"),
+			);
+			expect(summaryOf(records)?.stoppedBy).toBe("count");
+			const [p] = packets(records);
+			expect(p?.protocols?.at(-1)).toBe("mndp");
+			expect(p?.problem).toBeUndefined();
+			const fields = p?.layers?.find((l) => l.protocol === "mndp")?.fields as
+				| MndpFields
+				| undefined;
+			expect(fields).toMatchObject({
+				request: false,
+				identity,
+				macAddress: mac,
+				// TLV 12 is "CHR" where /system/resource says "CHR QEMU Standard
+				// PC …" (test/lab/mndp/REPORT.md); this tier always boots a CHR.
+				board: "CHR",
+				interfaceName: "ether1",
+				platform: "MikroTik",
+			});
+			// TLV 7 is the version, then the channel (7.24) and the build date.
+			expect(fields?.version?.split(" ")[0]).toBe(results.router?.version);
+			results.passed.push({ test: "mndp-own", packets: 1 });
 		},
 		TEST_MS,
 	);

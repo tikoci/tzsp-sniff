@@ -166,6 +166,25 @@ export const lldpFixtureIndex = () =>
 		identity: string;
 	}[];
 
+const MNDP_FIXTURES = join(import.meta.dir, "..", "fixtures", "mndp");
+
+/** An MNDP fixture's TZSP datagrams, hex, one per line (test/lab/mndp/). */
+export const mndpFixture = (file: string) =>
+	readFileSync(join(MNDP_FIXTURES, file), "utf8").trim().split("\n");
+
+/** Every MNDP fixture's provenance, and what its router reported. */
+export const mndpFixtureIndex = () =>
+	JSON.parse(readFileSync(join(MNDP_FIXTURES, "index.json"), "utf8")) as {
+		file: string;
+		experiment: string;
+		routeros: string;
+		architecture: string;
+		mac: string;
+		identity: string;
+		board: string;
+		versionString: string;
+	}[];
+
 const DHCP_FIXTURES = join(import.meta.dir, "..", "fixtures", "dhcp");
 
 /** A DHCP fixture's TZSP datagrams, hex, one per line (test/lab/dhcp/). */
