@@ -249,13 +249,13 @@ describe("dissectors", () => {
 		);
 		// A field from the m2ir table says how sure m2ir is, and where it was seen.
 		expect(text).toMatch(
-			/\n {2}ttl \(number, optional\): TLV 19, ttl: [^\n]*\[observed-only; seen on 6 versions, 7\.24\.5 to 7\.26beta5; since 7\.24\.5\]\n/,
+			/\n {2}ttl \(number, optional\): TLV 19, ttl: [^\n]*\[observed-only\]\n/,
 		);
 		expect(text).toMatch(
-			/\n {2}ttlName \(string, optional\): [^\n]*\[observed-only; seen on 7\.26beta5\]\n/,
+			/\n {2}ttlName \(string, optional\): [^\n]*\[observed-only\]\n/,
 		);
 		expect(text).toMatch(
-			/\n {2}identity \(string, optional\): [^\n]*\[documented; seen on 19 versions, 6\.49\.21 to 7\.26beta5\]\n/,
+			/\n {2}identity \(string, optional\): [^\n]*\[documented\]\n/,
 		);
 		// A field read from a standard has no brackets.
 		expect(text).toMatch(

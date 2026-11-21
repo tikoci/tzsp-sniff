@@ -160,6 +160,7 @@ fileSink(path, { overwrite }): FileSink                  // exists: --write's fi
 openDecode(input, options): Promise<DecodeStream>        // exists: decode, the same records from a file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // exists: the registry, as listed
+m2irFacts(): M2irFacts[]                                 // exists: m2ir's version scope, by field
 ```
 
 **Requirement, bytes in and records out:**
@@ -1030,13 +1031,22 @@ m2ir, is in test/lab/mndp/REPORT.md.
   name as `bit-0x04`); an `empty` TLV is `true`; a repeating TLV (only 15,
   `address6`) a list. m2ir's `neighbor-field` names were the other choice,
   but TLVs 6, 9 and 19 have none and TLVs 2 to 4 share `unpack`.
-- **Scope and confidence go in `dissectors`, structured**, not in each
-  record: the exported `FieldInfo` has optional `confidence`
-  (`documented` or `observed-only`), `versionsSeen` and `since`, filled
-  from m2ir for each generated field, and the text output prints them in
-  brackets. An enum's or bitmask's name field takes its values' weakest
-  confidence and every version any was seen on, and no `since` (that is the
-  TLV's); its description lists each name's versions, exactly. A TLV, value or bit m2ir
+- **Confidence goes in `dissectors`; version scope in `m2irFacts()`**
+  (maintainer, 2026-11-21, on PR #35, replacing the first form of this
+  decision, which put `versionsSeen` and `since` on `FieldInfo` too).
+  The exported `FieldInfo` has an optional `confidence` (`documented` or
+  `observed-only`) for each generated field, and the text output prints it
+  in brackets; an enum's or bitmask's name field takes its values' weakest
+  confidence. The versions each field, value and bit was seen on, whose
+  versions they are (senders', or the routers that answered TLV 6),
+  `since` and `introduced` are m2ir's bookkeeping: a caller who asks gets
+  them from `m2irFacts()`, with the m2ir commit and files, and the
+  provenance m2ir keeps stays the one place for them. Why not on every
+  field: they cost every reader of `dissectors` tokens to answer a question
+  few ask; a TLV that is absent never reaches the output, so `since` cannot
+  explain it there; and `versionsSeen` records how far m2ir's samples
+  reached, not the protocol, so it goes stale at each refresh (TLV 17 on
+  7.24.6 already had). Not in records either. A TLV, value or bit m2ir
   marks `inferred`, `guessed` or `superseded` gets no name: its bytes stay
   raw. A version-scoped meaning (TLV 14's `meaning-by-version`, TLV 9's
   `encoding-by-architecture`) is written into the field's description with
@@ -1174,7 +1184,8 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
 - **`bun run m2ir:generate`** writes `src/dissect/mndp-table.ts` from the
   snapshot alone: the TLV specs the reader walks, the request rule, the
   `MndpTlvFields` interface and its field declarations with confidence,
-  versions and `since`. The file is formatted by Biome and checked by
+  and `MNDP_M2IR_FACTS`, the versions and `since` `m2irFacts()` returns.
+  The file is formatted by Biome and checked by
   `tsc`, so it reads like the rest of `src/` and runs on Node.
 - **`bun run lint:m2ir`** (`--check`, part of `bun run lint` and so of
   `check`) fails when a vendored file is not the one `SOURCE.json` names,
@@ -1187,7 +1198,7 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
   is not u16be type and length, a field name taken twice
   (test/unit/m2ir.test.ts).
 - **`versions-seen: all`** becomes m2ir's `scope.versions-observed`, so a
-  field's `versionsSeen` is always a list.
+  field's `versionsSeen` in `m2irFacts()` is always a list.
 
 ## Decided: no embedded Lua or Wireshark
 

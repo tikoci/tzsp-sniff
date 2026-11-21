@@ -238,23 +238,10 @@ export function summaryText(
 const matchText = (m: DissectorMatch) => `${m.by} ${m.value}`;
 
 /**
- * Where a generated field comes from, in brackets after its description:
- * its confidence, the versions it was seen on (a range past three) and
- * `since`. Nothing for a field read from a standard.
+ * A generated field's confidence, in brackets after its description.
+ * Nothing for a field read from a standard.
  */
-function sourceText(f: FieldInfo): string {
-	const parts: string[] = [];
-	if (f.confidence) parts.push(f.confidence);
-	const vs = f.versionsSeen;
-	if (vs?.length)
-		parts.push(
-			vs.length <= 3
-				? `seen on ${vs.join(", ")}`
-				: `seen on ${vs.length} versions, ${vs[0]} to ${vs[vs.length - 1]}`,
-		);
-	if (f.since) parts.push(`since ${f.since}`);
-	return parts.length ? ` [${parts.join("; ")}]` : "";
-}
+const sourceText = (f: FieldInfo) => (f.confidence ? ` [${f.confidence}]` : "");
 
 /** One field line, and an `object[]` field's own fields under it as `name[].item`. */
 function fieldLines(fields: readonly FieldInfo[], prefix = ""): string[] {

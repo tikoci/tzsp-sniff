@@ -375,7 +375,7 @@ export function readMndp(
 				`${at}.encoding-by-architecture`,
 			).map((b, i) => {
 				const x = obj(b, `${at}.encoding-by-architecture[${i}]`);
-				return `${str(x.encoding, "encoding")} from ${strings(x.architectures, "architectures").join(", ")} senders (${confidence(x.confidence, "encoding-by-architecture")}, seen on ${versionText(versions(x["versions-seen"], "versions-seen"))})`;
+				return `${str(x.encoding, "encoding")} from ${strings(x.architectures, "architectures").join(", ")} senders (${confidence(x.confidence, "encoding-by-architecture")})`;
 			});
 			tlv.notes.push(
 				`m2ir reads it as ${parts.join(", ")}; other senders' byte order is not known, so it is kept as hex.`,
@@ -435,9 +435,6 @@ const HAND_FIELDS = [
 
 // ── writing the table ───────────────────────────────────────────────────────
 
-/** Every version, exactly: a range would claim the versions between. */
-const versionText = (vs: readonly string[]) => vs.join(", ");
-
 const WHAT: Record<Encoding, (t: Tlv) => string> = {
 	empty: () => "true when the TLV is there; it carries no value",
 	u8: () => "a number",
@@ -467,55 +464,78 @@ function describe(t: Tlv): string {
 	parts.push(...t.notes);
 	if (t.introduced)
 		parts.push(`Added in RouterOS ${t.introduced} (changelog).`);
-	if (t.receiverVersions)
-		parts.push(
-			"Its versions are those of routers that answered it, not of senders.",
-		);
 	return parts.join(" ");
 }
 
 const namedText = (n: Named, id: (v: number) => string) =>
-	`${n.name} (${id(n.value)}; ${n.confidence}, seen on ${versionText(n.versionsSeen)})`;
+	`${n.name} (${id(n.value)}; ${n.confidence})`;
 const hex2 = (v: number) => `0x${v.toString(16).padStart(2, "0")}`;
 
-/** The weakest confidence of a field's values, and every version any was seen on. */
-function sourceOf(ns: readonly Named[], observed: readonly string[]) {
-	const seen = new Set(ns.flatMap((n) => n.versionsSeen));
-	return {
-		confidence: ns.every((n) => n.confidence === "documented")
-			? "documented"
-			: "observed-only",
-		versionsSeen: observed.filter((v) => seen.has(v)),
-	};
-}
+/** The weakest confidence of a field's values. */
+const weakest = (ns: readonly Named[]) =>
+	ns.every((n) => n.confidence === "documented")
+		? "documented"
+		: "observed-only";
 
 /** The TypeScript of src/dissect/mndp-table.ts, before formatting. */
 export function writeTable(m: Model, observed: readonly string[]): string {
 	const j = (v: unknown) => JSON.stringify(v);
-	const src = (c: string, vs: readonly string[], since?: string) =>
-		`confidence: ${j(c)}, versionsSeen: ${j(vs)}${since ? `, since: ${j(since)}` : ""}`;
 	const iface: string[] = [];
 	const decls: string[] = [];
+	/** m2ir's facts for each field: what m2irFacts() returns. */
+	const facts: Record<string, unknown>[] = [
+		{
+			field: "header",
+			name: "header",
+			confidence: m.header.confidence,
+			versionsSeen: m.header.versionsSeen,
+			versionsSeenOf: "sender",
+		},
+		{
+			field: "request",
+			name: "requests",
+			confidence: m.request.confidence,
+			versionsSeen: m.request.versionsSeen,
+			versionsSeenOf: "receiver",
+		},
+	];
+	const namedFacts = (ns: readonly Named[]) =>
+		ns.map((n) => ({
+			value: n.value,
+			name: n.name,
+			confidence: n.confidence,
+			versionsSeen: n.versionsSeen,
+		}));
 	for (const t of m.tlvs) {
 		const ts = ENCODINGS[t.encoding] + (t.repeat ? "[]" : "");
 		const type = t.repeat ? "string[]" : ENCODINGS[t.encoding];
 		iface.push(`\t/** TLV ${t.type}, ${t.name}. */\n\t${t.field}?: ${ts};`);
 		decls.push(
-			`\t${t.field}: { type: ${j(type)}, optional: true, description: ${j(describe(t))}, ${src(t.confidence, t.versionsSeen, t.since)} },`,
+			`\t${t.field}: { type: ${j(type)}, optional: true, description: ${j(describe(t))}, confidence: ${j(t.confidence)} },`,
 		);
+		facts.push({
+			field: t.field,
+			tlv: t.type,
+			name: t.name,
+			confidence: t.confidence,
+			versionsSeen: t.versionsSeen,
+			versionsSeenOf: t.receiverVersions ? "receiver" : "sender",
+			...(t.since ? { since: t.since } : {}),
+			...(t.introduced ? { introduced: t.introduced } : {}),
+			...(t.values?.length ? { values: namedFacts(t.values) } : {}),
+			...(t.bits?.length ? { bits: namedFacts(t.bits) } : {}),
+		});
 		if (t.values?.length) {
-			const s = sourceOf(t.values, observed);
 			iface.push(
 				`\t/** The name of ${t.field}'s value. */\n\t${t.field}Name?: string;`,
 			);
 			decls.push(
-				`\t${t.field}Name: { type: "string", optional: true, description: ${j(`The name of ${t.field}'s value: ${t.values.map((n) => namedText(n, String)).join(", ")}. Absent for another value.`)}, ${src(s.confidence, s.versionsSeen)} },`,
+				`\t${t.field}Name: { type: "string", optional: true, description: ${j(`The name of ${t.field}'s value: ${t.values.map((n) => namedText(n, String)).join(", ")}. Absent for another value.`)}, confidence: ${j(weakest(t.values))} },`,
 			);
 		}
 		// The reader lists the bits set whether or not m2ir names any.
 		if (t.encoding === "bitmask-u8") {
 			const bits = t.bits ?? [];
-			const s = bits.length ? sourceOf(bits, observed) : undefined;
 			const named = bits.length
 				? `: ${bits.map((n) => namedText(n, hex2)).join(", ")}; a bit not named here is bit-0x04 and so on.`
 				: ", each as bit-0x01 and so on: m2ir names none.";
@@ -523,7 +543,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 				`\t/** The names of the bits set in ${t.field}. */\n\t${t.field}Flags?: string[];`,
 			);
 			decls.push(
-				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first${named}`)}${s ? `, ${src(s.confidence, s.versionsSeen)}` : ""} },`,
+				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first${named}`)}${bits.length ? `, confidence: ${j(weakest(bits))}` : ""} },`,
 			);
 		}
 	}
@@ -555,10 +575,13 @@ export function writeTable(m: Model, observed: readonly string[]): string {
  * confidence, so their bytes stay raw:
 ${skipped}
  */
-import type { FieldDecls, FieldSource } from "./core.ts";
+import type { FieldConfidence, FieldDecls } from "./core.ts";
+import type { M2irFieldFacts } from "./m2ir.ts";
 
-/** The m2ir commit this table is generated from. */
+/** The m2ir repository and commit this table is generated from, and the files read. */
+export const M2IR_REPOSITORY = ${j(REPOSITORY)};
 export const M2IR_COMMIT = ${j(m.commit)};
+export const MNDP_M2IR_FILES: readonly string[] = ${j(FILES.filter((f) => f !== "LICENSE"))};
 
 /** The UDP port MNDP is sent from and to (m2ir physical/mndp.yaml \`transport\`). */
 export const MNDP_PORT = ${m.port};
@@ -595,11 +618,20 @@ ${specs.join("\n")}
  */
 export const MNDP_REQUEST = ${j({ headers: m.request.headers, tlvs: m.request.tlvs })};
 
-/** Where the header counter comes from: ${m.header.orders}. */
-export const MNDP_HEADER_SOURCE: FieldSource = { ${src(m.header.confidence, m.header.versionsSeen)} };
+/** How sure m2ir is of the header counter: ${m.header.orders}. */
+export const MNDP_HEADER_CONFIDENCE: FieldConfidence = ${j(m.header.confidence)};
 
-/** Where the request rule comes from. */
-export const MNDP_REQUEST_SOURCE: FieldSource = { ${src(m.request.confidence, m.request.versionsSeen)} };
+/** How sure m2ir is of the request rule. */
+export const MNDP_REQUEST_CONFIDENCE: FieldConfidence = ${j(m.request.confidence)};
+
+/** The RouterOS versions m2ir observed MNDP on (its \`scope.versions-observed\`). */
+export const MNDP_VERSIONS_OBSERVED: readonly string[] = ${j(observed)};
+
+/** Entries m2ir has that the table leaves unnamed for their confidence. */
+export const MNDP_UNNAMED: readonly string[] = ${j(m.skipped)};
+
+/** m2ir's scope for each field: what m2irFacts() returns for MNDP. */
+export const MNDP_M2IR_FACTS: readonly M2irFieldFacts[] = ${j(facts)};
 
 /** The header counter's byte order by sender architecture, as m2ir gives it. */
 export const MNDP_HEADER_ORDERS = ${j(m.header.orders)};

@@ -184,23 +184,15 @@ export interface FieldInfo {
 	items?: FieldInfo[];
 	/**
 	 * For a field from a generated table: how sure its source is. Absent for
-	 * a field read from a standard (an RFC or IEEE document).
+	 * a field read from a standard (an RFC or IEEE document). The versions
+	 * it was seen on are in `m2irFacts()`.
 	 */
 	confidence?: FieldConfidence;
-	/**
-	 * For a field from a generated table: the RouterOS versions it was seen
-	 * on, oldest first. Not seen elsewhere is not the same as not sent.
-	 */
-	versionsSeen?: string[];
-	/** The first RouterOS version seen sending it, when older ones did not. */
-	since?: string;
 }
 
-/** Where a generated field comes from, as `FieldInfo` carries it. */
+/** How sure a generated field's source is, as `FieldInfo` carries it. */
 export interface FieldSource {
 	confidence?: FieldConfidence;
-	versionsSeen?: readonly string[];
-	since?: string;
 }
 
 // `null` has no JSON type here (records leave a field out instead), so a
@@ -254,8 +246,6 @@ export function fieldInfo<F>(decls: FieldDecls<F>): FieldInfo[] {
 			description: f.description,
 			...(f.items ? { items: list(f.items) } : {}),
 			...(f.confidence ? { confidence: f.confidence } : {}),
-			...(f.versionsSeen ? { versionsSeen: [...f.versionsSeen] } : {}),
-			...(f.since ? { since: f.since } : {}),
 		}));
 	return list(decls as unknown as Record<string, LooseDecl>);
 }

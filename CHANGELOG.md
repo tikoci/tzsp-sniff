@@ -27,11 +27,14 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   and says `request` or `dying-gasp`. `--proto mndp` selects it. Checked
   against what RouterOS 7.25.1 and 7.24.6 send on x86_64 and arm64 CHRs.
 
-- `FieldInfo` (and so `dissectors`) has optional `confidence`,
-  `versionsSeen` and `since` for a field from a generated table; the text
-  output prints them in brackets after the description. An enum's or
-  bitmask's name field lists each name's versions exactly, and has no
-  `since` of its own.
+- `FieldInfo` (and so `dissectors`) has an optional `confidence`
+  (`documented` or `observed-only`) for a field from a generated table;
+  the text output prints it in brackets after the description.
+
+- `m2irFacts()`: for each protocol generated from m2ir (MNDP), the m2ir
+  commit and files, and each field's `versionsSeen`, whose versions they
+  are, `since`, `introduced`, and each named value's and bit's own
+  confidence and versions.
 
 - DHCPv4 (RFC 2131, 2132) on UDP 67 and 68: the BOOTP header (op, hardware
   type and length, hops, xid, secs, flags and the broadcast flag, ciaddr,

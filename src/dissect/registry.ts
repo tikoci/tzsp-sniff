@@ -123,7 +123,6 @@ const copyFields = (fields: readonly FieldInfo[]): FieldInfo[] =>
 	fields.map((f) => ({
 		...f,
 		...(f.items ? { items: copyFields(f.items) } : {}),
-		...(f.versionsSeen ? { versionsSeen: [...f.versionsSeen] } : {}),
 	}));
 
 /** Every protocol this package decodes: how each is matched, and its fields. A new copy each call. */

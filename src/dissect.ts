@@ -64,6 +64,12 @@ export {
 	MAX_LLDP_TLVS,
 } from "./dissect/lldp.ts";
 export {
+	type M2irFacts,
+	type M2irFieldFacts,
+	type M2irValueFacts,
+	m2irFacts,
+} from "./dissect/m2ir.ts";
+export {
 	MAX_MNDP_TLVS,
 	type MndpFields,
 	type MndpLayer,

@@ -27,10 +27,10 @@ import {
 import {
 	M2IR_COMMIT,
 	MNDP_HEADER_ORDERS,
-	MNDP_HEADER_SOURCE,
+	MNDP_HEADER_CONFIDENCE,
 	MNDP_PORT,
 	MNDP_REQUEST,
-	MNDP_REQUEST_SOURCE,
+	MNDP_REQUEST_CONFIDENCE,
 	MNDP_TLV_FIELDS,
 	MNDP_TLVS,
 	type MndpTlvFields,
@@ -253,24 +253,24 @@ const FIELDS: FieldDecls<MndpFields> = {
 	header: {
 		type: "string",
 		description: `The 4-byte header as hex, in the order sent. It is an announcement counter in the sender's CPU byte order (m2ir: ${MNDP_HEADER_ORDERS}), which a receiver cannot know; zero on a request and on a router's first announcement after boot. A datagram under 4 bytes is truncated (header) and has no fields.`,
-		...MNDP_HEADER_SOURCE,
+		confidence: MNDP_HEADER_CONFIDENCE,
 	},
 	counterLe: {
 		type: "number",
 		description:
 			"The header read little-endian: the announcement counter, when the sender is x86_64, arm or arm64.",
-		...MNDP_HEADER_SOURCE,
+		confidence: MNDP_HEADER_CONFIDENCE,
 	},
 	counterBe: {
 		type: "number",
 		description:
 			"The header read big-endian: the announcement counter, when the sender is mipsbe.",
-		...MNDP_HEADER_SOURCE,
+		confidence: MNDP_HEADER_CONFIDENCE,
 	},
 	request: {
 		type: "boolean",
 		description: `The datagram asks every router on the segment to announce now, by m2ir's request rule: its TLVs end at its end, and its header is zero or it carries an empty TLV 6. A router's first announcement after boot has a zero header, so it is a request too. False when a TLV runs past the datagram, the TLV limit stops the reading, or the capture ended inside the datagram (its end is then unknown).`,
-		...MNDP_REQUEST_SOURCE,
+		confidence: MNDP_REQUEST_CONFIDENCE,
 	},
 	...MNDP_TLV_FIELDS,
 	otherTlvs: {

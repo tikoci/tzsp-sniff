@@ -177,8 +177,9 @@ tzsp-sniff --proto dhcp --format jsonl --detail layers |
 MNDP's TLV names, types and lengths are generated from
 [m2ir](https://github.com/tikoci/m2ir)'s MNDP profile, not written by hand.
 Each MNDP field in `dissectors` says how sure m2ir is of it (`documented`
-or `observed-only`), the RouterOS versions it was seen on, and `since` when
-older versions did not send it. The 4-byte header is a counter in the
+or `observed-only`); the RouterOS versions m2ir saw each field, value and
+bit on, and since when, are in the library's `m2irFacts()`, with the m2ir
+commit they come from. The 4-byte header is a counter in the
 sender's CPU byte order, which a receiver cannot know, so it is given read
 both ways (`counterLe`, `counterBe`); `request` says whether the datagram
 asks routers to announce now.
@@ -246,7 +247,8 @@ for await (const record of await openDecode(await readFile("cmr.pcapng"), {
 each datagram with its arrival time, UDP peer and listener label.
 `dissect(frame)` decodes one Ethernet frame into layers, each with its span
 and fields, and `dissectors()` lists what it decodes, as the `dissectors`
-command prints it. `parseTzsp(datagram)` reads the TZSP header:
+command prints it. `m2irFacts()` gives m2ir's version scope for each field
+generated from it. `parseTzsp(datagram)` reads the TZSP header:
 
 ```typescript
 import { dissect, parseTzsp } from "@tikoci/tzsp-sniff";

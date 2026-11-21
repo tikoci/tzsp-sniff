@@ -96,22 +96,39 @@ describe("m2ir generator", () => {
 		expect(table).toContain(" * - TLV 12 (board): guessed");
 	});
 
-	test("a named value or bit carries its own versions, exactly, and not the TLV's since", () => {
+	test("a field declaration carries m2ir's confidence only; versions and since go to the facts", () => {
 		const table = writeTable(
 			model(),
 			parse(PROFILE).scope["versions-observed"],
 		);
+		const decls = table.slice(table.indexOf("MNDP_TLV_FIELDS"));
 		const decl = (field: string) =>
-			table.split("\n").find((l) => l.trimStart().startsWith(`${field}: {`)) ??
+			decls.split("\n").find((l) => l.trimStart().startsWith(`${field}: {`)) ??
 			"";
-		// dying-gasp was seen on 7.26beta5 only; TTL itself has since 7.24.5.
-		expect(decl("ttlName")).toContain('versionsSeen: ["7.26beta5"]');
-		expect(decl("ttlName")).not.toContain("since:");
-		expect(decl("ttl")).toContain('since: "7.24.5"');
-		expect(decl("runningFlags")).not.toContain("since:");
-		// Each name's versions are listed, not a count and a range.
-		expect(decl("ipv6EnabledName")).not.toMatch(/\d+ versions, /);
-		expect(table).not.toMatch(/\d+ versions, \S+ to /);
+		for (const f of [
+			"ttl",
+			"ttlName",
+			"runningFlags",
+			"ipv6EnabledName",
+			"macAddress",
+		]) {
+			expect(decl(f)).toContain("confidence:");
+			expect(decl(f)).not.toContain("versionsSeen");
+			expect(decl(f)).not.toContain("since");
+			expect(decl(f)).not.toContain("seen on");
+		}
+		// The facts keep them: TTL since 7.24.5, its dying-gasp value on 7.26beta5 only.
+		const facts = table.slice(
+			table.indexOf("MNDP_M2IR_FACTS"),
+			table.indexOf("MNDP_TLV_FIELDS"),
+		);
+		expect(facts).toContain(
+			'"field":"ttl","tlv":19,"name":"ttl","confidence":"observed-only"',
+		);
+		expect(facts).toContain('"since":"7.24.5"');
+		expect(facts).toContain(
+			'{"value":0,"name":"dying-gasp","confidence":"observed-only","versionsSeen":["7.26beta5"]}',
+		);
 	});
 
 	test("`all` is every version m2ir observed, and a version outside them stops it", () => {
