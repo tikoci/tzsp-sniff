@@ -12,13 +12,16 @@ import {
 	type FieldInfo,
 } from "../../src/dissect.ts";
 import {
+	type Dispatch,
+	Frame,
 	fieldInfo,
 	type FieldDecls,
+	type PortDissect,
 	type Registration,
 } from "../../src/dissect/core.ts";
 import { buildDispatch, REGISTRATIONS } from "../../src/dissect/registry.ts";
 import { FILTER_PROTOCOLS } from "../../src/filter.ts";
-import { bytes, eth, h16, ipv4, ipv6 } from "./helpers.ts";
+import { bytes, eth, h16, ipv4, ipv6, tcp, udp } from "./helpers.ts";
 
 const list = dissectors();
 const byMatch = (d: DissectorInfo, by: string) =>
@@ -37,6 +40,7 @@ describe("dissectors()", () => {
 			"icmpv6",
 			"udp",
 			"tcp",
+			"dhcp",
 		]);
 		for (const d of list) {
 			expect(d.name).toMatch(/\S/);
@@ -58,6 +62,10 @@ describe("dissectors()", () => {
 		]);
 		expect(of("tcp")?.matches).toEqual([{ by: "ipProtocol", value: 6 }]);
 		expect(of("icmpv6")?.matches).toEqual([{ by: "ipProtocol", value: 58 }]);
+		expect(of("dhcp")?.matches).toEqual([
+			{ by: "udpPort", value: 67 },
+			{ by: "udpPort", value: 68 },
+		]);
 	});
 
 	test("returns a new copy each call", () => {
@@ -102,6 +110,16 @@ describe("dispatch follows the registry", () => {
 		expect(buildDispatch([...REGISTRATIONS, again]).duplicates).toEqual([
 			"etherType 0x0806",
 		]);
+		// A port clashes only on the same transport: UDP 67 twice does, TCP 67 does not.
+		const dhcp = REGISTRATIONS.find((r) => r.protocol === "dhcp");
+		const tcp67 = probe("tcp67", { tcpPort: 67 });
+		const twice = buildDispatch([
+			...REGISTRATIONS,
+			{ ...(dhcp as Registration), protocol: "dhcp2" },
+			tcp67,
+		]);
+		expect(twice.duplicates).toEqual(["udpPort 67", "udpPort 68"]);
+		expect(twice.dispatch.tcpPort.has(67)).toBe(true);
 	});
 
 	test("the link match is the first layer of a frame", () => {
@@ -137,6 +155,43 @@ describe("dispatch follows the registry", () => {
 		expect(seen).toBe(4);
 	});
 
+	test("each declared UDP port reaches its dissector, as source or destination, in IPv4 and IPv6", () => {
+		let seen = 0;
+		for (const d of list) {
+			for (const port of byMatch(d, "udpPort")) {
+				const n = Number(port);
+				for (const [sp, dp] of [
+					[50000, n],
+					[n, 50000],
+				] as const) {
+					const v4 = dissect(
+						bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, "00") }))),
+					);
+					expect(v4.protocols[3]).toBe(d.protocol);
+					const v6 = dissect(
+						bytes(eth(0x86dd, ipv6({ next: 17, payload: udp(sp, dp, "00") }))),
+					);
+					expect(v6.protocols[3]).toBe(d.protocol);
+				}
+				seen++;
+			}
+		}
+		expect(seen).toBe(2);
+		// No dissector here is reached by TCP port yet (the tests below use their own).
+		expect(list.flatMap((d) => byMatch(d, "tcpPort"))).toEqual([]);
+	});
+
+	test("a UDP port no dissector declares is data, from either side", () => {
+		const declared = new Set(list.flatMap((d) => byMatch(d, "udpPort")));
+		for (let n = 0; n <= 0xffff; n++) {
+			if (declared.has(n)) continue;
+			const d = dissect(
+				bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(n, n, "00") }))),
+			);
+			expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "data"]);
+		}
+	});
+
 	test("an EtherType or IP protocol no dissector declares is data", () => {
 		const declaredTypes = new Set(list.flatMap((d) => byMatch(d, "etherType")));
 		const declaredProtos = new Set(
@@ -154,6 +209,148 @@ describe("dispatch follows the registry", () => {
 			const v4 = dissect(bytes(eth(0x0800, ipv4({ proto: n, payload: "00" }))));
 			expect(v4.protocols).toEqual(["ethernet", "ipv4", "data"]);
 		}
+	});
+});
+
+/** A registration that only says it was reached, for the port rules below. */
+function probe(
+	protocol: string,
+	...matches: ({ udpPort: number } | { tcpPort: number })[]
+): Registration {
+	const dissect: PortDissect = (f, start, end) => {
+		f.layers.push({
+			protocol: protocol as "data",
+			offset: start,
+			length: end - start,
+		});
+	};
+	return {
+		protocol,
+		name: protocol,
+		reference: "RFC 0",
+		matches: matches.map((m) => ({ ...m, dissect })),
+		fields: [],
+	};
+}
+
+/** Dissect an Ethernet frame through `registrations`, not the package's own. */
+function dissectWith(registrations: Registration[], frame: Uint8Array) {
+	const { dispatch } = buildDispatch([...REGISTRATIONS, ...registrations]);
+	const f = new Frame(frame, dispatch as Dispatch);
+	dispatch.link.get("ethernet")?.(f, 0, frame.length);
+	return f.layers.map((l) => l.protocol as string);
+}
+
+const udp4 = (sp: number, dp: number, payload = "00", o = {}) =>
+	bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, payload), ...o })));
+const tcp4 = (sp: number, dp: number, payload = "00", o = {}) =>
+	bytes(
+		eth(
+			0x0800,
+			ipv4({ proto: 6, payload: tcp({ sp, dp, flags: 0x18, payload }), ...o }),
+		),
+	);
+
+describe('port matches (DESIGN.md, "Decided: port matches")', () => {
+	const low = probe("low", { udpPort: 1000 }, { tcpPort: 1000 });
+	const high = probe("high", { udpPort: 2000 }, { tcpPort: 2000 });
+
+	test("the lower port is tried first, whichever side it is on", () => {
+		for (const [build, transport] of [
+			[udp4, "udp"],
+			[tcp4, "tcp"],
+		] as const) {
+			expect(dissectWith([low, high], build(2000, 1000))).toEqual([
+				"ethernet",
+				"ipv4",
+				transport,
+				"low",
+			]);
+			expect(dissectWith([low, high], build(1000, 2000)).at(-1)).toBe("low");
+			// With only the higher port's, it is reached from either side.
+			expect(dissectWith([high], build(1000, 2000)).at(-1)).toBe("high");
+			expect(dissectWith([high], build(2000, 1000)).at(-1)).toBe("high");
+			// Equal ports: one dissector, tried once.
+			expect(dissectWith([high], build(2000, 2000))).toEqual([
+				"ethernet",
+				"ipv4",
+				transport,
+				"high",
+			]);
+		}
+	});
+
+	test("a UDP port match is not a TCP one, nor the reverse", () => {
+		const udpOnly = probe("udp-only", { udpPort: 3000 });
+		const tcpOnly = probe("tcp-only", { tcpPort: 4000 });
+		expect(dissectWith([udpOnly, tcpOnly], tcp4(50000, 3000)).at(-1)).toBe(
+			"data",
+		);
+		expect(dissectWith([udpOnly, tcpOnly], udp4(50000, 4000)).at(-1)).toBe(
+			"data",
+		);
+		expect(dissectWith([udpOnly, tcpOnly], tcp4(50000, 4000)).at(-1)).toBe(
+			"tcp-only",
+		);
+	});
+
+	test("a first IP fragment's payload stays data; a later fragment has no transport layer", () => {
+		// More fragments set, offset 0: the UDP length counts bytes still to come.
+		const first = bytes(
+			eth(
+				0x0800,
+				ipv4({
+					proto: 17,
+					payload: udp(68, 67, "0102", 300),
+					flagsOffset: 0x2000,
+				}),
+			),
+		);
+		expect(dissect(first).protocols).toEqual([
+			"ethernet",
+			"ipv4",
+			"udp",
+			"data",
+		]);
+		expect(
+			dissectWith([low], tcp4(50000, 1000, "00", { flagsOffset: 0x2000 })),
+		).toEqual(["ethernet", "ipv4", "tcp", "data"]);
+		const later = bytes(
+			eth(
+				0x0800,
+				ipv4({ proto: 17, payload: udp(68, 67, "00"), flagsOffset: 0x0010 }),
+			),
+		);
+		expect(dissect(later).protocols).toEqual(["ethernet", "ipv4", "data"]);
+	});
+
+	test("an empty payload is not dispatched", () => {
+		expect(dissect(udp4(68, 67, "")).protocols).toEqual([
+			"ethernet",
+			"ipv4",
+			"udp",
+		]);
+		expect(dissectWith([low], tcp4(50000, 1000, ""))).toEqual([
+			"ethernet",
+			"ipv4",
+			"tcp",
+		]);
+	});
+
+	test("a UDP datagram cut short by the capture is still dispatched, over the bytes there are", () => {
+		// 300 bytes declared, the IP packet ends after 2: the capture ended early.
+		const cut = bytes(
+			eth(
+				0x0800,
+				ipv4({
+					proto: 17,
+					payload: udp(68, 67, "0102", 300),
+					totalLength: 328,
+				}),
+			),
+		);
+		const d = dissect(cut);
+		expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
 	});
 });
 

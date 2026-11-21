@@ -11,9 +11,11 @@ import type {
 	FieldInfo,
 	IpDissect,
 	LinkDissect,
+	PortDissect,
 	Registration,
 } from "./core.ts";
 import { hex16 } from "./core.ts";
+import { DHCP } from "./dhcp.ts";
 import { ETHERNET } from "./ethernet.ts";
 import { ICMP, ICMPV6 } from "./icmp.ts";
 import { IPV4 } from "./ipv4.ts";
@@ -35,6 +37,7 @@ export const REGISTRATIONS: readonly Registration[] = [
 	ICMPV6,
 	UDP,
 	TCP,
+	DHCP,
 ];
 
 /**
@@ -48,6 +51,8 @@ export function buildDispatch(registrations: readonly Registration[]): {
 	const link = new Map<string, LinkDissect>();
 	const etherType = new Map<number, EtherDissect>();
 	const ipProtocol = new Map<number, IpDissect>();
+	const udpPort = new Map<number, PortDissect>();
+	const tcpPort = new Map<number, PortDissect>();
 	const duplicates: string[] = [];
 	const add = <K, V>(map: Map<K, V>, key: K, value: V, label: string) => {
 		if (map.has(key)) duplicates.push(label);
@@ -63,11 +68,17 @@ export function buildDispatch(registrations: readonly Registration[]): {
 					m.dissect,
 					`etherType ${hex16(m.etherType)}`,
 				);
-			else
+			else if ("ipProtocol" in m)
 				add(ipProtocol, m.ipProtocol, m.dissect, `ipProtocol ${m.ipProtocol}`);
+			else if ("udpPort" in m)
+				add(udpPort, m.udpPort, m.dissect, `udpPort ${m.udpPort}`);
+			else add(tcpPort, m.tcpPort, m.dissect, `tcpPort ${m.tcpPort}`);
 		}
 	}
-	return { dispatch: { link, etherType, ipProtocol }, duplicates };
+	return {
+		dispatch: { link, etherType, ipProtocol, udpPort, tcpPort },
+		duplicates,
+	};
 }
 
 export const DISPATCH: Dispatch = buildDispatch(REGISTRATIONS).dispatch;
@@ -79,7 +90,14 @@ export type DissectorMatch =
 	/** An EtherType in an Ethernet header or a VLAN tag, as `0x0800`. */
 	| { by: "etherType"; value: string }
 	/** An IP protocol number in an IPv4 header or after IPv6's extension headers. */
-	| { by: "ipProtocol"; value: number };
+	| { by: "ipProtocol"; value: number }
+	/**
+	 * A UDP port, either the source or the destination; when both ports have
+	 * a dissector, the lower port's is the one used.
+	 */
+	| { by: "udpPort"; value: number }
+	/** A TCP port, as `udpPort`. No dissector here is reached this way yet. */
+	| { by: "tcpPort"; value: number };
 
 /** One protocol this package decodes (DESIGN.md, "Library"). */
 export interface DissectorInfo {
@@ -111,14 +129,14 @@ export function dissectors(): DissectorInfo[] {
 		protocol: r.protocol,
 		name: r.name,
 		reference: r.reference,
-		matches: r.matches.map(
-			(m): DissectorMatch =>
-				"link" in m
-					? { by: "link", value: m.link }
-					: "etherType" in m
-						? { by: "etherType", value: hex16(m.etherType) }
-						: { by: "ipProtocol", value: m.ipProtocol },
-		),
+		matches: r.matches.map((m): DissectorMatch => {
+			if ("link" in m) return { by: "link", value: m.link };
+			if ("etherType" in m)
+				return { by: "etherType", value: hex16(m.etherType) };
+			if ("ipProtocol" in m) return { by: "ipProtocol", value: m.ipProtocol };
+			if ("udpPort" in m) return { by: "udpPort", value: m.udpPort };
+			return { by: "tcpPort", value: m.tcpPort };
+		}),
 		fields: copyFields(r.fields),
 	}));
 }

@@ -510,6 +510,7 @@ export function packetLine(d: Dissection): string {
 	const icmp = find(d, "icmp", "icmpv6");
 	const udp = find(d, "udp");
 	const tcp = find(d, "tcp");
+	const dhcp = find(d, "dhcp");
 
 	if (arp?.fields) {
 		const f = arp.fields;
@@ -540,6 +541,23 @@ export function packetLine(d: Dissection): string {
 					(t.flags.includes("ack") ? ` ack=${t.ack}` : "") +
 					` win=${t.window} len=${t.payloadLength}`,
 			);
+		} else if (udp?.fields && dhcp?.fields) {
+			const u = udp.fields;
+			const h = dhcp.fields;
+			const dhcpParts = [
+				`${hostPort(f.src, u.srcPort)} > ${hostPort(f.dst, u.dstPort)} dhcp`,
+				h.messageTypeName ??
+					(h.messageType !== undefined
+						? `type-${h.messageType}`
+						: (h.opName ?? `op-${h.op}`)),
+				`xid ${h.xid}`,
+				`mac ${h.chaddr}`,
+			];
+			if (h.ciaddr !== "0.0.0.0") dhcpParts.push(`client-ip ${h.ciaddr}`);
+			if (h.yiaddr !== "0.0.0.0") dhcpParts.push(`your-ip ${h.yiaddr}`);
+			if (h.requestedAddress !== undefined)
+				dhcpParts.push(`requested ${h.requestedAddress}`);
+			parts.push(dhcpParts.join(" "));
 		} else if (udp?.fields) {
 			const u = udp.fields;
 			parts.push(

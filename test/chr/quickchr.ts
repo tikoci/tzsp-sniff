@@ -30,6 +30,7 @@ import {
 	cacheAdd,
 	createLogger,
 	defaultBootTimeout,
+	type NetworkSpecifier,
 	QuickCHR,
 	QuickCHRError,
 } from "@tikoci/quickchr";
@@ -428,11 +429,19 @@ export interface Created {
  * to stderr first, so a run killed meanwhile says what to look for
  * (`quickchr list <name>`). Takes `createBudget` once the image is cached.
  */
-export function create(prefix: string, target: Target): Promise<Created> {
-	return track(provision(prefix, target));
+export function create(
+	prefix: string,
+	target: Target,
+	networks?: NetworkSpecifier[],
+): Promise<Created> {
+	return track(provision(prefix, target, networks));
 }
 
-async function provision(prefix: string, target: Target): Promise<Created> {
+async function provision(
+	prefix: string,
+	target: Target,
+	networks?: NetworkSpecifier[],
+): Promise<Created> {
 	if (stopping.signal.aborted)
 		throw new Error("interrupted; not creating a machine");
 	const name = `${prefix}-${randomBytes(4).toString("hex")}`;
@@ -452,6 +461,9 @@ async function provision(prefix: string, target: Target): Promise<Created> {
 			// evidence was taken on.
 			secureLogin: false,
 			bootDiskFormat: "qcow2",
+			// More NICs than quickchr's one SLIRP NIC only when asked (the
+			// DHCP lab's L2 link between two machines).
+			...(networks ? { networks } : {}),
 			onProgress,
 		});
 		owned.set(name, chr.state.createdAt);

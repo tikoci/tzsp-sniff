@@ -14,7 +14,7 @@ rather than as a general sniffer.
 
 > **Status: early.** Not yet published to npm. `tzsp-sniff` (the `listen`
 > command) receives, filters and decodes Ethernet, VLAN, ARP, IPv4, IPv6,
-> ICMP, UDP, TCP and LLDP, and saves captures as pcapng (`--write`, `--format
+> ICMP, UDP, TCP, LLDP and DHCPv4, and saves captures as pcapng (`--write`, `--format
 > pcapng`); `decode` reads them again, and the files RouterOS saves;
 > `dissectors` lists what is decoded. `setup` is designed ([DESIGN.md](DESIGN.md)) and not built yet.
 
@@ -142,7 +142,8 @@ once the input is read.
 ### `dissectors`: what is decoded
 
 `tzsp-sniff dissectors` lists each protocol the tool decodes, how it is
-reached (the frame's link type, an EtherType, an IP protocol) and every field
+reached (the frame's link type, an EtherType, an IP protocol, a UDP or TCP
+port) and every field
 its layer carries at `--detail layers`, with its type and whether it can be
 absent. A field not marked optional is in every layer that has `fields`,
 and a list item's field (`extensions[].header`) in every item of its list.
@@ -160,6 +161,18 @@ tzsp-sniff dissectors --format jsonl | jq -r 'select(.protocol == "tcp") | .fiel
 The protocol names are the ones records carry in `protocols` and the ones
 `--proto` takes. Bytes no dissector reads are a `data` layer, which is not
 listed.
+
+A dissector reached by port (DHCPv4 on UDP 67 and 68) is tried on either
+port, the lower one first when both ports have a dissector, and takes the
+bytes whatever they are: other traffic on UDP 67 is a `dhcp` layer with a
+`problem`. A first IP fragment's payload is not dispatched by port (it is
+cut short and not reassembled); it stays `data`.
+
+```sh
+tzsp-sniff --proto dhcp                       # renew a lease on the router to see one
+tzsp-sniff --proto dhcp --format jsonl --detail layers |
+  jq -c '.layers[] | select(.protocol == "dhcp") | .fields | {messageTypeName, chaddr, yiaddr, hostname}'
+```
 
 ### Library
 

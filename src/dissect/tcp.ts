@@ -89,7 +89,13 @@ function tcp(f: Frame, start: number, end: number, ip: IpContext) {
 		return;
 	}
 	fields.payloadLength = available - headerLength;
-	f.data(start + headerLength, end);
+	f.portPayload(
+		"tcp",
+		start + headerLength,
+		end,
+		[fields.srcPort, fields.dstPort],
+		ip,
+	);
 }
 
 const FIELDS: FieldDecls<TcpFields> = {
