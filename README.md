@@ -171,7 +171,7 @@ cut short and not reassembled); it stays `data`.
 ```sh
 tzsp-sniff --proto dhcp                       # renew a lease on the router to see one
 tzsp-sniff --proto dhcp --format jsonl --detail layers |
-  jq -c '.layers[] | select(.protocol == "dhcp") | .fields | {messageTypeName, chaddr, yiaddr, hostname}'
+  jq -c '.layers[]? | select(.protocol == "dhcp" and .fields != null) | .fields | {messageTypeName, chaddr, yiaddr, hostname}'
 ```
 
 ### Library

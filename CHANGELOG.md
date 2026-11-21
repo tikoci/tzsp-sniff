@@ -11,15 +11,17 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 - DHCPv4 (RFC 2131, 2132) on UDP 67 and 68: the BOOTP header (op, hardware
   type and length, hops, xid, secs, flags and the broadcast flag, ciaddr,
   yiaddr, siaddr, giaddr, chaddr as a MAC for Ethernet, sname and file as
-  text), the message type by name, and options 1, 3, 6, 12, 15, 50 to 61
-  as named fields (`subnetMask`, `routers`, `dnsServers`, `hostname`,
+  text), the message type by name, and options 1, 3, 6, 12, 15, 50 to 55
+  and 57 to 61 as named fields (`subnetMask`, `routers`, `dnsServers`, `hostname`,
   `parameterRequestList` by option name, `clientId` …); every other option
   as code, name and hex in `otherOptions`. A repeated option is joined
   before it is read (RFC 3396). At most 64 options (`unsupported/option-limit`);
-  option overload (52) is `unsupported/overload`, with sname and file as
-  hex; a header, cookie or option cut short, or no End, is `truncated`; a
-  wrong cookie, a decoded option of the wrong length (kept raw), text that
-  is not UTF-8 or a hardware length over 16 is `malformed`. The text line
+  option overload (52) is `unsupported/overload`, with the field it names
+  (sname, file or both) as hex; a header, cookie or option cut short, or no
+  End, is `truncated`; a wrong cookie, a decoded option of the wrong length
+  or an overload value other than 1 to 3 (kept raw), text that is not UTF-8
+  or a hardware length over 16 is `malformed`. Trailing zero bytes of a host
+  or domain name are dropped. The text line
   names the message type, xid, client MAC and the client, offered or
   requested address. `--proto dhcp` selects it. Checked against what
   RouterOS 7.25.1 and 7.24.6 send as a client and as a server, on x86_64 and

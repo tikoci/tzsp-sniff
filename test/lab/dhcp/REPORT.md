@@ -54,9 +54,11 @@ too, so a message that follows is seen.
 The same on all four routers but for one IP TTL (below): with the xid,
 MACs and leased address put aside, the DHCP messages decode identically.
 
-- **Every message decodes with no problem**, through `dissect()` and
-  `openCapture()` (the integration tier, `the router's own DHCP REQUEST
-  decodes with no problem`). No option lands in `otherOptions`.
+- **Every message decodes with no problem** through `dissect()`: the 48
+  datagrams of test/fixtures/dhcp/, replayed by the unit tier. No option
+  lands in `otherOptions`. Live, through `openCapture()`, the integration
+  tier (`the router's own DHCP REQUEST decodes with no problem`) checks the
+  renewing REQUEST.
 - **Sizes.** Every RouterOS message, client or server, is a 300-byte BOOTP
   message: End, then zero padding to the RFC 951 minimum. QEMU's ACK is 548
   bytes.
@@ -92,11 +94,14 @@ MACs and leased address put aside, the DHCP messages decode identically.
   within 25 ms after it.
 - **Release.** A RELEASE (unicast to the server, ciaddr set, the lease's
   xid), and then **at once a new DISCOVER**: the client releases and starts
-  over (0.3 to 1.0 s later on the L2 link). On ether1 the stream then went
-  quiet: with no address, `/tool/sniffer` streaming has no source, so the
-  new exchange with QEMU was not seen, and the REST call that released
-  returned only once the client was bound again. The lab therefore releases
-  ether1 last and waits for `bound`.
+  over (0.3 to 1.0 s later on the L2 link). On ether1 the RELEASE was the
+  only DHCP datagram streamed, and the client was `bound` again when polled
+  afterwards: the new exchange with QEMU was not seen, as with no address
+  `/tool/sniffer` streaming has no source. That the REST call releasing
+  ether1 returned only after about 11 s, once bound again, is from the
+  probe before the lab (7.25.1 x86_64, [#29](https://github.com/tikoci/tzsp-sniff/issues/29#issuecomment-7065163836));
+  this lab records no return time. It releases ether1 last and waits for
+  `bound`.
 
 ## What it does not show
 

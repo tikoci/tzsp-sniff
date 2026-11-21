@@ -1516,6 +1516,12 @@ describe("dissect: LLDP", () => {
 
 describe("dissect: DHCP", () => {
 	const dhcpOf = (d: Dissection) => layer(d, "dhcp");
+	/** The DHCP layer keeps every byte of the UDP payload, from AT to the frame's end. */
+	const keepsAll = (d: Dissection) => {
+		const l = dhcpOf(d);
+		expect(l.offset).toBe(AT);
+		expect(l.offset + l.length).toBe(d.frame.length);
+	};
 	/** Where the DHCP message starts in a dhcpFrame: Ethernet, IPv4 and UDP headers. */
 	const AT = 14 + 20 + 8;
 
@@ -1769,6 +1775,7 @@ describe("dissect: DHCP", () => {
 			problem: "malformed",
 			reason: "cookie",
 		});
+		keepsAll(d);
 		const f = dhcpOf(d).fields;
 		expect(f?.messageType).toBeUndefined();
 		expect(f?.otherOptions).toEqual([]);
@@ -1784,6 +1791,7 @@ describe("dissect: DHCP", () => {
 			reason: "option",
 		});
 		expect(dhcpOf(header).fields?.messageTypeName).toBe("discover");
+		keepsAll(header);
 		const value = dissect(
 			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}0c05616263` })),
 		);
@@ -1792,6 +1800,26 @@ describe("dissect: DHCP", () => {
 			reason: "option",
 		});
 		expect(dhcpOf(value).fields?.hostname).toBeUndefined();
+		keepsAll(value);
+	});
+
+	test("an option repeated, its last piece cut short, is truncated (option); the pieces before it are kept raw, not read", () => {
+		// Two routers announced, the second cut (RFC 3396): the list is incomplete.
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(53, "03")}${opt(3, "0a000001")}03040a00`,
+				}),
+			),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "option" });
+		keepsAll(d);
+		const f = dhcpOf(d).fields;
+		expect(f?.routers).toBeUndefined();
+		expect(f?.messageType).toBe(3);
+		expect(f?.otherOptions).toEqual([
+			{ code: 3, name: "router", length: 4, value: "0a000001" },
+		]);
 	});
 
 	test("no End is truncated (end)", () => {
@@ -1800,6 +1828,59 @@ describe("dissect: DHCP", () => {
 		);
 		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "end" });
 		expect(dhcpOf(d).fields?.messageType).toBe(1);
+		keepsAll(d);
+	});
+
+	test("trailing zero bytes of a host name or domain name are deleted (RFC 2132, 2)", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(12, "6c616200")}${opt(15, "6c61622e74657374000000")}ff`,
+				}),
+			),
+		);
+		expect(d.problem).toBeUndefined();
+		expect(dhcpOf(d).fields).toMatchObject({
+			hostname: "lab",
+			domainName: "lab.test",
+		});
+	});
+
+	test("a vendor class id keeps a leading byte-order mark, so it differs from the same id without one", () => {
+		const bom = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(60, "efbbbf41")}ff` })),
+		);
+		const plain = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(60, "41")}ff` })),
+		);
+		expect(dhcpOf(bom).fields?.vendorClassId).toBe("\uFEFFA");
+		expect(dhcpOf(plain).fields?.vendorClassId).toBe("A");
+	});
+
+	test("an overload value other than 1 to 3 is malformed (option-value), kept raw; sname and file stay text", () => {
+		for (const value of ["00", "04", "ff"]) {
+			const d = dissect(
+				dhcpFrame(
+					dhcpMessage({
+						sname: utf8("srv"),
+						file: utf8("file"),
+						options: `${opt(53, "05")}${opt(52, value)}ff`,
+					}),
+				),
+			);
+			expect(dhcpOf(d)).toMatchObject({
+				problem: "malformed",
+				reason: "option-value",
+			});
+			const f = dhcpOf(d).fields;
+			expect(f?.overload).toBeUndefined();
+			expect(f).toMatchObject({ serverName: "srv", bootFile: "file" });
+			expect(f?.serverNameHex).toBeUndefined();
+			expect(f?.bootFileHex).toBeUndefined();
+			expect(f?.otherOptions).toEqual([
+				{ code: 52, name: "overload", length: 1, value },
+			]);
+		}
 	});
 
 	test("bytes after End are not read as options", () => {
@@ -1939,6 +2020,27 @@ describe("dissect: DHCP", () => {
 			reason: "hardware-length",
 		});
 		expect(dhcpOf(d).fields?.chaddr).toBe("11".repeat(16));
+		// What stopped the reading is the cause reported, not the length.
+		const bad = { htype: 1, hlen: 17 };
+		const cases: [string, string, string][] = [
+			[dhcpMessage(bad).slice(0, 238 * 2), "truncated", "cookie"],
+			[dhcpMessage({ ...bad, options: "0c0541" }), "truncated", "option"],
+			[dhcpMessage({ ...bad, options: "350101" }), "truncated", "end"],
+			[
+				dhcpMessage({
+					...bad,
+					options: `${"c800".repeat(MAX_DHCP_OPTIONS + 1)}ff`,
+				}),
+				"unsupported",
+				"option-limit",
+			],
+			[dhcpMessage({ ...bad, cookie: "00000000" }), "malformed", "cookie"],
+		];
+		for (const [message, problem, reason] of cases)
+			expect(dhcpOf(dissect(dhcpFrame(message)))).toMatchObject({
+				problem,
+				reason,
+			});
 	});
 
 	test(`after ${MAX_DHCP_OPTIONS} options the layer is unsupported (option-limit); pad does not count`, () => {

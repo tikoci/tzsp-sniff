@@ -966,10 +966,16 @@ test/lab/dhcp/REPORT.md.
 - **Repeated options are joined** before they are read, as RFC 3396
   section 7 has a receiver do (a long option split in pieces); a wrong
   length is judged on the joined value, and an option in `otherOptions`
-  carries the joined length.
+  carries the joined length. When a later piece runs past the datagram, the
+  pieces before it are kept raw in `otherOptions` and not read as the
+  option, which is incomplete (`truncated`, `option`).
 - **Option overload (52) is `unsupported` (`overload`).** It is decoded as
-  a field; `sname` and `file` are then kept as hex (`serverNameHex`,
-  `bootFileHex`) and the options in them are not read. Following it (RFC
+  a field; the field it names (1 `file`, 2 `sname`, 3 both, RFC 2132 9.3)
+  is then kept as hex (`serverNameHex`, `bootFileHex`) and the options in
+  it are not read, while a field it does not name is still text. The #29
+  decision said "sname and file"; naming only the overloaded one is RFC
+  2132's reading (cross-review of dd43576). Any other value names no field:
+  `malformed` (`option-value`), kept raw, `sname` and `file` read as text. Following it (RFC
   2131 4.1: options, then `file`, then `sname`) is more code for what only
   host-made vectors would show; RouterOS sent no overload in the lab.
 - **Problems.** A header cut short (under 236 bytes) is `truncated`
@@ -980,7 +986,12 @@ test/lab/dhcp/REPORT.md.
   (`option-length`) and kept in `otherOptions`; a host name, domain name,
   `sname` or `file` that is not UTF-8 is `malformed` (`text`), read with
   replacement characters; a hardware length over 16 is `malformed`
-  (`hardware-length`). The vendor class id is opaque (RFC 2132 9.13), so
+  (`hardware-length`), reported only when nothing stopped the reading
+  first (a cut cookie or option, no End, the cap), so the cause that
+  stopped it is the one named. Trailing zero bytes of a host name or domain
+  name are deleted, as RFC 2132 section 2 has a receiver do. Text keeps a
+  leading byte-order mark (U+FEFF), so two vendor class ids that differ by
+  one still differ. The vendor class id is opaque (RFC 2132 9.13), so
   one that is not UTF-8 is kept raw with no problem. After 64 options
   (`MAX_DHCP_OPTIONS`, pad not counted) the layer is `unsupported`
   (`option-limit`).

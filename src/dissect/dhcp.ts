@@ -175,8 +175,10 @@ const OPTION_NAMES: Record<number, string> = {
 	252: "wpad",
 };
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const LENIENT = new TextDecoder("utf-8");
+// `ignoreBOM` keeps a leading byte-order mark as a character: stripped, two
+// different values (an opaque vendor class id) would read the same.
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const LENIENT = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /** A plain Uint8Array over `b`'s memory (see lldp.ts: `subarray` would build a subclass). */
 const view = (b: Uint8Array, start: number, end: number) =>
@@ -269,16 +271,22 @@ function dhcp(f: Frame, start: number, end: number) {
 			return LENIENT.decode(view(b, from, to));
 		}
 	};
-	// chaddr is 16 bytes (RFC 2131, figure 1).
-	if (hardwareLength > 16) mark("malformed", "hardware-length");
+	// chaddr is 16 bytes (RFC 2131, figure 1). Marked once whatever stopped
+	// the reading (a cut cookie or option, no End, the cap) is marked, so
+	// that cause is the one reported.
+	const hardwareLengthCheck = () => {
+		if (hardwareLength > 16) mark("malformed", "hardware-length");
+	};
 
 	if (available < HEADER + 4) {
 		mark("truncated", "cookie");
+		hardwareLengthCheck();
 		named(start + 44, start + 108, start + 236);
 		return;
 	}
 	if (u32(b, start + HEADER) !== COOKIE) {
 		mark("malformed", "cookie");
+		hardwareLengthCheck();
 		named(start + 44, start + 108, start + 236);
 		return;
 	}
@@ -289,6 +297,8 @@ function dhcp(f: Frame, start: number, end: number) {
 	let count = 0;
 	let offset = start + HEADER + 4;
 	let ended = false;
+	/** An option whose last piece runs past the datagram: what was joined of it is incomplete. */
+	let cut: number | undefined;
 	while (offset < end) {
 		const code = u8(b, offset);
 		if (code === 0) {
@@ -306,6 +316,7 @@ function dhcp(f: Frame, start: number, end: number) {
 		}
 		if (offset + 2 > end || offset + 2 + u8(b, offset + 1) > end) {
 			mark("truncated", "option");
+			if (offset + 2 <= end) cut = code;
 			break;
 		}
 		const length = u8(b, offset + 1);
@@ -316,11 +327,14 @@ function dhcp(f: Frame, start: number, end: number) {
 		offset += 2 + length;
 	}
 	if (!ended && layer.problem === undefined) mark("truncated", "end");
+	hardwareLengthCheck();
 
 	for (const [code, pieces] of values) {
 		const v = join(pieces);
 		const fits = DECODED[code];
-		if (!fits) {
+		// Earlier pieces of an option whose next piece is cut (RFC 3396): not
+		// read as the option, which is incomplete, and kept raw.
+		if (!fits || code === cut) {
 			other(code, v);
 			continue;
 		}
@@ -332,8 +346,9 @@ function dhcp(f: Frame, start: number, end: number) {
 		decode(code, v);
 	}
 	const overloaded = fields.overload ?? 0;
-	// RFC 2131 4.1: with overload, sname and file hold options. They are
-	// kept as hex and not read (maintainer, 2026-11-21, #29).
+	// RFC 2131 4.1: with overload, the field or fields it names hold
+	// options. Those are kept as hex and not read (maintainer, 2026-11-21,
+	// #29).
 	if (fields.overload !== undefined) mark("unsupported", "overload");
 	named(start + 44, start + 108, start + 236, overloaded);
 
@@ -371,12 +386,16 @@ function dhcp(f: Frame, start: number, end: number) {
 			for (let i = 0; i < v.length; i += 4) list.push(formatIpv4(v, i));
 			return list;
 		};
+		/** NVT ASCII text, its trailing zero bytes deleted, as RFC 2132 section 2 has a receiver do. */
 		const textOf = () => {
+			let stop = v.length;
+			while (stop > 0 && v[stop - 1] === 0) stop--;
+			const t = view(v, 0, stop);
 			try {
-				return UTF8.decode(v);
+				return UTF8.decode(t);
 			} catch {
 				mark("malformed", "text");
-				return LENIENT.decode(v);
+				return LENIENT.decode(t);
 			}
 		};
 		switch (code) {
@@ -401,9 +420,17 @@ function dhcp(f: Frame, start: number, end: number) {
 			case 51:
 				fields.leaseTime = u32(v, 0);
 				break;
-			case 52:
-				fields.overload = u8(v, 0);
+			case 52: {
+				// RFC 2132 9.3: 1 file, 2 sname, 3 both; any other value names
+				// neither, so it is kept raw and sname and file are read as text.
+				const value = u8(v, 0);
+				if (value >= 1 && value <= 3) fields.overload = value;
+				else {
+					mark("malformed", "option-value");
+					other(code, v);
+				}
 				break;
+			}
 			case 53: {
 				const type = u8(v, 0);
 				fields.messageType = type;
@@ -551,12 +578,12 @@ const FIELDS: FieldDecls<DhcpFields> = {
 	hostname: {
 		type: "string",
 		optional: true,
-		description: `${option(12, "the host name")} Not UTF-8 is malformed (text), read with replacement characters.`,
+		description: `${option(12, "the host name")} Trailing zero bytes are deleted (RFC 2132, 2). Not UTF-8 is malformed (text), read with replacement characters. An option whose last piece is cut short (RFC 3396) is truncated (option) and kept in otherOptions.`,
 	},
 	domainName: {
 		type: "string",
 		optional: true,
-		description: `${option(15, "the domain name")} Not UTF-8 is malformed (text).`,
+		description: `${option(15, "the domain name")} Trailing zero bytes are deleted; not UTF-8 is malformed (text).`,
 	},
 	requestedAddress: {
 		type: "string",
@@ -571,7 +598,7 @@ const FIELDS: FieldDecls<DhcpFields> = {
 	overload: {
 		type: "number",
 		optional: true,
-		description: `${option(52, "option overload: 1 file holds options, 2 sname, 3 both")} The options there are not read: unsupported (overload).`,
+		description: `${option(52, "option overload: 1 file holds options, 2 sname, 3 both")} The options there are not read: unsupported (overload). Another value names no field: malformed (option-value), kept in otherOptions.`,
 	},
 	serverId: {
 		type: "string",
@@ -601,7 +628,7 @@ const FIELDS: FieldDecls<DhcpFields> = {
 	vendorClassId: {
 		type: "string",
 		optional: true,
-		description: `${option(60, "the vendor class identifier")} Opaque by RFC 2132: one that is not UTF-8 is kept in otherOptions, with no problem.`,
+		description: `${option(60, "the vendor class identifier")} Opaque by RFC 2132: one that is not UTF-8 is kept in otherOptions, with no problem. A leading byte-order mark is kept as U+FEFF.`,
 	},
 	clientId: {
 		type: "string",

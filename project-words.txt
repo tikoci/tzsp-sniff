@@ -81,6 +81,7 @@ netbios # NetBIOS over TCP/IP, in DHCP option names
 NIC # network interface card
 NIS # Network Information Service, in DHCP option names
 NONBLOCK # as in O_NONBLOCK, the open(2) flag
+NVT # Network Virtual Terminal (ASCII), RFC 2132 text options
 OID # SNMP object identifier
 OSPF
 pcapng

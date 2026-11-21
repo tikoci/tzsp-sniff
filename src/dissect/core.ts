@@ -377,9 +377,11 @@ export class Frame {
 		const table =
 			transport === "udp" ? this.dispatch.udpPort : this.dispatch.tcpPort;
 		const [a, b] = ports;
+		const low = Math.min(a, b);
+		const high = Math.max(a, b);
 		const next = ip.fragment
 			? undefined
-			: (table.get(Math.min(a, b)) ?? table.get(Math.max(a, b)));
+			: (table.get(low) ?? (high === low ? undefined : table.get(high)));
 		if (next) next(this, start, end, ip);
 		else this.data(start, end);
 	}

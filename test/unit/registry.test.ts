@@ -337,20 +337,50 @@ describe('port matches (DESIGN.md, "Decided: port matches")', () => {
 		]);
 	});
 
-	test("a UDP datagram cut short by the capture is still dispatched, over the bytes there are", () => {
-		// 300 bytes declared, the IP packet ends after 2: the capture ended early.
-		const cut = bytes(
-			eth(
-				0x0800,
-				ipv4({
-					proto: 17,
-					payload: udp(68, 67, "0102", 300),
-					totalLength: 328,
-				}),
-			),
-		);
-		const d = dissect(cut);
-		expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+	test("a UDP datagram cut short, or longer than its IP packet, is still dispatched, over the bytes there are", () => {
+		// 300 bytes declared for UDP, 2 bytes of payload. An IPv4 total length
+		// of 328 says the capture ended early (truncated); one of 30 says
+		// the UDP length contradicts the packet (malformed).
+		for (const [total, problem] of [
+			[328, "truncated"],
+			[30, "malformed"],
+		] as const) {
+			const d = dissect(
+				bytes(
+					eth(
+						0x0800,
+						ipv4({
+							proto: 17,
+							payload: udp(68, 67, "0102", 300),
+							totalLength: total,
+						}),
+					),
+				),
+			);
+			expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+			const u = d.layers[2];
+			expect({ problem: u?.problem, reason: u?.reason }).toEqual({
+				problem,
+				reason: "length",
+			});
+			expect(d.layers[3]).toMatchObject({ offset: 14 + 20 + 8, length: 2 });
+		}
+	});
+
+	test("equal ports are looked up once", () => {
+		const { dispatch } = buildDispatch(REGISTRATIONS);
+		const asked: number[] = [];
+		const udpPort = new Map(dispatch.udpPort);
+		const get = udpPort.get.bind(udpPort);
+		udpPort.get = (k: number) => {
+			asked.push(k);
+			return get(k);
+		};
+		const frame = udp4(40000, 40000);
+		const f = new Frame(frame, { ...dispatch, udpPort });
+		dispatch.link.get("ethernet")?.(f, 0, frame.length);
+		expect(asked).toEqual([40000]);
+		expect(f.layers.at(-1)?.protocol).toBe("data");
 	});
 });
 
