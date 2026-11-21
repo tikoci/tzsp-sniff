@@ -380,7 +380,11 @@ async function lab(target: Target): Promise<boolean> {
 		if (ev.machine && owned.has(ev.machine) && !(await teardown(ev.machine)))
 			console.error(leftOver(ev.machine));
 	}
-	const stem = `${ev.router?.version || target.channel}-${target.arch}`;
+	// The version comes from the router: keep it to a plain file name.
+	const stem = `${ev.router?.version || target.channel}-${target.arch}`.replace(
+		/[^\w.-]/g,
+		"_",
+	);
 	const dir = ok ? EVIDENCE : FAILED;
 	await mkdir(dir, { recursive: true });
 	await writeFile(

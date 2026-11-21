@@ -101,7 +101,7 @@ unit tier replays them.
 ## Back to m2ir
 
 Nothing here contradicts the profile; it adds versions and an
-architecture. Filed as an m2ir issue with this evidence: arm64 header and
+architecture. Filed as [tikoci/m2ir#13](https://github.com/tikoci/m2ir/issues/13) with this evidence: arm64 header and
 TLV 9 samples, the packing TLVs on 7.24.6 and 7.25.1, TLV 14 following
 `disable-ipv6` at once on 7.24.6 and 7.25.1, and the triggered list on
 7.24.6 and 7.25.1. The generated table here stays as m2ir's until m2ir

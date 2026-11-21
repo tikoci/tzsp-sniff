@@ -86,6 +86,15 @@ Small items, one or two sentences each, deleted when done or declined
 - DHCP: follow option overload (52) into `file` and `sname` (RFC 2131 4.1),
   and decode option 82 (relay agent) sub-options, if a lab shows either
   from RouterOS.
+- MNDP: `bun run m2ir:refresh` once tikoci/m2ir#13 (this lab's 7.24.6,
+  7.25.1 and arm64 evidence) lands on m2ir's `main`, so `dissectors` shows
+  the wider `versionsSeen` and TLV 14's settled meaning.
+- MNDP lab: a boot announcement (header 0), a request and its reply, and a
+  dying gasp from a CHR, which the lab does not capture today (it starts
+  after boot and sends nothing); the vectors for them are built from m2ir's
+  forms (test/lab/mndp/REPORT.md, "What it does not show").
+- m2ir: a scheduled CI check that says when m2ir's `main` has moved past
+  `vendor/m2ir/SOURCE.json`, so a refresh is not forgotten.
 - Recovery hints that print placeholders (`tzsp-sniff decode <file>` for
   pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
   command) do not run as printed (tikoci-cli-mcp); point to a command that
