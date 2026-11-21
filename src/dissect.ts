@@ -1,7 +1,8 @@
 /**
  * Frame dissectors: Ethernet, 802.1Q and 802.1ad, ARP, IPv4, IPv6, ICMP,
- * ICMPv6, UDP, TCP and LLDP (DESIGN.md, "Dissectors", order 1), and DHCPv4,
- * the first reached by UDP port.
+ * ICMPv6, UDP, TCP and LLDP (DESIGN.md, "Dissectors", order 1), DHCPv4,
+ * the first reached by UDP port, and MNDP, the first read with a table
+ * generated from m2ir.
  *
  * Pure and bounded, like `parseTzsp`: bytes in, layers out, no I/O, and it
  * never throws. Each layer keeps its span in the frame, so its bytes can be
@@ -14,7 +15,8 @@
  * reached and its fields (`src/dissect/registry.ts`); dispatch from one
  * layer to the next goes through that registry, and `dissectors()` lists it.
  * Field layouts and numbers are from the RFCs and IANA registries named at
- * each dissector; no Wireshark code is used.
+ * each dissector, and MNDP's from m2ir's YAML (src/dissect/mndp-table.ts,
+ * generated); no Wireshark code is used.
  */
 import { DISPATCH } from "./dissect/registry.ts";
 import { type DissectProblem, Frame, type Layer } from "./dissect/core.ts";
@@ -30,6 +32,7 @@ export {
 	type DataFields,
 	type DataLayer,
 	type DissectProblem,
+	type FieldConfidence,
 	type FieldInfo,
 	type FieldType,
 	formatIpv4,
@@ -60,6 +63,13 @@ export {
 	type LldpOtherTlv,
 	MAX_LLDP_TLVS,
 } from "./dissect/lldp.ts";
+export {
+	MAX_MNDP_TLVS,
+	type MndpFields,
+	type MndpLayer,
+	type MndpOtherTlv,
+	type MndpTlvFields,
+} from "./dissect/mndp.ts";
 export {
 	type DissectorInfo,
 	type DissectorMatch,

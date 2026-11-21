@@ -9,6 +9,7 @@ import {
 	MAX_DHCP_OPTIONS,
 	MAX_IPV6_EXTENSIONS,
 	MAX_LLDP_TLVS,
+	MAX_MNDP_TLVS,
 	MAX_VLAN_TAGS,
 } from "../../src/dissect.ts";
 import { packetLine, viewPacket } from "../../src/records.ts";
@@ -33,6 +34,8 @@ import {
 	lldpFixtureIndex,
 	MAC_A,
 	MAC_B,
+	mndpFrame,
+	mtlv,
 	opt,
 	tcp,
 	tlv,
@@ -422,7 +425,7 @@ describe("dissect: IPv4", () => {
 			bytes(
 				eth(
 					0x0800,
-					ipv4({ proto: 17, payload: udp(5678, 5678, "aa") }) + "00".repeat(17),
+					ipv4({ proto: 17, payload: udp(4000, 4000, "aa") }) + "00".repeat(17),
 				),
 			),
 		);
@@ -2133,6 +2136,247 @@ describe("dissect: DHCP", () => {
 	});
 });
 
+describe("dissect: MNDP", () => {
+	const mndpOf = (d: Dissection) => layer(d, "mndp");
+	/** Where the MNDP datagram starts in an mndpFrame: Ethernet, IPv4 and UDP headers. */
+	const AT = 14 + 20 + 8;
+	const of = (payload: string) => {
+		const d = dissect(mndpFrame(payload));
+		const l = mndpOf(d);
+		// Every byte of the datagram is the layer's, whatever stopped the reading.
+		expect(l.offset).toBe(AT);
+		expect(l.offset + l.length).toBe(d.frame.length);
+		return { d, l, f: l.fields };
+	};
+	const ID = mtlv(5, utf8("MikroTik"));
+
+	test("an announcement: each TLV named and typed from the m2ir table", () => {
+		// The TLVs of a 7.26beta5 announcement as m2ir lists them (layouts),
+		// with made-up values; the header and TLV 18 as its field capture saw.
+		const { d, f } = of(
+			"207c0100" +
+				mtlv(1, "0c0102030405") +
+				mtlv(2, "") +
+				mtlv(3, "") +
+				mtlv(4, "") +
+				mtlv(9, "dc050000") +
+				ID +
+				mtlv(7, utf8("7.25.1 2026-11-02 12:39:53")) +
+				mtlv(8, utf8("MikroTik")) +
+				mtlv(10, "79d90e00") +
+				mtlv(11, utf8("ABCD-1234")) +
+				mtlv(12, utf8("CHR")) +
+				mtlv(14, "01") +
+				mtlv(16, utf8("bridge/ether1")) +
+				mtlv(18, "03") +
+				mtlv(19, "79") +
+				mtlv(17, "0a00020f") +
+				mtlv(15, "20010db8000000000000000000000001") +
+				mtlv(15, "fe800000000000000000000000000001"),
+		);
+		expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "mndp"]);
+		expect(d.problem).toBeUndefined();
+		expect(f).toEqual({
+			header: "207c0100",
+			counterLe: 97312,
+			counterBe: 0x207c0100,
+			request: false,
+			macAddress: "0c:01:02:03:04:05",
+			unpackSimple: true,
+			unpackHeaders: true,
+			unpackAll: true,
+			aggregatedSizeHex: "dc050000",
+			identity: "MikroTik",
+			version: "7.25.1 2026-11-02 12:39:53",
+			platform: "MikroTik",
+			uptime: 973_177,
+			softwareId: "ABCD-1234",
+			board: "CHR",
+			ipv6Enabled: 1,
+			ipv6EnabledName: "enabled",
+			interfaceName: "bridge/ether1",
+			running: 3,
+			runningFlags: ["capsman", "cmr"],
+			ttl: 121,
+			address4: "10.0.2.15",
+			address6: ["2001:db8::1", "fe80::1"],
+			otherTlvs: [],
+		});
+		expect(packetLine(d)).toBe(
+			'10.0.2.15:5678 > 10.0.2.3:5678 mndp identity MikroTik mac 0c:01:02:03:04:05 version "7.25.1 2026-11-02 12:39:53" board CHR',
+		);
+	});
+
+	test("the header in both byte orders: m2ir's mipsbe example reads big-endian", () => {
+		// m2ir profile.yaml header: 00 00 23 58 = 9,048 from a 7.25beta5 RB912R.
+		const { f } = of(`00002358${ID}`);
+		expect(f).toMatchObject({
+			header: "00002358",
+			counterBe: 9048,
+			counterLe: 0x58230000,
+		});
+	});
+
+	test("m2ir's request rule: a zero header, or an empty TLV 6, on a whole datagram", () => {
+		const request = (payload: string) => of(payload).f?.request;
+		// The forms m2ir's requests list gives, and whether each is a request.
+		expect(request("00000000")).toBe(true);
+		expect(request("0000000000060000")).toBe(true);
+		expect(request("0000000000000000")).toBe(true);
+		expect(request("000000000006000100")).toBe(true);
+		expect(request("0100000000060000")).toBe(true);
+		expect(request("0000000100060000")).toBe(true);
+		// A non-zero header with a TLV 6 that is not empty matches no clause.
+		expect(request("010000000006000100")).toBe(false);
+		expect(request("01000000")).toBe(false);
+		expect(request("0100000000000000")).toBe(false);
+		// A boot announcement (header zero) is a request too.
+		expect(request(`00000000${ID}`)).toBe(true);
+		// Bytes after the last whole TLV: not framed, so not a request.
+		expect(request("000000000000000000")).toBe(false);
+		expect(request("000000000006000000")).toBe(false);
+		expect(request("0000000000")).toBe(false);
+		const { d, f } = of("0000000000060000");
+		expect(f?.requestHex).toBe("");
+		expect(packetLine(d)).toBe("10.0.2.15:5678 > 10.0.2.3:5678 mndp request");
+	});
+
+	test("under 4 bytes is truncated (header), with no fields", () => {
+		const { d, l } = of("000000");
+		expect(l.fields).toBeUndefined();
+		expect(d.problem).toEqual({
+			protocol: "mndp",
+			problem: "truncated",
+			reason: "header",
+		});
+		expect(l.length).toBe(3);
+	});
+
+	test("a TLV header or value past the datagram is truncated (tlv); the TLVs before it are kept", () => {
+		for (const tail of ["00", "000500", "0005000a6162"]) {
+			const { d, f } = of(`01000000${ID}${tail}`);
+			expect(d.problem).toEqual({
+				protocol: "mndp",
+				problem: "truncated",
+				reason: "tlv",
+			});
+			expect(f?.identity).toBe("MikroTik");
+			expect(f?.otherTlvs).toEqual([]);
+			expect(f?.request).toBe(false);
+		}
+	});
+
+	test("a wrong length for its type is malformed (tlv-length), and the TLV kept raw", () => {
+		const { d, f } = of(
+			`01000000${mtlv(1, "0c01020304")}${mtlv(2, "00")}${mtlv(10, "0102")}${ID}`,
+		);
+		expect(d.problem).toEqual({
+			protocol: "mndp",
+			problem: "malformed",
+			reason: "tlv-length",
+		});
+		expect(f?.otherTlvs).toEqual([
+			{ type: 1, name: "mac-address", length: 5, value: "0c01020304" },
+			{ type: 2, name: "unpack-simple", length: 1, value: "00" },
+			{ type: 10, name: "uptime", length: 2, value: "0102" },
+		]);
+		expect(f?.macAddress).toBeUndefined();
+		expect(f?.identity).toBe("MikroTik");
+	});
+
+	test("a second TLV of a type that does not repeat is kept raw, with no problem", () => {
+		const { d, f } = of(
+			`01000000${ID}${mtlv(5, utf8("other"))}${mtlv(17, "0a000001")}${mtlv(17, "0a000002")}`,
+		);
+		expect(d.problem).toBeUndefined();
+		expect(f?.identity).toBe("MikroTik");
+		expect(f?.address4).toBe("10.0.0.1");
+		expect(f?.otherTlvs).toEqual([
+			{ type: 5, name: "identity", length: 5, value: utf8("other") },
+			{ type: 17, name: "address4", length: 4, value: "0a000002" },
+		]);
+		// A first of the wrong length does not take the field: the next one does.
+		const late = of(`01000000${mtlv(17, "0a00")}${mtlv(17, "0a000003")}`).f;
+		expect(late?.address4).toBe("10.0.0.3");
+	});
+
+	test("a type the table does not name is kept as type, length and hex", () => {
+		// 13 is in m2ir's `unassigned`; 20 is above any type seen.
+		const { d, f } = of(`01000000${mtlv(13, "41")}${mtlv(20, "")}${ID}`);
+		expect(d.problem).toBeUndefined();
+		expect(f?.otherTlvs).toEqual([
+			{ type: 13, length: 1, value: "41" },
+			{ type: 20, length: 0, value: "" },
+		]);
+	});
+
+	test("values and bits the table does not name stay numbers", () => {
+		const { f } = of(
+			`01000000${mtlv(14, "02")}${mtlv(18, "05")}${mtlv(19, "00")}`,
+		);
+		expect(f?.ipv6Enabled).toBe(2);
+		expect(f?.ipv6EnabledName).toBeUndefined();
+		expect(f?.running).toBe(5);
+		expect(f?.runningFlags).toEqual(["capsman", "bit-0x04"]);
+		expect(f?.ttlName).toBe("dying-gasp");
+		expect(of(`01000000${mtlv(18, "00")}`).f?.runningFlags).toEqual([]);
+	});
+
+	test("a dying gasp says so on its text line", () => {
+		// m2ir's dying-gasp layout: TLVs 1, 19 = 00, 17.
+		const { d } = of(
+			`2a000000${mtlv(1, "0c0102030405")}${mtlv(19, "00")}${mtlv(17, "0a00020f")}`,
+		);
+		expect(packetLine(d)).toBe(
+			"10.0.2.15:5678 > 10.0.2.3:5678 mndp mac 0c:01:02:03:04:05 dying-gasp",
+		);
+	});
+
+	test("text that is not UTF-8 is malformed (text), read with replacement characters; a BOM is kept", () => {
+		const bad = of(`01000000${mtlv(5, "41ff")}`);
+		expect(bad.d.problem).toEqual({
+			protocol: "mndp",
+			problem: "malformed",
+			reason: "text",
+		});
+		expect(bad.f?.identity).toBe("A�");
+		const bom = of(`01000000${mtlv(5, "efbbbf41")}`);
+		expect(bom.d.problem).toBeUndefined();
+		expect(bom.f?.identity).toBe("﻿A");
+	});
+
+	test(`after ${MAX_MNDP_TLVS} TLVs the layer is unsupported (tlv-limit)`, () => {
+		const { d, f } = of(
+			`00000000${mtlv(15, "00".repeat(16)).repeat(MAX_MNDP_TLVS)}${ID}`,
+		);
+		expect(d.problem).toEqual({
+			protocol: "mndp",
+			problem: "unsupported",
+			reason: "tlv-limit",
+		});
+		expect(f?.address6).toHaveLength(MAX_MNDP_TLVS);
+		expect(f?.identity).toBeUndefined();
+		// The rest was not read, so the framing is not known: not a request.
+		expect(f?.request).toBe(false);
+		expect(of(`00000000${ID.repeat(MAX_MNDP_TLVS)}`).d.problem).toBeUndefined();
+	});
+
+	test("reached from either port, in IPv6 too", () => {
+		const v6 = dissect(
+			bytes(
+				eth(
+					0x86dd,
+					ipv6({ next: 17, payload: udp(5678, 5678, `00000001${ID}`) }),
+				),
+			),
+		);
+		expect(v6.protocols).toEqual(["ethernet", "ipv6", "udp", "mndp"]);
+		expect(mndpOf(v6).fields?.identity).toBe("MikroTik");
+		// A request may come from any source port (m2ir transport).
+		expect(dissect(mndpFrame("00000000", 40000)).protocols[3]).toBe("mndp");
+	});
+});
+
 describe("dissect: never throws, spans stay inside the frame", () => {
 	test("every cut of real and built frames", () => {
 		const frames = [
@@ -2142,6 +2386,9 @@ describe("dissect: never throws, spans stay inside the frame", () => {
 				dhcpMessage({
 					options: `${opt(53, "01")}${opt(55, "0103")}${opt(12, "41")}ff000000`,
 				}),
+			),
+			mndpFrame(
+				`00000001${mtlv(1, "0c0102030405")}${mtlv(5, "41")}${mtlv(15, "00".repeat(16))}${mtlv(18, "01")}`,
 			),
 			bytes(
 				eth(

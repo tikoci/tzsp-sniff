@@ -238,6 +238,14 @@ export function dhcpMessage(
 	);
 }
 
+/** An MNDP TLV, hex: big-endian type and length, then the value. */
+export const mtlv = (type: number, value: string) =>
+	h16(type) + h16(value.length / 2) + value;
+
+/** An MNDP datagram (header and TLVs, hex) in UDP 5678 to 5678 in IPv4 in Ethernet, as bytes. */
+export const mndpFrame = (payload: string, sp = 5678, dp = 5678) =>
+	bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, payload) })));
+
 /** A DHCP message in UDP 68 to 67 in IPv4 in Ethernet, as bytes. */
 export const dhcpFrame = (message: string, sp = 68, dp = 67) =>
 	bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, message) })));

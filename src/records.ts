@@ -511,6 +511,7 @@ export function packetLine(d: Dissection): string {
 	const udp = find(d, "udp");
 	const tcp = find(d, "tcp");
 	const dhcp = find(d, "dhcp");
+	const mndp = find(d, "mndp");
 
 	if (arp?.fields) {
 		const f = arp.fields;
@@ -558,6 +559,20 @@ export function packetLine(d: Dissection): string {
 			if (h.requestedAddress !== undefined)
 				dhcpParts.push(`requested ${h.requestedAddress}`);
 			parts.push(dhcpParts.join(" "));
+		} else if (udp?.fields && mndp?.fields) {
+			const u = udp.fields;
+			const m = mndp.fields;
+			const mndpParts = [
+				`${hostPort(f.src, u.srcPort)} > ${hostPort(f.dst, u.dstPort)} mndp`,
+			];
+			if (m.request) mndpParts.push("request");
+			if (m.identity !== undefined)
+				mndpParts.push(`identity ${word(m.identity)}`);
+			if (m.macAddress !== undefined) mndpParts.push(`mac ${m.macAddress}`);
+			if (m.version !== undefined) mndpParts.push(`version ${word(m.version)}`);
+			if (m.board !== undefined) mndpParts.push(`board ${word(m.board)}`);
+			if (m.ttlName !== undefined) mndpParts.push(m.ttlName);
+			parts.push(mndpParts.join(" "));
 		} else if (udp?.fields) {
 			const u = udp.fields;
 			parts.push(

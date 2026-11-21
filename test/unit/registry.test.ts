@@ -41,10 +41,11 @@ describe("dissectors()", () => {
 			"udp",
 			"tcp",
 			"dhcp",
+			"mndp",
 		]);
 		for (const d of list) {
 			expect(d.name).toMatch(/\S/);
-			expect(d.reference).toMatch(/^(RFC|IEEE) /);
+			expect(d.reference).toMatch(/^(RFC|IEEE|m2ir) /);
 			expect(d.matches.length).toBeGreaterThan(0);
 			expect(d.fields.length).toBeGreaterThan(0);
 			for (const f of d.fields) expect(f.description).toMatch(/\S/);
@@ -66,6 +67,7 @@ describe("dissectors()", () => {
 			{ by: "udpPort", value: 67 },
 			{ by: "udpPort", value: 68 },
 		]);
+		expect(of("mndp")?.matches).toEqual([{ by: "udpPort", value: 5678 }]);
 	});
 
 	test("returns a new copy each call", () => {
@@ -78,6 +80,10 @@ describe("dissectors()", () => {
 		const ipv6Fields = a.find((d) => d.protocol === "ipv6")?.fields;
 		const ext = ipv6Fields?.find((f) => f.name === "extensions");
 		if (ext?.items?.[0]) ext.items[0].name = "changed";
+		const ttl = a
+			.find((d) => d.protocol === "mndp")
+			?.fields.find((f) => f.name === "ttl");
+		ttl?.versionsSeen?.push("changed");
 		expect(dissectors()).toEqual(before);
 	});
 
@@ -92,6 +98,60 @@ describe("dissectors()", () => {
 				{ name: "length", type: "number" },
 			],
 		});
+	});
+
+	test("a field from the m2ir table carries m2ir's confidence and versions; a field from a standard none", () => {
+		const fields = (p: string) =>
+			list.find((d) => d.protocol === p)?.fields ?? [];
+		const mndp = new Map(fields("mndp").map((f) => [f.name, f]));
+		// m2ir profile.yaml at 677ece8: TLV 1 documented on every version
+		// observed, TLV 19 observed-only from 7.24.5, its value 0 on 7.26beta5.
+		expect(mndp.get("macAddress")).toMatchObject({
+			confidence: "documented",
+		});
+		expect(mndp.get("macAddress")?.versionsSeen).toHaveLength(19);
+		expect(mndp.get("ttl")).toMatchObject({
+			confidence: "observed-only",
+			versionsSeen: [
+				"7.24.5",
+				"7.24.6",
+				"7.25beta5",
+				"7.25",
+				"7.25.1",
+				"7.26beta5",
+			],
+			since: "7.24.5",
+		});
+		expect(mndp.get("ttlName")).toMatchObject({
+			confidence: "observed-only",
+			versionsSeen: ["7.26beta5"],
+		});
+		expect(mndp.get("unpackSimple")?.versionsSeen).toEqual(["7.26beta5"]);
+		// TLV 9's byte order is known for x86_64 senders only: kept as hex.
+		expect(mndp.get("aggregatedSizeHex")?.description).toContain(
+			"u32le from x86_64 senders",
+		);
+		// TLV 14's guessed meaning on 7.21 to 7.25 is labelled, not stated.
+		expect(mndp.get("ipv6Enabled")?.description).toContain(
+			"disable-ipv6 on 7.21 to 7.25.1 (guessed)",
+		);
+		for (const f of fields("mndp")) {
+			if (f.name === "otherTlvs") continue;
+			expect({
+				name: f.name,
+				sourced: !!f.confidence && !!f.versionsSeen?.length,
+			}).toEqual({
+				name: f.name,
+				sourced: true,
+			});
+		}
+		for (const d of list) {
+			if (d.protocol === "mndp") continue;
+			for (const f of d.fields) {
+				expect(f.confidence).toBeUndefined();
+				expect(f.versionsSeen).toBeUndefined();
+			}
+		}
 	});
 
 	test("--proto takes every protocol listed", () => {
@@ -176,7 +236,7 @@ describe("dispatch follows the registry", () => {
 				seen++;
 			}
 		}
-		expect(seen).toBe(2);
+		expect(seen).toBe(3);
 		// No dissector here is reached by TCP port yet (the tests below use their own).
 		expect(list.flatMap((d) => byMatch(d, "tcpPort"))).toEqual([]);
 	});

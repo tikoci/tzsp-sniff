@@ -72,6 +72,7 @@ m2ir # RouterOS binary protocols reference, https://github.com/tikoci/m2ir
 mcp # as in tikoci-cli-mcp: Model Context Protocol
 MDI # medium dependent interface (LLDP power via MDI)
 MikroTik
+mipsbe # big-endian MIPS, a RouterOS architecture
 mld # Multicast Listener Discovery (ICMPv6)
 mldv # as in mldv2-report
 MNDP # MikroTik Neighbor Discovery Protocol
