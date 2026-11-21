@@ -46,7 +46,7 @@ the `/ip/packing` entry, and every MNDP datagram with its arrival time.
 | `discover-interval` | `/ip/neighbor/discovery-settings/set discover-interval=10s` | one with TTL 41 |
 | `identity-utf8` | `/system/identity/set name="lab-café"` | one with that identity |
 | `packing` | `/ip/packing/add interface=ether1 packing=none unpacking=compress-all aggregated-size=1500` | one with TLV 4 |
-| `ipv6-disabled` | `/ipv6/settings/set disable-ipv6=yes` | the next two, whatever they carry |
+| `ipv6-disabled` | `/ipv6/settings/set disable-ipv6=yes` | the next two once the setting is made, whatever they carry |
 
 Each experiment keeps what arrives in the 2 s after its last header value
 too, for the IPv6 copy.

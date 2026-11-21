@@ -590,6 +590,8 @@ describe("m2irFacts()", () => {
 		expect(of("requestHex")?.versionsSeenOf).toBe("receiver");
 		expect(of("request")?.versionsSeenOf).toBe("receiver");
 		expect(of("header")?.versionsSeenOf).toBe("sender");
+		// m2ir's name for the header, not the record's.
+		expect(of("header")?.name).toBe("announcement-counter");
 	});
 
 	test("every field it lists is one dissectors() lists for the protocol", () => {

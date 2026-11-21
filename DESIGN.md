@@ -1067,8 +1067,11 @@ m2ir, is in test/lab/mndp/REPORT.md.
   and LLDP do, and the capture may be what cut it. A value whose length is
   wrong for its type is `malformed` (`tlv-length`), kept in `otherTlvs`
   with its m2ir name; text that is not UTF-8 `malformed` (`text`), read with
-  replacement characters, a leading byte-order mark kept. After 64 TLVs
-  (`MAX_MNDP_TLVS`) the layer is `unsupported` (`tlv-limit`).
+  replacement characters, a leading byte-order mark kept. At most 64 TLVs
+  are read (`MAX_MNDP_TLVS`): bytes after the 64th make the layer
+  `unsupported` (`tlv-limit`), and a datagram of exactly 64 is read whole.
+  A wrong length is `malformed` even on a repeat of a type that does not
+  repeat.
 - **The layer runs to the end of the datagram**; MNDP has no End TLV.
 - **The lab redacts the software id** (TLV 11), which m2ir says to treat as
   device-identifying: its value is overwritten with as many `X` bytes, so
@@ -1180,7 +1183,17 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
 - **`bun run m2ir:refresh [ref]`** is the one networked step: it resolves
   `ref` (default `main`) to a commit, refuses one that is not on m2ir's
   `main` (GitHub's compare API), fetches the files at that commit and
-  regenerates. Its output is a change to review.
+  regenerates. Its output is a change to review. It refuses a `LICENSE`
+  other than the CC0-1.0 text the table's banner names
+  (`LICENSE_SHA256` in scripts/m2ir.ts, which `--check` also holds the
+  snapshot to): a new license is read, and the hash and banner changed
+  together, by hand. Nothing is written until everything is fetched and
+  the table made; each output is then staged beside its file
+  (`.m2ir-refresh`, created only if absent) and renamed into place once all
+  are staged, so a failed write leaves the old files and a second refresh
+  of the same checkout stops on the first staged file it meets. A failure
+  between two renames is the one gap left: `bun run lint` then reports the
+  mix, and git restores it.
 - **`bun run m2ir:generate`** writes `src/dissect/mndp-table.ts` from the
   snapshot alone: the TLV specs the reader walks, the request rule, the
   `MndpTlvFields` interface and its field declarations with confidence,
@@ -1192,11 +1205,18 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
   or the table is not what the snapshot generates. Offline.
 - **The generator refuses what it does not know** rather than leaving it
   out: an encoding the reader does not read, a length that does not fit its
-  encoding, a repeating non-string, a header that is not one
+  encoding, a repeat of an encoding the reader does not collect into a
+  list (only `ipv6`, `text` and `bytes` are), a header that is not one
   `u32-sender-order` at offset 0, a request clause other than `header` or
-  `has-tlv`, a version outside `scope.versions-observed`, a TLV record that
-  is not u16be type and length, a field name taken twice
-  (test/unit/m2ir.test.ts).
+  `has-tlv` or with a key the reader does not match on, a nonzero request
+  header (the reader compares the header read big-endian, so only zero
+  holds in either byte order), a named value that is not a byte or a named
+  bit that is not one bit, a version outside `scope.versions-observed`, a
+  TLV record that is not u16be type and length (by key and value), a name
+  that is not lower-case words (it becomes an identifier), a commit that
+  is not a 40-digit sha, a field name taken twice, a bitmask's `…Flags`
+  included whether or not m2ir names a bit (test/unit/m2ir.test.ts). m2ir
+  text in a generated comment has its `*/` broken.
 - **`versions-seen: all`** becomes m2ir's `scope.versions-observed`, so a
   field's `versionsSeen` in `m2irFacts()` is always a list.
 

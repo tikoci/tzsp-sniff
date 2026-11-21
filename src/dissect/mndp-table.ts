@@ -251,7 +251,7 @@ export const MNDP_UNNAMED: readonly string[] = [];
 export const MNDP_M2IR_FACTS: readonly M2irFieldFacts[] = [
 	{
 		field: "header",
-		name: "header",
+		name: "announcement-counter",
 		confidence: "observed-only",
 		versionsSeen: [
 			"6.49.21",

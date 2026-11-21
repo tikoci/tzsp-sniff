@@ -29,9 +29,9 @@
  * - `packing`: an `/ip/packing` entry on ether1 with `unpacking=compress-all
  *   aggregated-size=1500`, for TLVs 2, 3, 4 and 9 (m2ir saw them on
  *   7.26beta5 x86_64 only; TLV 9's byte order elsewhere is its open question).
- * - `ipv6-disabled`: `disable-ipv6=yes`, then the next two announcements,
- *   whatever they carry: what TLV 14 and TLV 15 do on this version (m2ir did
- *   not test 7.21 to 7.25).
+ * - `ipv6-disabled`: `disable-ipv6=yes`, then the next two announcements
+ *   after the setup is done, whatever they carry: what TLV 14 and TLV 15 do
+ *   on this version (m2ir did not test 7.21 to 7.25).
  *
  * Redaction. TLV 11 is the license software id, which m2ir says to treat
  * as device-identifying, and which the other labs keep out of the repo
@@ -167,6 +167,13 @@ export const SHOWS: Record<string, Shows> = {
 		v.fields.unpackAll === true,
 };
 
+/**
+ * Experiments whose check (SHOWS) cannot tell an announcement from before
+ * the setup from one after it: only what arrives once the setup is done is
+ * kept, and `at` counts from then.
+ */
+export const AFTER_SETUP = new Set(["ipv6-disabled"]);
+
 /** Each experiment, its setup and how many header values it waits for. */
 export const PLAN: [string, string[], number][] = [
 	["default", [], 2],
@@ -293,7 +300,7 @@ function onSignal(signal: "SIGINT" | "SIGTERM"): void {
 const field = (output: string, name: string) =>
 	new RegExp(`${name}=("[^"]*"|\\S+)`).exec(output)?.[1]?.replace(/"/g, "");
 
-async function experiment(
+export async function experiment(
 	router: Router,
 	listener: Listener,
 	identity: string,
@@ -303,14 +310,18 @@ async function experiment(
 ): Promise<Experiment> {
 	const shows = SHOWS[name];
 	if (!shows) throw new Error(`no check for experiment ${name}`);
+	const accept = (b: Uint8Array) => {
+		const view = mndpView(b);
+		return view !== undefined && shows(view, identity);
+	};
 	// Armed before the setup runs: RouterOS announces at once when one of
 	// these settings changes (m2ir lifecycle.triggered), which can arrive
 	// before the REST call returns. `at` counts from here.
-	listener.reset((b) => {
-		const view = mndpView(b);
-		return view !== undefined && shows(view, identity);
-	});
+	listener.reset(accept);
 	for (const command of setup) await router.exec(command);
+	// An announcement sent before the setup took effect passes this one's
+	// check too: it is dropped, and the count starts once the setup is done.
+	if (AFTER_SETUP.has(name)) listener.reset(accept);
 	return { name, setup, datagrams: await listener.waitFor(count) };
 }
 

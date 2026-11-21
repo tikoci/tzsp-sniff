@@ -11,26 +11,34 @@
  * SOURCE.json, and the table. It takes only a commit on m2ir's `main`.
  *
  * What is generated keeps m2ir's scope and confidence: each field carries
- * its `confidence`, the versions it was seen on and `since`. A TLV, value or
- * bit m2ir marks `inferred`, `guessed` or `superseded` gets no name: its
- * bytes stay raw (maintainer, 2026-11-21, on #31). Anything in the YAML the
- * generator does not know (an encoding, a header shape, a request clause)
- * stops it, rather than being left out.
+ * its `confidence`, and m2irFacts() the versions it was seen on, `since` and
+ * the rest (DESIGN.md, "Confidence goes in `dissectors`; version scope in
+ * `m2irFacts()`"). A TLV, value or bit m2ir marks `inferred`, `guessed` or
+ * `superseded` gets no name: its bytes stay raw (maintainer, 2026-11-21, on
+ * #31). Anything in the YAML the generator does not know (an encoding, a
+ * header shape, a request clause) stops it, rather than being left out.
  */
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 export const VENDOR = join(ROOT, "vendor", "m2ir");
 export const TABLE = join(ROOT, "src", "dissect", "mndp-table.ts");
 const REPOSITORY = "tikoci/m2ir";
-/** The m2ir files the table is generated from, and the licence they are under. */
+/** The m2ir files the table is generated from, and the license they are under. */
 export const FILES = [
 	"LICENSE",
 	"physical/mndp.yaml",
 	"profiles/mndp/profile.yaml",
 ] as const;
+/**
+ * sha256 of m2ir's LICENSE, the CC0-1.0 text the table's banner names. A
+ * refresh that brings another license stops: read it, then change this and
+ * the banner together.
+ */
+export const LICENSE_SHA256 =
+	"a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499";
 
 export interface Source {
 	repository: string;
@@ -96,6 +104,8 @@ const ENCODINGS = {
 } as const;
 type Encoding = keyof typeof ENCODINGS;
 const isEncoding = (e: string): e is Encoding => e in ENCODINGS;
+/** The encodings mndp.ts collects into a list when a TLV repeats (its `put`). */
+const REPEATS = new Set<Encoding>(["ipv6", "text", "bytes"]);
 
 /**
  * What src/dissect/mndp.ts assumes of each encoding m2ir defines: its size,
@@ -120,6 +130,10 @@ const ENCODING_PROPERTIES: Record<
 
 const camel = (name: string) =>
 	name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+/** A name a field is made from: it becomes a TypeScript identifier. */
+const NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+/** Text from m2ir kept inside a generated block comment. */
+const commentText = (s: string) => s.replaceAll("*/", "*\\/");
 
 // ── the model the table is written from ─────────────────────────────────────
 
@@ -151,7 +165,13 @@ interface Tlv {
 export interface Model {
 	commit: string;
 	port: number;
-	header: { confidence: Confidence; versionsSeen: string[]; orders: string };
+	header: {
+		/** m2ir's name for the counter. */
+		name: string;
+		confidence: Confidence;
+		versionsSeen: string[];
+		orders: string;
+	};
 	request: {
 		headers: number[];
 		tlvs: { type: number; lengths: number[] }[];
@@ -176,6 +196,9 @@ export function readMndp(
 	);
 	if (physical.id !== "mndp" || profile.id !== "mndp")
 		fail("profile", "expected id mndp in both files");
+	// It goes into the generated file's banner.
+	if (!/^[0-9a-f]{40}$/.test(commit))
+		fail("commit", `expected a 40-digit commit sha: ${commit}`);
 
 	// The datagram grammar the dissector is written for.
 	const where = "physical/mndp.yaml structure.tlv";
@@ -185,9 +208,12 @@ export function readMndp(
 	);
 	const shape = tlvSeq.map((s, i) => {
 		const e = obj(s, `${where}.seq[${i}]`);
-		return `${e.name}:${e.width ?? e.size}`;
+		return `${e.name}:width=${e.width ?? ""}:size=${e.size ?? ""}`;
 	});
-	if (shape.join(",") !== "type:u16be,length:u16be,value:length")
+	if (
+		shape.join(",") !==
+		"type:width=u16be:size=,length:width=u16be:size=,value:width=:size=length"
+	)
 		fail(where, `expected u16be type and length, then the value: ${shape}`);
 	const dWhere = "physical/mndp.yaml structure.datagram";
 	const datagram = list(
@@ -238,6 +264,7 @@ export function readMndp(
 	const hFields = list(obj(profile.header, "header").fields, "header.fields");
 	if (hFields.length !== 1) fail("header.fields", "expected one field");
 	const h = obj(hFields[0], "header.fields[0]");
+	const hName = str(h.name, "header.fields[0].name");
 	if (h.offset !== 0 || h.encoding !== "u32-sender-order")
 		fail("header.fields[0]", "expected a u32-sender-order at offset 0");
 	const hConfidence = confidence(h.confidence, "header.fields[0]");
@@ -279,9 +306,23 @@ export function readMndp(
 	if (!NAMED.has(request.confidence))
 		fail("requests", `confidence ${request.confidence}`);
 	for (const [i, c] of list(rule["any-of"], "requests.rule.any-of").entries()) {
-		const clause = obj(c, `requests.rule.any-of[${i}]`);
-		if ("header" in clause) request.headers.push(num(clause.header, "header"));
-		else if ("has-tlv" in clause)
+		const at = `requests.rule.any-of[${i}]`;
+		const clause = obj(c, at);
+		/** A clause has only the keys the reader matches on; `untested` is a note. */
+		const only = (...keys: string[]) => {
+			const extra = Object.keys(clause).filter((k) => !keys.includes(k));
+			if (extra.length) fail(at, `unknown key ${extra.join(", ")}`);
+		};
+		if ("header" in clause) {
+			only("header");
+			// mndp.ts compares the header read big-endian, and the counter is in
+			// the sender's byte order: only zero reads the same either way.
+			const header = num(clause.header, `${at}.header`);
+			if (header !== 0)
+				fail(at, `a header of ${header} depends on the sender's byte order`);
+			request.headers.push(header);
+		} else if ("has-tlv" in clause) {
+			only("has-tlv", "tested-value-lengths", "untested");
 			request.tlvs.push({
 				type: num(clause["has-tlv"], "has-tlv"),
 				lengths: list(
@@ -289,7 +330,7 @@ export function readMndp(
 					"tested-value-lengths",
 				).map((n) => num(n, "tested-value-lengths")),
 			});
-		else fail(`requests.rule.any-of[${i}]`, "unknown clause");
+		} else fail(at, "unknown clause");
 	}
 
 	const tlvs: Tlv[] = [];
@@ -308,6 +349,7 @@ export function readMndp(
 			skipped.push(`TLV ${type} (${name}): ${c}`);
 			continue;
 		}
+		if (!NAME.test(name)) fail(`${at}.name`, `not a lower-case name: ${name}`);
 		const encoding = str(t.encoding, `${at}.encoding`);
 		if (!isEncoding(encoding))
 			fail(`${at}.encoding`, `${encoding} is not one the dissector reads`);
@@ -317,8 +359,8 @@ export function readMndp(
 		if (size !== null && length !== size)
 			fail(at, `length ${length} does not fit ${e} (size ${size})`);
 		const repeat = t.repeat === true;
-		if (repeat && ENCODINGS[e] !== "string")
-			fail(at, "only a string encoding may repeat");
+		if (repeat && !REPEATS.has(e))
+			fail(at, `only ${[...REPEATS].join(", ")} may repeat, not ${e}`);
 		const tlv: Tlv = {
 			type,
 			name,
@@ -341,6 +383,16 @@ export function readMndp(
 				const n = obj(v, `${at}.${key}[${i}]`);
 				const nc = confidence(n.confidence, `${at}.${key}[${i}]`);
 				const value = num(n[id], `${at}.${key}[${i}].${id}`);
+				// A value is a byte; a mask is one bit of it, as mndp.ts reads them.
+				if (
+					id === "value"
+						? value < 0 || value > 0xff
+						: value < 1 || value > 0x80 || (value & (value - 1)) !== 0
+				)
+					fail(
+						`${at}.${key}[${i}].${id}`,
+						`${value} is not ${id === "value" ? "a byte" : "one bit of a byte"}`,
+					);
 				const vname = str(n.name, `${at}.${key}[${i}].name`);
 				if (!NAMED.has(nc)) {
 					skipped.push(`TLV ${type} ${key} ${value} (${vname}): ${nc}`);
@@ -403,7 +455,7 @@ export function readMndp(
 		for (const f of [
 			t.field,
 			...(t.values ? [`${t.field}Name`] : []),
-			...(t.bits ? [`${t.field}Flags`] : []),
+			...(t.encoding === "bitmask-u8" ? [`${t.field}Flags`] : []),
 		]) {
 			if (fields.has(f) || HAND_FIELDS.includes(f))
 				fail(`tlvs.${t.type}`, `field ${f} is named twice`);
@@ -414,6 +466,7 @@ export function readMndp(
 		commit,
 		port,
 		header: {
+			name: hName,
 			confidence: hConfidence as Confidence,
 			versionsSeen: versions(h["versions-seen"], "header.versions-seen"),
 			orders,
@@ -486,7 +539,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 	const facts: Record<string, unknown>[] = [
 		{
 			field: "header",
-			name: "header",
+			name: m.header.name,
 			confidence: m.header.confidence,
 			versionsSeen: m.header.versionsSeen,
 			versionsSeenOf: "sender",
@@ -509,7 +562,9 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 	for (const t of m.tlvs) {
 		const ts = ENCODINGS[t.encoding] + (t.repeat ? "[]" : "");
 		const type = t.repeat ? "string[]" : ENCODINGS[t.encoding];
-		iface.push(`\t/** TLV ${t.type}, ${t.name}. */\n\t${t.field}?: ${ts};`);
+		iface.push(
+			`\t/** TLV ${t.type}, ${commentText(t.name)}. */\n\t${t.field}?: ${ts};`,
+		);
 		decls.push(
 			`\t${t.field}: { type: ${j(type)}, optional: true, description: ${j(describe(t))}, confidence: ${j(t.confidence)} },`,
 		);
@@ -563,7 +618,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 		return `\t${j(spec)},`;
 	});
 	const skipped = m.skipped.length
-		? m.skipped.map((s) => ` * - ${s}`).join("\n")
+		? m.skipped.map((s) => ` * - ${commentText(s)}`).join("\n")
 		: " * - none";
 	return `/**
  * Generated by scripts/m2ir.ts from vendor/m2ir (${REPOSITORY} at
@@ -618,7 +673,7 @@ ${specs.join("\n")}
  */
 export const MNDP_REQUEST = ${j({ headers: m.request.headers, tlvs: m.request.tlvs })};
 
-/** How sure m2ir is of the header counter: ${m.header.orders}. */
+/** How sure m2ir is of the header counter: ${commentText(m.header.orders)}. */
 export const MNDP_HEADER_CONFIDENCE: FieldConfidence = ${j(m.header.confidence)};
 
 /** How sure m2ir is of the request rule. */
@@ -723,6 +778,10 @@ export async function check(): Promise<string[]> {
 			problems.push(
 				`vendor/m2ir/${p} is not the file SOURCE.json names (edited by hand?); run bun run m2ir:refresh`,
 			);
+		else if (p === "LICENSE" && got !== LICENSE_SHA256)
+			problems.push(
+				"vendor/m2ir/LICENSE is not the license the table's banner names (scripts/m2ir.ts LICENSE_SHA256)",
+			);
 	}
 	const extra = Object.keys(source.files).filter(
 		(p) => !(FILES as readonly string[]).includes(p),
@@ -737,11 +796,15 @@ export async function check(): Promise<string[]> {
 	return problems;
 }
 
+/** The suffix a refresh writes each output under before it takes its file's place. */
+export const STAGED = ".m2ir-refresh";
+
 /**
  * Vendor m2ir's files at `ref`, a commit on its main branch, and write the
- * table they give. Networked. Every file is fetched and the table made
- * before anything is written, so a failed fetch or a schema the generator
- * refuses leaves the snapshot and the table as they were.
+ * table they give. Networked. Every file is fetched, the license checked and
+ * the table made before anything is written, so a failed fetch, a schema the
+ * generator refuses or another license leaves the snapshot and the table as
+ * they were. A failed write does too: see `STAGED`.
  */
 export async function refresh(
 	ref: string,
@@ -779,11 +842,11 @@ export async function refresh(
 		sha,
 	);
 	const files: Record<string, string> = {};
-	for (const [p, body] of bodies) {
-		await mkdir(dirname(join(to.vendor, p)), { recursive: true });
-		await writeFile(join(to.vendor, p), body);
-		files[p] = sha256(body);
-	}
+	for (const [p, body] of bodies) files[p] = sha256(body);
+	if (files.LICENSE !== LICENSE_SHA256)
+		throw new GenerateError(
+			`m2ir's LICENSE at ${sha} is not the CC0-1.0 text the table's banner names: read it, then change LICENSE_SHA256 and the banner together`,
+		);
 	const committer = obj(obj(commit.commit, "commit").committer, "committer");
 	const source: Source = {
 		repository: REPOSITORY,
@@ -791,11 +854,37 @@ export async function refresh(
 		committed: str(committer.date, "date"),
 		files,
 	};
-	await writeFile(
-		join(to.vendor, "SOURCE.json"),
-		`${JSON.stringify(source, null, "\t")}\n`,
-	);
-	await writeFile(to.table, table);
+	const outputs: [string, Uint8Array | string][] = [
+		...[...bodies].map(([p, body]): [string, Uint8Array] => [
+			join(to.vendor, p),
+			body,
+		]),
+		[join(to.vendor, "SOURCE.json"), `${JSON.stringify(source, null, "\t")}\n`],
+		[to.table, table],
+	];
+	// Staged first, each created only if absent: a write that fails leaves
+	// every old file, and a second refresh stops on the first file this one
+	// holds. Then each takes its file's place.
+	const staged: string[] = [];
+	try {
+		for (const [path, body] of outputs) {
+			await mkdir(dirname(path), { recursive: true });
+			try {
+				await writeFile(path + STAGED, body, { flag: "wx" });
+			} catch (e) {
+				if ((e as NodeJS.ErrnoException).code === "EEXIST")
+					throw new GenerateError(
+						`${path + STAGED} exists: another refresh is writing, or one stopped (remove it)`,
+					);
+				throw e;
+			}
+			staged.push(path + STAGED);
+		}
+	} catch (e) {
+		await Promise.all(staged.map((p) => rm(p, { force: true })));
+		throw e;
+	}
+	for (const [path] of outputs) await rename(path + STAGED, path);
 	return source;
 }
 

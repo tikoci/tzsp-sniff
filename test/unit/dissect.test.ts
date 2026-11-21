@@ -2426,6 +2426,17 @@ describe("dissect: MNDP", () => {
 		// A first of the wrong length does not take the field: the next one does.
 		const late = of(`01000000${mtlv(17, "0a00")}${mtlv(17, "0a000003")}`).f;
 		expect(late?.address4).toBe("10.0.0.3");
+		// A second of the wrong length is still malformed.
+		const bad = of(`01000000${mtlv(10, "01000000")}${mtlv(10, "0102")}`);
+		expect(bad.d.problem).toEqual({
+			protocol: "mndp",
+			problem: "malformed",
+			reason: "tlv-length",
+		});
+		expect(bad.f?.uptime).toBe(1);
+		expect(bad.f?.otherTlvs).toEqual([
+			{ type: 10, name: "uptime", length: 2, value: "0102" },
+		]);
 	});
 
 	test("a type the table does not name is kept as type, length and hex", () => {

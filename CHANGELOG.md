@@ -21,7 +21,7 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   repeat of one that does not repeat, and one of the wrong length are kept
   in `otherTlvs` as type, length and hex, with m2ir's name when the table
   has one; a value or bit m2ir does not name stays a number in its field. At most 64 TLVs
-  (`unsupported/tlv-limit`); a header or TLV past the datagram is
+  are read (bytes after the 64th are `unsupported/tlv-limit`); a header or TLV past the datagram is
   `truncated`; a wrong length (kept raw) or text that is not UTF-8 is
   `malformed`. The text line names the identity, MAC, version and board,
   and says `request` or `dying-gasp`. `--proto mndp` selects it. Checked
@@ -34,7 +34,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 - `m2irFacts()`: for each protocol generated from m2ir (MNDP), the m2ir
   commit and files, and each field's `versionsSeen`, whose versions they
   are, `since`, `introduced`, and each named value's and bit's own
-  confidence and versions.
+  confidence and versions. The package includes m2ir's CC0-1.0 license
+  (`vendor/m2ir/LICENSE`), which the generated table is under.
 
 - DHCPv4 (RFC 2131, 2132) on UDP 67 and 68: the BOOTP header (op, hardware
   type and length, hops, xid, secs, flags and the broadcast flag, ciaddr,

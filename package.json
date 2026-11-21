@@ -21,7 +21,8 @@
 		"dist/",
 		"README.md",
 		"CHANGELOG.md",
-		"LICENSE"
+		"LICENSE",
+		"vendor/m2ir/LICENSE"
 	],
 	"packageManager": "bun@1.4.4",
 	"engines": {

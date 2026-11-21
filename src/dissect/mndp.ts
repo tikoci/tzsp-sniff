@@ -39,7 +39,7 @@ import {
 
 export type { MndpTlvFields } from "./mndp-table.ts";
 
-/** The most TLVs read; one more is `unsupported` (`tlv-limit`). RouterOS sent 13 to 17 in the lab (test/lab/mndp/REPORT.md). */
+/** The most TLVs read; bytes after the last are `unsupported` (`tlv-limit`). RouterOS sent 13 to 17 in the lab (test/lab/mndp/REPORT.md). */
 export const MAX_MNDP_TLVS = 64;
 
 export interface MndpOtherTlv {
@@ -180,11 +180,12 @@ function mndp(
 	function tlv(type: number, value: Uint8Array) {
 		const spec = BY_TYPE.get(type);
 		if (!spec) return other(type, value);
-		if (!spec.repeat && read.has(type)) return other(type, value, spec);
+		// A wrong length is malformed whether or not the type came before.
 		if (spec.length !== "any" && value.length !== spec.length) {
 			mark("malformed", "tlv-length");
 			return other(type, value, spec);
 		}
+		if (!spec.repeat && read.has(type)) return other(type, value, spec);
 		read.add(type);
 		const field = spec.field;
 		switch (spec.encoding) {
@@ -275,7 +276,7 @@ const FIELDS: FieldDecls<MndpFields> = {
 	...MNDP_TLV_FIELDS,
 	otherTlvs: {
 		type: "object[]",
-		description: `Every TLV not read into a field, in the order sent: a type the m2ir table does not name, a second one of a type that does not repeat, and one whose length is wrong for its type (malformed, tlv-length). A TLV past the datagram is truncated (tlv) and not listed. After ${MAX_MNDP_TLVS} TLVs the layer is unsupported (tlv-limit).`,
+		description: `Every TLV not read into a field, in the order sent: a type the m2ir table does not name, a second one of a type that does not repeat, and one whose length is wrong for its type (malformed, tlv-length). A TLV past the datagram is truncated (tlv) and not listed. Bytes after the ${MAX_MNDP_TLVS}th TLV make the layer unsupported (tlv-limit); exactly ${MAX_MNDP_TLVS} TLVs are read in full.`,
 		items: {
 			type: { type: "number", description: "The TLV type." },
 			name: {
