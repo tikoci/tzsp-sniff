@@ -5,9 +5,23 @@
  * `bun run lint:m2ir` checks the committed table against the snapshot.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import {
+	cpSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readMndp, VENDOR, writeTable } from "../../scripts/m2ir.ts";
+import {
+	FILES,
+	readMndp,
+	refresh,
+	TABLE,
+	VENDOR,
+	writeTable,
+} from "../../scripts/m2ir.ts";
 
 const read = (p: string) => readFileSync(join(VENDOR, p), "utf8");
 const PHYSICAL = read("physical/mndp.yaml");
@@ -67,7 +81,7 @@ describe("m2ir generator", () => {
 			p.tlvs[18].bits[1].confidence = "superseded";
 		});
 		expect(m.tlvs.find((t) => t.type === 12)).toBeUndefined();
-		expect(m.tlvs.find((t) => t.type === 19)?.values).toEqual([]);
+		expect(m.tlvs.find((t) => t.type === 19)?.values).toBeUndefined();
 		expect(m.tlvs.find((t) => t.type === 18)?.bits?.map((b) => b.name)).toEqual(
 			["capsman"],
 		);
@@ -112,6 +126,21 @@ describe("m2ir generator", () => {
 				}),
 			),
 		).toContain("7.99 is not in scope.versions-observed");
+	});
+
+	test("an enum whose values m2ir all leaves unnamed has no name field; a bitmask still lists its bits", () => {
+		const m = model((p) => {
+			for (const v of p.tlvs[19].values) v.confidence = "guessed";
+			for (const b of p.tlvs[18].bits) b.confidence = "inferred";
+		});
+		expect(m.tlvs.find((t) => t.type === 19)?.values).toBeUndefined();
+		const table = writeTable(m, parse(PROFILE).scope["versions-observed"]);
+		expect(table).not.toContain("ttlName");
+		// The reader names each set bit bit-0x01 and so on: the field stays,
+		// with no confidence claimed for names it does not have.
+		const flags = table.split("\n").find((l) => l.includes("runningFlags: {"));
+		expect(flags).toContain("m2ir names none");
+		expect(flags).not.toContain("confidence");
 	});
 
 	test("what the dissector cannot read stops it, rather than being left out", () => {
@@ -160,6 +189,12 @@ describe("m2ir generator", () => {
 				error(() => model(undefined, PHYSICAL.replace(from, to))),
 			).toContain(message);
 		}
+		// The table's port is registered on UDP.
+		expect(
+			error(() =>
+				model(undefined, PHYSICAL.replace("protocol: udp", "protocol: tcp")),
+			),
+		).toContain("expected udp");
 		expect(
 			error(() =>
 				model((p) => {
@@ -167,5 +202,108 @@ describe("m2ir generator", () => {
 				}),
 			),
 		).toContain("expected le or be: middle");
+	});
+
+	describe("refresh", () => {
+		const sha = "f".repeat(40);
+		/** m2ir as GitHub serves it, with `change` applied to the files. */
+		const github =
+			(change: (path: string) => Response | undefined = () => undefined) =>
+			async (url: string | URL | Request) => {
+				const u = String(url);
+				if (u.includes("/commits/"))
+					return Response.json({
+						sha,
+						commit: { committer: { date: "2026-11-21T00:00:00Z" } },
+					});
+				if (u.includes("/compare/"))
+					return Response.json({ status: "identical" });
+				const path = FILES.find((p) => u.endsWith(`/${sha}/${p}`));
+				if (!path) return new Response("not stubbed", { status: 599 });
+				return change(path) ?? new Response(readFileSync(join(VENDOR, path)));
+			};
+		/** A copy of the snapshot and table, and every file's bytes in it. */
+		function copy() {
+			const dir = mkdtempSync(join(tmpdir(), "tzsp-m2ir-"));
+			cpSync(VENDOR, join(dir, "vendor"), { recursive: true });
+			cpSync(TABLE, join(dir, "table.ts"));
+			const to = { vendor: join(dir, "vendor"), table: join(dir, "table.ts") };
+			const bytes = () =>
+				Object.fromEntries(
+					[
+						...readdirSync(to.vendor, { recursive: true, encoding: "utf8" }),
+						"../table.ts",
+					]
+						.sort()
+						.flatMap((p) => {
+							try {
+								return [[p, readFileSync(join(to.vendor, p), "hex")]];
+							} catch {
+								return []; // a directory
+							}
+						}),
+				);
+			return { dir, to, bytes };
+		}
+
+		test("a failed download or a refused schema leaves the snapshot and table as they were", async () => {
+			const failures: [string, (p: string) => Response | undefined][] = [
+				[
+					"profiles/mndp/profile.yaml at",
+					(p) =>
+						p.endsWith("profile.yaml")
+							? new Response("", { status: 500 })
+							: p === "LICENSE"
+								? new Response("changed\n")
+								: undefined,
+				],
+				[
+					"expected a 4-byte header",
+					(p) =>
+						p === "physical/mndp.yaml"
+							? new Response(
+									PHYSICAL.replace(
+										'size: 4\n        role: "profile-defined',
+										'size: 8\n        role: "profile-defined',
+									),
+								)
+							: undefined,
+				],
+			];
+			for (const [message, change] of failures) {
+				const { dir, to, bytes } = copy();
+				try {
+					const before = bytes();
+					expect(
+						await refresh("main", to, github(change) as typeof fetch).catch(
+							(e) => e.message,
+						),
+					).toContain(message);
+					expect(bytes()).toEqual(before);
+				} finally {
+					rmSync(dir, { recursive: true, force: true });
+				}
+			}
+		});
+
+		test("a good refresh writes the files, SOURCE.json with the commit, and the table", async () => {
+			const { dir, to } = copy();
+			try {
+				const source = await refresh("main", to, github() as typeof fetch);
+				expect(source.commit).toBe(sha);
+				const written = JSON.parse(
+					readFileSync(join(to.vendor, "SOURCE.json"), "utf8"),
+				);
+				expect(written).toMatchObject({
+					commit: sha,
+					committed: "2026-11-21T00:00:00Z",
+				});
+				expect(readFileSync(to.table, "utf8")).toContain(
+					`M2IR_COMMIT = "${sha}"`,
+				);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
+			}
+		});
 	});
 });

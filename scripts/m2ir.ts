@@ -199,10 +199,14 @@ export function readMndp(
 	);
 	if (dShape.join(",") !== "header:4::,records::tlv:eos")
 		fail(dWhere, `expected a 4-byte header, then TLVs to the end: ${dShape}`);
-	const port = num(
-		obj(physical.transport, "physical transport").port,
-		"physical transport.port",
-	);
+	const transport = obj(physical.transport, "physical transport");
+	// The table's port is registered as a UDP port (mndp.ts).
+	if (transport.protocol !== "udp")
+		fail(
+			"physical transport.protocol",
+			`expected udp, the dissector is registered on: ${transport.protocol}`,
+		);
+	const port = num(transport.port, "physical transport.port");
 	const sizes = obj(physical["value-encodings"], "value-encodings");
 	for (const [e, want] of Object.entries(ENCODING_PROPERTIES)) {
 		const got = obj(sizes[e], `value-encodings.${e}`);
@@ -356,7 +360,9 @@ export function readMndp(
 			});
 		if (t.values !== undefined) {
 			if (e !== "u8") fail(at, "values on an encoding other than u8");
-			tlv.values = named("values", "value");
+			// None left: no name field, as for a value m2ir does not name.
+			const values = named("values", "value");
+			if (values.length) tlv.values = values;
 		}
 		if (t.bits !== undefined) {
 			if (e !== "bitmask-u8")
@@ -497,7 +503,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 		decls.push(
 			`\t${t.field}: { type: ${j(type)}, optional: true, description: ${j(describe(t))}, ${src(t.confidence, t.versionsSeen, t.since)} },`,
 		);
-		if (t.values) {
+		if (t.values?.length) {
 			const s = sourceOf(t.values, observed);
 			iface.push(
 				`\t/** The name of ${t.field}'s value. */\n\t${t.field}Name?: string;`,
@@ -506,13 +512,18 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 				`\t${t.field}Name: { type: "string", optional: true, description: ${j(`The name of ${t.field}'s value: ${t.values.map((n) => namedText(n, String)).join(", ")}. Absent for another value.`)}, ${src(s.confidence, s.versionsSeen)} },`,
 			);
 		}
-		if (t.bits) {
-			const s = sourceOf(t.bits, observed);
+		// The reader lists the bits set whether or not m2ir names any.
+		if (t.encoding === "bitmask-u8") {
+			const bits = t.bits ?? [];
+			const s = bits.length ? sourceOf(bits, observed) : undefined;
+			const named = bits.length
+				? `: ${bits.map((n) => namedText(n, hex2)).join(", ")}; a bit not named here is bit-0x04 and so on.`
+				: ", each as bit-0x01 and so on: m2ir names none.";
 			iface.push(
 				`\t/** The names of the bits set in ${t.field}. */\n\t${t.field}Flags?: string[];`,
 			);
 			decls.push(
-				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first: ${t.bits.map((n) => namedText(n, hex2)).join(", ")}; a bit not named here is bit-0x04 and so on.`)}, ${src(s.confidence, s.versionsSeen)} },`,
+				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first${named}`)}${s ? `, ${src(s.confidence, s.versionsSeen)}` : ""} },`,
 			);
 		}
 	}
@@ -700,14 +711,16 @@ export async function check(): Promise<string[]> {
  * before anything is written, so a failed fetch or a schema the generator
  * refuses leaves the snapshot and the table as they were.
  */
-async function refresh(ref: string): Promise<Source> {
+export async function refresh(
+	ref: string,
+	/** Where to write: the repo's snapshot and table, or a test's copies. */
+	to: { vendor: string; table: string } = { vendor: VENDOR, table: TABLE },
+	get: typeof fetch = fetch,
+): Promise<Source> {
 	const api = async (path: string) => {
-		const r = await fetch(
-			`https://api.github.com/repos/${REPOSITORY}/${path}`,
-			{
-				headers: { accept: "application/vnd.github+json" },
-			},
-		);
+		const r = await get(`https://api.github.com/repos/${REPOSITORY}/${path}`, {
+			headers: { accept: "application/vnd.github+json" },
+		});
 		if (!r.ok) throw new GenerateError(`GitHub ${path}: ${r.status}`);
 		return obj(await r.json(), path);
 	};
@@ -721,7 +734,7 @@ async function refresh(ref: string): Promise<Source> {
 		);
 	const bodies = new Map<string, Uint8Array>();
 	for (const p of FILES) {
-		const r = await fetch(
+		const r = await get(
 			`https://raw.githubusercontent.com/${REPOSITORY}/${sha}/${p}`,
 		);
 		if (!r.ok) throw new GenerateError(`${p} at ${sha}: ${r.status}`);
@@ -735,8 +748,8 @@ async function refresh(ref: string): Promise<Source> {
 	);
 	const files: Record<string, string> = {};
 	for (const [p, body] of bodies) {
-		await mkdir(dirname(join(VENDOR, p)), { recursive: true });
-		await writeFile(join(VENDOR, p), body);
+		await mkdir(dirname(join(to.vendor, p)), { recursive: true });
+		await writeFile(join(to.vendor, p), body);
 		files[p] = sha256(body);
 	}
 	const committer = obj(obj(commit.commit, "commit").committer, "committer");
@@ -747,10 +760,10 @@ async function refresh(ref: string): Promise<Source> {
 		files,
 	};
 	await writeFile(
-		join(VENDOR, "SOURCE.json"),
+		join(to.vendor, "SOURCE.json"),
 		`${JSON.stringify(source, null, "\t")}\n`,
 	);
-	await writeFile(TABLE, table);
+	await writeFile(to.table, table);
 	return source;
 }
 
