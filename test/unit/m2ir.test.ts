@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
 	cpSync,
+	mkdirSync,
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
@@ -25,6 +26,7 @@ import {
 	VENDOR,
 	writeTable,
 } from "../../scripts/m2ir.ts";
+import { childEnv } from "./helpers.ts";
 
 const read = (p: string) => readFileSync(join(VENDOR, p), "utf8");
 const PHYSICAL = read("physical/mndp.yaml");
@@ -204,6 +206,17 @@ describe("m2ir generator", () => {
 			["is not one bit of a byte", (p) => (p.tlvs[18].bits[0].mask = 0)],
 			["is not one bit of a byte", (p) => (p.tlvs[18].bits[0].mask = 0x100)],
 			["is not a byte", (p) => (p.tlvs[19].values[0].value = 256)],
+			// TLV 15 repeats: the reader would add to Object's own `constructor`.
+			["is a name every object has", (p) => (p.tlvs[15].name = "constructor")],
+			// A rule the reader could never match.
+			[
+				"65536 is not a 16-bit number",
+				(p) => (p.requests.rule["any-of"][1]["has-tlv"] = 65536),
+			],
+			[
+				"-1 is not a 16-bit number",
+				(p) => (p.requests.rule["any-of"][1]["tested-value-lengths"] = [-1]),
+			],
 			// A name becomes a TypeScript identifier.
 			["not a lower-case name", (p) => (p.tlvs[8].name = "a*/b")],
 			// A bitmask's Flags field is taken even when m2ir names no bit.
@@ -227,6 +240,12 @@ describe("m2ir generator", () => {
 			["width: u16be }", "width: u8 }"],
 			["{ name: type, width: u16be }", "{ name: type, size: u16be }"],
 			['{ name: value, size: "length" }', '{ name: value, width: "length" }'],
+			// Compared strictly: a list is not its one item, and no extra key.
+			["{ name: type, width: u16be }", "{ name: type, width: [u16be] }"],
+			[
+				"{ name: type, width: u16be }",
+				"{ name: type, width: u16be, size: null }",
+			],
 		];
 		for (const [from, to] of records) {
 			expect(PHYSICAL).toContain(from);
@@ -356,6 +375,12 @@ describe("m2ir generator", () => {
 						),
 					).toContain(message);
 					expect(bytes()).toEqual(before);
+					// Nothing of this refresh's is left staged.
+					expect(
+						readdirSync(dir, { recursive: true, encoding: "utf8" }).filter(
+							(p) => p.endsWith(STAGED) && !p.endsWith(`table.ts${STAGED}`),
+						),
+					).toEqual([]);
 				} finally {
 					rmSync(dir, { recursive: true, force: true });
 				}
@@ -399,9 +424,76 @@ describe("m2ir generator", () => {
 						),
 					).toContain(message);
 					expect(bytes()).toEqual(before);
+					// Nothing of this refresh's is left staged.
+					expect(
+						readdirSync(dir, { recursive: true, encoding: "utf8" }).filter(
+							(p) => p.endsWith(STAGED) && !p.endsWith(`table.ts${STAGED}`),
+						),
+					).toEqual([]);
 				} finally {
 					rmSync(dir, { recursive: true, force: true });
 				}
+			}
+		});
+
+		// A file-size limit makes a staged write fail part way (EFBIG): sh's
+		// ulimit, with SIGXFSZ ignored so the write fails instead of the process.
+		test.skipIf(process.platform === "win32")(
+			"a write that fails part way removes its staged file",
+			() => {
+				const { dir, to, bytes } = copy();
+				try {
+					const before = bytes();
+					const child = `
+						import { readFileSync } from "node:fs";
+						import { join } from "node:path";
+						import { FILES, refresh, VENDOR } from ${JSON.stringify(join(import.meta.dir, "..", "..", "scripts", "m2ir.ts"))};
+						const sha = ${JSON.stringify(sha)};
+						const get = async (url) => {
+							const u = String(url);
+							if (u.includes("/commits/")) return Response.json({ sha, commit: { committer: { date: "2026-11-21T00:00:00Z" } } });
+							if (u.includes("/compare/")) return Response.json({ status: "identical" });
+							return new Response(readFileSync(join(VENDOR, FILES.find((f) => u.endsWith("/" + f)))));
+						};
+						await refresh("main", ${JSON.stringify(to)}, get).then(() => console.log("written"), (e) => console.log(e.code));
+					`;
+					const run = Bun.spawnSync(
+						[
+							"sh",
+							"-c",
+							'trap "" XFSZ; ulimit -f 4; exec "$0" --no-env-file -e "$1"',
+							process.execPath,
+							child,
+						],
+						{ cwd: dir, env: childEnv() },
+					);
+					// m2ir's LICENSE, the first output, is over the limit's 2 KB.
+					expect(run.stdout.toString().trim()).toBe("EFBIG");
+					expect(bytes()).toEqual(before);
+				} finally {
+					rmSync(dir, { recursive: true, force: true });
+				}
+			},
+		);
+
+		test("a rename that fails removes what is still staged", async () => {
+			const { dir, to } = copy();
+			try {
+				// The table is a directory: its file stages, then cannot take its place.
+				rmSync(to.table);
+				mkdirSync(to.table);
+				expect(
+					await refresh("main", to, github() as typeof fetch).catch(
+						(e) => `${e.code ?? ""} ${e.message}`,
+					),
+				).toContain("rename");
+				expect(
+					readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((p) =>
+						p.endsWith(STAGED),
+					),
+				).toEqual([]);
+			} finally {
+				rmSync(dir, { recursive: true, force: true });
 			}
 		});
 
@@ -449,11 +541,17 @@ describe("m2ir generator", () => {
 	});
 
 	test("the license README links ships in the package", () => {
+		// This bun, with no env file or inherited options (BUN_OPTIONS=--cwd).
 		const pack = Bun.spawnSync(
-			["bun", "pm", "pack", "--dry-run", "--ignore-scripts"],
-			{
-				cwd: join(VENDOR, "..", ".."),
-			},
+			[
+				process.execPath,
+				"--no-env-file",
+				"pm",
+				"pack",
+				"--dry-run",
+				"--ignore-scripts",
+			],
+			{ cwd: join(VENDOR, "..", ".."), env: childEnv() },
 		);
 		expect(pack.exitCode).toBe(0);
 		expect(pack.stdout.toString()).toContain(" vendor/m2ir/LICENSE\n");

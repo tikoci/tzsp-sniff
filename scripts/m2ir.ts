@@ -19,7 +19,7 @@
  * header shape, a request clause) stops it, rather than being left out.
  */
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
@@ -72,6 +72,33 @@ const num = (v: unknown, where: string): number =>
 		: fail(where, "expected an integer");
 const strings = (v: unknown, where: string): string[] =>
 	list(v, where).map((s, i) => str(s, `${where}[${i}]`));
+const u16 = (v: unknown, where: string): number => {
+	const n = num(v, where);
+	return n >= 0 && n <= 0xffff ? n : fail(where, `${n} is not a 16-bit number`);
+};
+
+/**
+ * `seq` is exactly `want`, entry by entry: the same keys with the same
+ * values, compared strictly, and no others but the annotations in `notes`.
+ */
+function exactly(
+	seq: unknown[],
+	want: Record<string, string | number>[],
+	notes: string[],
+	where: string,
+): boolean {
+	return (
+		seq.length === want.length &&
+		want.every((w, i) => {
+			const e = obj(seq[i], `${where}[${i}]`);
+			const keys = Object.keys(e).filter((k) => !notes.includes(k));
+			return (
+				keys.length === Object.keys(w).length &&
+				keys.every((k) => Object.hasOwn(w, k) && e[k] === w[k])
+			);
+		})
+	);
+}
 
 /** m2ir confidence labels a field is named from; the others stay raw. */
 const NAMED = new Set(["documented", "observed-only"]);
@@ -206,25 +233,37 @@ export function readMndp(
 		obj(obj(physical.structure, "structure").tlv, where).seq,
 		where,
 	);
-	const shape = tlvSeq.map((s, i) => {
-		const e = obj(s, `${where}.seq[${i}]`);
-		return `${e.name}:width=${e.width ?? ""}:size=${e.size ?? ""}`;
-	});
-	if (
-		shape.join(",") !==
-		"type:width=u16be:size=,length:width=u16be:size=,value:width=:size=length"
-	)
-		fail(where, `expected u16be type and length, then the value: ${shape}`);
+	const tlvRecord = [
+		{ name: "type", width: "u16be" },
+		{ name: "length", width: "u16be" },
+		{ name: "value", size: "length" },
+	];
+	if (!exactly(tlvSeq, tlvRecord, ["role"], `${where}.seq`))
+		fail(
+			where,
+			`expected u16be type and length, then the value: ${JSON.stringify(tlvSeq)}`,
+		);
 	const dWhere = "physical/mndp.yaml structure.datagram";
 	const datagram = list(
 		obj(obj(physical.structure, "structure").datagram, dWhere).seq,
 		dWhere,
-	).map((s, i) => obj(s, `${dWhere}.seq[${i}]`));
-	const dShape = datagram.map((e) =>
-		[e.name, e.size ?? "", e.kind ?? "", e.repeat ?? ""].join(":"),
 	);
-	if (dShape.join(",") !== "header:4::,records::tlv:eos")
-		fail(dWhere, `expected a 4-byte header, then TLVs to the end: ${dShape}`);
+	const datagramShape = [
+		{ name: "header", size: 4 },
+		{ name: "records", kind: "tlv", repeat: "eos" },
+	];
+	if (
+		!exactly(
+			datagram,
+			datagramShape,
+			["role", "profile-naming"],
+			`${dWhere}.seq`,
+		)
+	)
+		fail(
+			dWhere,
+			`expected a 4-byte header, then TLVs to the end: ${JSON.stringify(datagram)}`,
+		);
 	const transport = obj(physical.transport, "physical transport");
 	// The table's port is registered as a UDP port (mndp.ts).
 	if (transport.protocol !== "udp")
@@ -324,11 +363,11 @@ export function readMndp(
 		} else if ("has-tlv" in clause) {
 			only("has-tlv", "tested-value-lengths", "untested");
 			request.tlvs.push({
-				type: num(clause["has-tlv"], "has-tlv"),
+				type: u16(clause["has-tlv"], `${at}.has-tlv`),
 				lengths: list(
 					clause["tested-value-lengths"],
-					"tested-value-lengths",
-				).map((n) => num(n, "tested-value-lengths")),
+					`${at}.tested-value-lengths`,
+				).map((n, j) => u16(n, `${at}.tested-value-lengths[${j}]`)),
 			});
 		} else fail(at, "unknown clause");
 	}
@@ -459,6 +498,10 @@ export function readMndp(
 		]) {
 			if (fields.has(f) || HAND_FIELDS.includes(f))
 				fail(`tlvs.${t.type}`, `field ${f} is named twice`);
+			// The reader builds the fields on a plain object: `constructor` and
+			// the like are already there.
+			if (f in Object.prototype)
+				fail(`tlvs.${t.type}`, `field ${f} is a name every object has`);
 			fields.add(f);
 		}
 	}
@@ -865,12 +908,16 @@ export async function refresh(
 	// Staged first, each created only if absent: a write that fails leaves
 	// every old file, and a second refresh stops on the first file this one
 	// holds. Then each takes its file's place.
-	const staged: string[] = [];
+	/** Staged files this refresh created and has not yet renamed. */
+	const staged = new Set<string>();
+	const unstage = () =>
+		Promise.all([...staged].map((p) => rm(p, { force: true })));
 	try {
 		for (const [path, body] of outputs) {
 			await mkdir(dirname(path), { recursive: true });
+			let file: Awaited<ReturnType<typeof open>>;
 			try {
-				await writeFile(path + STAGED, body, { flag: "wx" });
+				file = await open(path + STAGED, "wx");
 			} catch (e) {
 				if ((e as NodeJS.ErrnoException).code === "EEXIST")
 					throw new GenerateError(
@@ -878,13 +925,28 @@ export async function refresh(
 					);
 				throw e;
 			}
-			staged.push(path + STAGED);
+			// Ours from its creation, so a write that fails part way removes it.
+			staged.add(path + STAGED);
+			try {
+				await file.writeFile(body);
+			} finally {
+				await file.close();
+			}
 		}
 	} catch (e) {
-		await Promise.all(staged.map((p) => rm(p, { force: true })));
+		await unstage();
 		throw e;
 	}
-	for (const [path] of outputs) await rename(path + STAGED, path);
+	try {
+		for (const [path] of outputs) {
+			await rename(path + STAGED, path);
+			staged.delete(path + STAGED);
+		}
+	} catch (e) {
+		// What is renamed stays: `bun run lint` reports the mix, git restores it.
+		await unstage();
+		throw e;
+	}
 	return source;
 }
 

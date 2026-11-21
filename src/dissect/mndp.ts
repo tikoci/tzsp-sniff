@@ -236,7 +236,11 @@ function mndp(
 		/** A string field, or one more item of a repeated one. */
 		function put(s: string) {
 			if (!spec?.repeat) set[field] = s;
-			else set[field] = [...((set[field] as string[] | undefined) ?? []), s];
+			else
+				set[field] = [
+					...(Object.hasOwn(set, field) ? (set[field] as string[]) : []),
+					s,
+				];
 		}
 	}
 
@@ -276,7 +280,7 @@ const FIELDS: FieldDecls<MndpFields> = {
 	...MNDP_TLV_FIELDS,
 	otherTlvs: {
 		type: "object[]",
-		description: `Every TLV not read into a field, in the order sent: a type the m2ir table does not name, a second one of a type that does not repeat, and one whose length is wrong for its type (malformed, tlv-length). A TLV past the datagram is truncated (tlv) and not listed. Bytes after the ${MAX_MNDP_TLVS}th TLV make the layer unsupported (tlv-limit); exactly ${MAX_MNDP_TLVS} TLVs are read in full.`,
+		description: `Every TLV not read into a field, in the order sent: a type the m2ir table does not name, a second one of a type that does not repeat, and one whose length is wrong for its type (malformed, tlv-length). A TLV past the datagram is truncated (tlv) and not listed. Reading stops after ${MAX_MNDP_TLVS} TLVs: bytes after the last make the layer unsupported (tlv-limit), unless an earlier TLV already gave it a problem (the first is the one reported); exactly ${MAX_MNDP_TLVS} TLVs are read in full.`,
 		items: {
 			type: { type: "number", description: "The TLV type." },
 			name: {

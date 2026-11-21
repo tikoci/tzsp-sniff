@@ -21,7 +21,8 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
   repeat of one that does not repeat, and one of the wrong length are kept
   in `otherTlvs` as type, length and hex, with m2ir's name when the table
   has one; a value or bit m2ir does not name stays a number in its field. At most 64 TLVs
-  are read (bytes after the 64th are `unsupported/tlv-limit`); a header or TLV past the datagram is
+  are read (bytes after the 64th are `unsupported/tlv-limit`, unless an
+  earlier problem came first); a header or TLV past the datagram is
   `truncated`; a wrong length (kept raw) or text that is not UTF-8 is
   `malformed`. The text line names the identity, MAC, version and board,
   and says `request` or `dying-gasp`. `--proto mndp` selects it. Checked

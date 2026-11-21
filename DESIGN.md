@@ -1069,7 +1069,9 @@ m2ir, is in test/lab/mndp/REPORT.md.
   with its m2ir name; text that is not UTF-8 `malformed` (`text`), read with
   replacement characters, a leading byte-order mark kept. At most 64 TLVs
   are read (`MAX_MNDP_TLVS`): bytes after the 64th make the layer
-  `unsupported` (`tlv-limit`), and a datagram of exactly 64 is read whole.
+  `unsupported` (`tlv-limit`) unless an earlier TLV already gave it a
+  problem (the first problem is the one reported), and a datagram of
+  exactly 64 is read whole.
   A wrong length is `malformed` even on a repeat of a type that does not
   repeat.
 - **The layer runs to the end of the datagram**; MNDP has no End TLV.
@@ -1192,8 +1194,8 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
   (`.m2ir-refresh`, created only if absent) and renamed into place once all
   are staged, so a failed write leaves the old files and a second refresh
   of the same checkout stops on the first staged file it meets. A failure
-  between two renames is the one gap left: `bun run lint` then reports the
-  mix, and git restores it.
+  between two renames is the one gap left: the staged files not yet renamed
+  are removed, `bun run lint` reports the mix, and git restores it.
 - **`bun run m2ir:generate`** writes `src/dissect/mndp-table.ts` from the
   snapshot alone: the TLV specs the reader walks, the request rule, the
   `MndpTlvFields` interface and its field declarations with confidence,
@@ -1214,7 +1216,8 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
   bit that is not one bit, a version outside `scope.versions-observed`, a
   TLV record that is not u16be type and length (by key and value), a name
   that is not lower-case words (it becomes an identifier), a commit that
-  is not a 40-digit sha, a field name taken twice, a bitmask's `…Flags`
+  is not a 40-digit sha, a field name taken twice or one every object
+  already has (`constructor`), a `has-tlv` type or length outside 16 bits, a bitmask's `…Flags`
   included whether or not m2ir names a bit (test/unit/m2ir.test.ts). m2ir
   text in a generated comment has its `*/` broken.
 - **`versions-seen: all`** becomes m2ir's `scope.versions-observed`, so a

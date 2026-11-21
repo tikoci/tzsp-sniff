@@ -15,7 +15,7 @@ import {
 	mndpView,
 	UTF8_IDENTITY,
 } from "../lab/mndp/lab.ts";
-import { closeSocket } from "./helpers.ts";
+import { closeSocket, until } from "./helpers.ts";
 
 const evidence = JSON.parse(
 	readFileSync(
@@ -39,13 +39,14 @@ test("ipv6-disabled keeps no announcement that arrived during its setup", async 
 	try {
 		const port = await listener.open();
 		const send = (d: Buffer) =>
-			new Promise<void>((resolve) =>
-				socket.send(d, port, "127.0.0.1", () => resolve()),
+			new Promise<void>((resolve, reject) =>
+				socket.send(d, port, "127.0.0.1", (e) => (e ? reject(e) : resolve())),
 			);
 		const router = {
 			exec: async () => {
 				await send(early);
-				await new Promise((r) => setTimeout(r, 200));
+				// The early one is in before the setup returns.
+				await until(() => listener.kept.length === 1);
 				setTimeout(() => {
 					for (const d of later) void send(d);
 				}, 200);
