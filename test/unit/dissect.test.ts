@@ -1822,6 +1822,21 @@ describe("dissect: DHCP", () => {
 		]);
 	});
 
+	test("a repeated option cut after its code byte is cut too: the piece before it is kept raw, not read", () => {
+		// A host name "A", then a second host name piece with no length byte.
+		const d = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}${opt(12, "41")}0c` })),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "option" });
+		keepsAll(d);
+		const f = dhcpOf(d).fields;
+		expect(f?.hostname).toBeUndefined();
+		expect(f?.messageType).toBe(1);
+		expect(f?.otherOptions).toEqual([
+			{ code: 12, name: "hostname", length: 1, value: "41" },
+		]);
+	});
+
 	test("no End is truncated (end)", () => {
 		const d = dissect(
 			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}0000` })),

@@ -316,7 +316,8 @@ function dhcp(f: Frame, start: number, end: number) {
 		}
 		if (offset + 2 > end || offset + 2 + u8(b, offset + 1) > end) {
 			mark("truncated", "option");
-			if (offset + 2 <= end) cut = code;
+			// Even a lone code byte starts another piece of that option.
+			cut = code;
 			break;
 		}
 		const length = u8(b, offset + 1);
