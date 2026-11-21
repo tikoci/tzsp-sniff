@@ -83,3 +83,34 @@ Regenerate:
 bun test/lab/lldp/lab.ts       # new evidence, on CHRs
 bun test/lab/lldp/fixtures.ts  # fixtures from evidence/, on any checkout
 ```
+
+## `dhcp/`: the DHCPv4 RouterOS sends
+
+DHCP as a RouterOS client and server, captured by the lab in
+[`test/lab/dhcp/`](../lab/dhcp/) for issue #29; what it shows is in its
+[REPORT.md](../lab/dhcp/REPORT.md). The DHCP tests in
+[`test/unit/dissect.test.ts`](../unit/dissect.test.ts) decode each one and
+check it against its sender and the routers' MACs.
+
+| File pattern | What it is |
+| --- | --- |
+| `<version>-<arch>-<experiment>.hex` | One TZSP datagram from `/tool/sniffer` streaming per line, in arrival order, as hex |
+| `index.json` | Each file's experiment, RouterOS version and architecture, channel, accelerator, UTC date, each line's sender and message type, the two routers' MACs, and the run's evidence file |
+
+Experiments: `client-renew` (the router's dhcp-client on ether1 renewing
+with QEMU's SLIRP server), `server-exchange` (a second CHR's dhcp-client
+getting a lease from the first over a quickchr L2 link), `server-release`
+and `client-release`. Each line's sender is `routeros-client`,
+`routeros-server` or `qemu-slirp`: QEMU's ACKs are kept as the other side
+of the exchange and are not RouterOS's. Captured with quickchr 0.6.0 on a
+Linux x86_64 host. Only frames that are UDP between ports 67 and 68 are
+stored; they carry the CHRs' random MACs, SLIRP and lab addresses (10.0.2.x,
+192.168.88.x) and the identities `CHR` and `lab-café`, nothing from the
+host.
+
+Regenerate:
+
+```sh
+bun test/lab/dhcp/lab.ts       # new evidence, on CHRs
+bun test/lab/dhcp/fixtures.ts  # fixtures from evidence/, on any checkout
+```

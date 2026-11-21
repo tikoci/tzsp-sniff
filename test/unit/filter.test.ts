@@ -12,6 +12,7 @@ import type { Capture } from "../../src/listen.ts";
 import { parseTzsp } from "../../src/tzsp.ts";
 import {
 	bytes,
+	dhcpMessage,
 	echo,
 	eth,
 	h8,
@@ -133,6 +134,13 @@ describe("createFilter: terms", () => {
 		// A later fragment of a TCP datagram is TCP by its IP header.
 		expect(keeps({ proto: ["tcp"] }, LATER_FRAGMENT)).toBe(true);
 		expect(keeps({ proto: ["ipv6"] }, V6_UDP)).toBe(true);
+		// A dissector reached by UDP port (#29).
+		const dhcp = capture(
+			eth(0x0800, ipv4({ proto: 17, payload: udp(68, 67, dhcpMessage()) })),
+		);
+		expect(keeps({ proto: ["dhcp"] }, dhcp)).toBe(true);
+		expect(keeps({ proto: ["dhcp"] }, V6_UDP)).toBe(false);
+		expect(keeps({ not: { proto: ["dhcp"] } }, dhcp)).toBe(false);
 		// `data` is not a protocol.
 		expect(codeOf(() => createFilter({ proto: ["data"] }))).toBe(
 			"filter/invalid-value",

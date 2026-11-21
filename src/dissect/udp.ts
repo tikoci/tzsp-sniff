@@ -61,7 +61,13 @@ function udp(f: Frame, start: number, end: number, ip: IpContext) {
 		layer.reason = "length";
 	}
 	fields.payloadLength = layer.length - 8;
-	f.data(start + 8, start + layer.length);
+	f.portPayload(
+		"udp",
+		start + 8,
+		start + layer.length,
+		[fields.srcPort, fields.dstPort],
+		ip,
+	);
 }
 
 const FIELDS: FieldDecls<UdpFields> = {

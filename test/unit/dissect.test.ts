@@ -6,6 +6,7 @@ import {
 	type FieldInfo,
 	formatIpv6,
 	type Layer,
+	MAX_DHCP_OPTIONS,
 	MAX_IPV6_EXTENSIONS,
 	MAX_LLDP_TLVS,
 	MAX_VLAN_TAGS,
@@ -14,6 +15,10 @@ import { packetLine, viewPacket } from "../../src/records.ts";
 import { parseTzsp } from "../../src/tzsp.ts";
 import {
 	bytes,
+	dhcpFixture,
+	dhcpFixtureIndex,
+	dhcpFrame,
+	dhcpMessage,
 	echo,
 	eth,
 	ext8,
@@ -28,6 +33,7 @@ import {
 	lldpFixtureIndex,
 	MAC_A,
 	MAC_B,
+	opt,
 	tcp,
 	tlv,
 	udp,
@@ -1508,11 +1514,635 @@ describe("dissect: LLDP", () => {
 	});
 });
 
+describe("dissect: DHCP", () => {
+	const dhcpOf = (d: Dissection) => layer(d, "dhcp");
+	/** The DHCP layer keeps every byte of the UDP payload, from AT to the frame's end. */
+	const keepsAll = (d: Dissection) => {
+		const l = dhcpOf(d);
+		expect(l.offset).toBe(AT);
+		expect(l.offset + l.length).toBe(d.frame.length);
+	};
+	/** Where the DHCP message starts in a dhcpFrame: Ethernet, IPv4 and UDP headers. */
+	const AT = 14 + 20 + 8;
+
+	// test/lab/dhcp/ (REPORT.md): RouterOS 7.25.1 and 7.24.6, x86_64 and
+	// arm64, as a client of QEMU's SLIRP and of a RouterOS server, and as
+	// that server, over a quickchr L2 link.
+	test("what RouterOS sends and receives as a DHCP client and server decodes whole, with no problem", () => {
+		const index = dhcpFixtureIndex();
+		expect(index.map((e) => e.file).sort()).toEqual(
+			["7.24.6-arm64", "7.24.6-x86", "7.25.1-arm64", "7.25.1-x86"].flatMap(
+				(s) =>
+					[
+						"client-release",
+						"client-renew",
+						"server-exchange",
+						"server-release",
+					].map((e) => `${s}-${e}.hex`),
+			),
+		);
+		const PRL = [
+			"subnet-mask",
+			"classless-static-route",
+			"router",
+			"static-route",
+			"domain-server",
+			"ntp-servers",
+			"capwap-ac-v4",
+			"vendor-specific",
+			"domain-name",
+		];
+		let lines = 0;
+		for (const entry of index) {
+			const hexes = dhcpFixture(entry.file);
+			expect(hexes).toHaveLength(entry.lines.length);
+			hexes.forEach((hex, i) => {
+				const { sender, message } = entry.lines[i] as {
+					sender: string;
+					message: string;
+				};
+				const frame = frameOf(hex);
+				const d = dissect(frame);
+				expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+				expect(d.problem).toBeUndefined();
+				const l = dhcpOf(d);
+				// RouterOS pads to the 300-byte BOOTP minimum; QEMU to 548.
+				expect(l.offset + l.length).toBe(frame.length);
+				expect(l.length).toBe(sender === "qemu-slirp" ? 548 : 300);
+				const f = l.fields;
+				expect(f?.messageTypeName).toBe(message);
+				expect(f?.otherOptions).toEqual([]);
+				const onEther1 = entry.experiment.startsWith("client-");
+				const mac = onEther1 ? entry.serverEther1 : entry.clientEther2;
+				expect(f?.chaddr).toBe(mac);
+				if (sender === "routeros-client") {
+					expect(f?.opName).toBe("request");
+					expect(f?.clientId).toBe(`01${mac.replaceAll(":", "")}`);
+					if (message === "discover" || message === "request") {
+						expect(f?.parameterRequestList).toEqual(PRL);
+						expect(f?.hostname).toBe(onEther1 ? "CHR" : "lab-café");
+					}
+					// use-broadcast=both: broadcast asked for until bound.
+					expect(f?.broadcast).toBe(f?.ciaddr === "0.0.0.0");
+				} else if (sender === "routeros-server") {
+					expect(f).toMatchObject({
+						opName: "reply",
+						serverId: "192.168.88.1",
+						subnetMask: "255.255.255.0",
+						routers: ["192.168.88.1"],
+						dnsServers: ["192.168.88.1"],
+						domainName: "lab.test",
+						leaseTime: 600,
+						yiaddr: "192.168.88.20",
+					});
+					expect(f?.renewalTime).toBeUndefined();
+				} else {
+					expect(sender).toBe("qemu-slirp");
+					expect(f).toMatchObject({
+						opName: "reply",
+						serverId: "10.0.2.2",
+						yiaddr: "10.0.2.15",
+						leaseTime: 86400,
+					});
+				}
+				lines++;
+			});
+		}
+		expect(lines).toBe(4 * (2 + 4 + 5 + 1));
+	});
+
+	test("a message with every decoded option reads into named fields", () => {
+		const options =
+			opt(53, "03") +
+			opt(1, "ffffff00") +
+			opt(3, "c0a85801c0a85802") +
+			opt(6, "c0a85801") +
+			opt(12, utf8("lab-café")) +
+			opt(15, utf8("lab.test")) +
+			opt(50, "c0a8580a") +
+			opt(51, "00000258") +
+			opt(54, "c0a85801") +
+			opt(55, "0103060f79ff") +
+			opt(57, "0240") +
+			opt(58, "0000012c") +
+			opt(59, "0000020d") +
+			opt(60, utf8("MSFT 5.0")) +
+			opt(61, `01${MAC_A.split(":").join("")}`) +
+			opt(82, "0104000000010206aabbccddeeff") +
+			opt(200, "beef") +
+			"ff" +
+			"000000";
+		const frame = dhcpFrame(
+			dhcpMessage({
+				xid: 0x18152c13,
+				flags: 0x8000,
+				ciaddr: "192.168.88.10",
+				giaddr: "10.0.0.1",
+				sname: utf8("boot.lab"),
+				file: utf8("pxelinux.0"),
+				options,
+			}),
+		);
+		const d = dissect(frame);
+		expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+		expect(d.problem).toBeUndefined();
+		const l = dhcpOf(d);
+		// Padding after End is DHCP's: the layer runs to the datagram's end.
+		expect(l.offset).toBe(AT);
+		expect(l.offset + l.length).toBe(frame.length);
+		expect(l.fields).toEqual({
+			op: 1,
+			opName: "request",
+			hardwareType: 1,
+			hardwareLength: 6,
+			hops: 0,
+			xid: "0x18152c13",
+			secs: 0,
+			flags: 0x8000,
+			broadcast: true,
+			ciaddr: "192.168.88.10",
+			yiaddr: "0.0.0.0",
+			siaddr: "0.0.0.0",
+			giaddr: "10.0.0.1",
+			chaddr: MAC_A,
+			serverName: "boot.lab",
+			bootFile: "pxelinux.0",
+			messageType: 3,
+			messageTypeName: "request",
+			subnetMask: "255.255.255.0",
+			routers: ["192.168.88.1", "192.168.88.2"],
+			dnsServers: ["192.168.88.1"],
+			hostname: "lab-café",
+			domainName: "lab.test",
+			requestedAddress: "192.168.88.10",
+			leaseTime: 600,
+			serverId: "192.168.88.1",
+			parameterRequestList: [
+				"subnet-mask",
+				"router",
+				"domain-server",
+				"domain-name",
+				"classless-static-route",
+				"option-255",
+			],
+			maxMessageSize: 576,
+			renewalTime: 300,
+			rebindingTime: 525,
+			vendorClassId: "MSFT 5.0",
+			clientId: `01${MAC_A.split(":").join("")}`,
+			otherOptions: [
+				{
+					code: 82,
+					name: "relay-agent-information",
+					length: 14,
+					value: "0104000000010206aabbccddeeff",
+				},
+				{ code: 200, length: 2, value: "beef" },
+			],
+		});
+	});
+
+	test("a reply, an unnamed message type and a hardware address that is not Ethernet", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					op: 2,
+					htype: 6,
+					hlen: 8,
+					yiaddr: "10.0.2.15",
+					siaddr: "10.0.2.2",
+					chaddr: "0102030405060708ffff",
+					options: `${opt(53, "63")}ff`,
+				}),
+				67,
+				68,
+			),
+		);
+		expect(d.problem).toBeUndefined();
+		expect(dhcpOf(d).fields).toMatchObject({
+			op: 2,
+			opName: "reply",
+			chaddr: "0102030405060708",
+			yiaddr: "10.0.2.15",
+			messageType: 99,
+		});
+		expect(dhcpOf(d).fields?.messageTypeName).toBeUndefined();
+		expect(dhcpOf(d).fields?.serverName).toBeUndefined();
+		const unknown = dissect(dhcpFrame(dhcpMessage({ op: 7, options: "ff" })));
+		expect(dhcpOf(unknown).fields?.opName).toBeUndefined();
+	});
+
+	test("reached by port with no decline: bytes on UDP 67 that are not DHCP are a dhcp layer with a problem, not data", () => {
+		const d = dissect(dhcpFrame("0011223344", 40000, 67));
+		expect(d.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+		const l = dhcpOf(d);
+		expect(l).toMatchObject({
+			offset: AT,
+			length: 5,
+			problem: "truncated",
+			reason: "header",
+		});
+		expect(l.fields).toBeUndefined();
+	});
+
+	test("a header cut short is truncated (header), with no fields; one cut in the cookie keeps the header", () => {
+		const message = dhcpMessage();
+		const header = dissect(dhcpFrame(message.slice(0, 235 * 2)));
+		expect(dhcpOf(header)).toMatchObject({
+			length: 235,
+			problem: "truncated",
+			reason: "header",
+		});
+		expect(dhcpOf(header).fields).toBeUndefined();
+		const cookie = dissect(dhcpFrame(message.slice(0, 238 * 2)));
+		expect(dhcpOf(cookie)).toMatchObject({
+			length: 238,
+			problem: "truncated",
+			reason: "cookie",
+		});
+		expect(dhcpOf(cookie).fields?.xid).toBe("0x12345678");
+		expect(dhcpOf(cookie).fields?.messageType).toBeUndefined();
+	});
+
+	test("a wrong cookie is malformed (cookie), and nothing after it is read as options", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({ cookie: "63825364", options: `${opt(53, "01")}ff` }),
+			),
+		);
+		expect(d.problem).toEqual({
+			protocol: "dhcp",
+			problem: "malformed",
+			reason: "cookie",
+		});
+		keepsAll(d);
+		const f = dhcpOf(d).fields;
+		expect(f?.messageType).toBeUndefined();
+		expect(f?.otherOptions).toEqual([]);
+		expect(f?.chaddr).toBe(MAC_A);
+	});
+
+	test("an option past the datagram is truncated (option); options before it are kept", () => {
+		const header = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}0c` })),
+		);
+		expect(dhcpOf(header)).toMatchObject({
+			problem: "truncated",
+			reason: "option",
+		});
+		expect(dhcpOf(header).fields?.messageTypeName).toBe("discover");
+		keepsAll(header);
+		const value = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}0c05616263` })),
+		);
+		expect(dhcpOf(value)).toMatchObject({
+			problem: "truncated",
+			reason: "option",
+		});
+		expect(dhcpOf(value).fields?.hostname).toBeUndefined();
+		keepsAll(value);
+	});
+
+	test("an option repeated, its last piece cut short, is truncated (option); the pieces before it are kept raw, not read", () => {
+		// Two routers announced, the second cut (RFC 3396): the list is incomplete.
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(53, "03")}${opt(3, "0a000001")}03040a00`,
+				}),
+			),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "option" });
+		keepsAll(d);
+		const f = dhcpOf(d).fields;
+		expect(f?.routers).toBeUndefined();
+		expect(f?.messageType).toBe(3);
+		expect(f?.otherOptions).toEqual([
+			{ code: 3, name: "router", length: 4, value: "0a000001" },
+		]);
+	});
+
+	test("a repeated option cut after its code byte is cut too: the piece before it is kept raw, not read", () => {
+		// A host name "A", then a second host name piece with no length byte.
+		const d = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}${opt(12, "41")}0c` })),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "option" });
+		keepsAll(d);
+		const f = dhcpOf(d).fields;
+		expect(f?.hostname).toBeUndefined();
+		expect(f?.messageType).toBe(1);
+		expect(f?.otherOptions).toEqual([
+			{ code: 12, name: "hostname", length: 1, value: "41" },
+		]);
+	});
+
+	test("no End is truncated (end)", () => {
+		const d = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(53, "01")}0000` })),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "truncated", reason: "end" });
+		expect(dhcpOf(d).fields?.messageType).toBe(1);
+		keepsAll(d);
+	});
+
+	test("trailing zero bytes of a host name or domain name are deleted (RFC 2132, 2)", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(12, "6c616200")}${opt(15, "6c61622e74657374000000")}ff`,
+				}),
+			),
+		);
+		expect(d.problem).toBeUndefined();
+		expect(dhcpOf(d).fields).toMatchObject({
+			hostname: "lab",
+			domainName: "lab.test",
+		});
+	});
+
+	test("a vendor class id keeps a leading byte-order mark, so it differs from the same id without one", () => {
+		const bom = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(60, "efbbbf41")}ff` })),
+		);
+		const plain = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(60, "41")}ff` })),
+		);
+		expect(dhcpOf(bom).fields?.vendorClassId).toBe("\uFEFFA");
+		expect(dhcpOf(plain).fields?.vendorClassId).toBe("A");
+	});
+
+	test("an overload value other than 1 to 3 is malformed (option-value), kept raw; sname and file stay text", () => {
+		for (const value of ["00", "04", "ff"]) {
+			const d = dissect(
+				dhcpFrame(
+					dhcpMessage({
+						sname: utf8("srv"),
+						file: utf8("file"),
+						options: `${opt(53, "05")}${opt(52, value)}ff`,
+					}),
+				),
+			);
+			expect(dhcpOf(d)).toMatchObject({
+				problem: "malformed",
+				reason: "option-value",
+			});
+			const f = dhcpOf(d).fields;
+			expect(f?.overload).toBeUndefined();
+			expect(f).toMatchObject({ serverName: "srv", bootFile: "file" });
+			expect(f?.serverNameHex).toBeUndefined();
+			expect(f?.bootFileHex).toBeUndefined();
+			expect(f?.otherOptions).toEqual([
+				{ code: 52, name: "overload", length: 1, value },
+			]);
+		}
+	});
+
+	test("bytes after End are not read as options", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({ options: `${opt(53, "01")}ff${opt(12, "41")}0c` }),
+			),
+		);
+		expect(d.problem).toBeUndefined();
+		expect(dhcpOf(d).fields?.hostname).toBeUndefined();
+		expect(dhcpOf(d).fields?.otherOptions).toEqual([]);
+	});
+
+	test("a wrong length for a decoded option is malformed (option-length), the option kept raw", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(53, "0101")}${opt(1, "ffffff")}${opt(3, "0a000002ff")}${opt(61, "01")}ff`,
+				}),
+			),
+		);
+		expect(dhcpOf(d)).toMatchObject({
+			problem: "malformed",
+			reason: "option-length",
+		});
+		const f = dhcpOf(d).fields;
+		expect(f?.messageType).toBeUndefined();
+		expect(f?.subnetMask).toBeUndefined();
+		expect(f?.otherOptions).toEqual([
+			{ code: 53, name: "message-type", length: 2, value: "0101" },
+			{ code: 1, name: "subnet-mask", length: 3, value: "ffffff" },
+			{ code: 3, name: "router", length: 5, value: "0a000002ff" },
+			{ code: 61, name: "client-id", length: 1, value: "01" },
+		]);
+	});
+
+	test("a repeated option is joined before it is read (RFC 3396)", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					options:
+						opt(53, "01") +
+						opt(55, "0103") +
+						opt(12, utf8("lab-")) +
+						opt(200, "aa") +
+						opt(55, "06") +
+						opt(12, utf8("café")) +
+						opt(200, "bb") +
+						"ff",
+				}),
+			),
+		);
+		expect(d.problem).toBeUndefined();
+		const f = dhcpOf(d).fields;
+		expect(f?.parameterRequestList).toEqual([
+			"subnet-mask",
+			"router",
+			"domain-server",
+		]);
+		expect(f?.hostname).toBe("lab-café");
+		expect(f?.otherOptions).toEqual([{ code: 200, length: 2, value: "aabb" }]);
+		// Joined, a decoded option is checked whole: two pieces of a mask
+		// make one of the right length.
+		const mask = dissect(
+			dhcpFrame(
+				dhcpMessage({ options: `${opt(1, "ffff")}${opt(1, "ff00")}ff` }),
+			),
+		);
+		expect(mask.problem).toBeUndefined();
+		expect(dhcpOf(mask).fields?.subnetMask).toBe("255.255.255.0");
+	});
+
+	test("option overload is unsupported (overload): sname and file kept as hex, not read", () => {
+		for (const [value, sname, file] of [
+			[1, false, true],
+			[2, true, false],
+			[3, true, true],
+		] as const) {
+			const d = dissect(
+				dhcpFrame(
+					dhcpMessage({
+						sname: opt(12, utf8("x")),
+						file: `${opt(15, utf8("y"))}ff`,
+						options: `${opt(53, "05")}${opt(52, h8(value))}ff`,
+					}),
+				),
+			);
+			expect(dhcpOf(d)).toMatchObject({
+				problem: "unsupported",
+				reason: "overload",
+			});
+			const f = dhcpOf(d).fields;
+			expect(f?.overload).toBe(value);
+			expect(f?.hostname).toBeUndefined();
+			expect(f?.domainName).toBeUndefined();
+			expect(f?.serverNameHex !== undefined).toBe(sname);
+			expect(f?.serverName !== undefined).toBe(!sname);
+			expect(f?.bootFileHex !== undefined).toBe(file);
+			expect(f?.bootFile !== undefined).toBe(!file);
+			if (sname) expect(f?.serverNameHex).toStartWith("0c0178");
+			if (file) expect(f?.bootFileHex).toStartWith("0f0179ff");
+		}
+	});
+
+	test("text that is not UTF-8 is malformed (text), read with replacement characters; a vendor class that is not is kept raw", () => {
+		const d = dissect(
+			dhcpFrame(
+				dhcpMessage({ options: `${opt(53, "01")}${opt(12, "41ff42")}ff` }),
+			),
+		);
+		expect(dhcpOf(d)).toMatchObject({ problem: "malformed", reason: "text" });
+		expect(dhcpOf(d).fields?.hostname).toBe("A�B");
+		const sname = dissect(
+			dhcpFrame(dhcpMessage({ sname: "c3", options: "ff" })),
+		);
+		expect(dhcpOf(sname)).toMatchObject({
+			problem: "malformed",
+			reason: "text",
+		});
+		expect(dhcpOf(sname).fields?.serverName).toBe("�");
+		const vendor = dissect(
+			dhcpFrame(dhcpMessage({ options: `${opt(60, "00ff")}ff` })),
+		);
+		expect(vendor.problem).toBeUndefined();
+		expect(dhcpOf(vendor).fields?.vendorClassId).toBeUndefined();
+		expect(dhcpOf(vendor).fields?.otherOptions).toEqual([
+			{ code: 60, name: "class-id", length: 2, value: "00ff" },
+		]);
+	});
+
+	test("a hardware length over 16 is malformed (hardware-length); chaddr is its 16 bytes", () => {
+		const d = dissect(
+			dhcpFrame(dhcpMessage({ htype: 1, hlen: 17, chaddr: "11".repeat(16) })),
+		);
+		expect(dhcpOf(d)).toMatchObject({
+			problem: "malformed",
+			reason: "hardware-length",
+		});
+		expect(dhcpOf(d).fields?.chaddr).toBe("11".repeat(16));
+		// What stopped the reading is the cause reported, not the length.
+		const bad = { htype: 1, hlen: 17 };
+		const cases: [string, string, string][] = [
+			[dhcpMessage(bad).slice(0, 238 * 2), "truncated", "cookie"],
+			[dhcpMessage({ ...bad, options: "0c0541" }), "truncated", "option"],
+			[dhcpMessage({ ...bad, options: "350101" }), "truncated", "end"],
+			[
+				dhcpMessage({
+					...bad,
+					options: `${"c800".repeat(MAX_DHCP_OPTIONS + 1)}ff`,
+				}),
+				"unsupported",
+				"option-limit",
+			],
+			[dhcpMessage({ ...bad, cookie: "00000000" }), "malformed", "cookie"],
+		];
+		for (const [message, problem, reason] of cases)
+			expect(dhcpOf(dissect(dhcpFrame(message)))).toMatchObject({
+				problem,
+				reason,
+			});
+	});
+
+	test(`after ${MAX_DHCP_OPTIONS} options the layer is unsupported (option-limit); pad does not count`, () => {
+		const many = `${"00".repeat(10)}${opt(200, "01").repeat(MAX_DHCP_OPTIONS)}`;
+		const atLimit = dissect(dhcpFrame(dhcpMessage({ options: `${many}ff` })));
+		expect(atLimit.problem).toBeUndefined();
+		expect(dhcpOf(atLimit).fields?.otherOptions).toEqual([
+			{
+				code: 200,
+				length: MAX_DHCP_OPTIONS,
+				value: "01".repeat(MAX_DHCP_OPTIONS),
+			},
+		]);
+		const over = dissect(
+			dhcpFrame(dhcpMessage({ options: `${many}${opt(53, "01")}ff` })),
+		);
+		expect(dhcpOf(over)).toMatchObject({
+			problem: "unsupported",
+			reason: "option-limit",
+		});
+		expect(dhcpOf(over).fields?.messageType).toBeUndefined();
+	});
+
+	test("its line names the message type, xid, client MAC and addresses", () => {
+		const request = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					xid: 0x18152c13,
+					ciaddr: "10.0.2.15",
+					options: `${opt(53, "03")}ff`,
+				}),
+			),
+		);
+		expect(packetLine(request)).toBe(
+			`10.0.2.15:68 > 10.0.2.3:67 dhcp request xid 0x18152c13 mac ${MAC_A} client-ip 10.0.2.15`,
+		);
+		const offer = dissect(
+			dhcpFrame(
+				dhcpMessage({
+					op: 2,
+					yiaddr: "192.168.88.10",
+					options: `${opt(53, "02")}ff`,
+				}),
+				67,
+				68,
+			),
+		);
+		expect(packetLine(offer)).toEndWith(
+			`dhcp offer xid 0x12345678 mac ${MAC_A} your-ip 192.168.88.10`,
+		);
+		const discover = dissect(
+			dhcpFrame(
+				dhcpMessage({ options: `${opt(53, "01")}${opt(50, "c0a8580a")}ff` }),
+			),
+		);
+		expect(packetLine(discover)).toEndWith(
+			`dhcp discover xid 0x12345678 mac ${MAC_A} requested 192.168.88.10`,
+		);
+		const bootp = dissect(
+			dhcpFrame(dhcpMessage({ op: 2, options: "ff" }), 67, 68),
+		);
+		expect(packetLine(bootp)).toEndWith(
+			`dhcp reply xid 0x12345678 mac ${MAC_A}`,
+		);
+		const odd = dissect(
+			dhcpFrame(dhcpMessage({ op: 9, options: `${opt(53, "63")}ff` })),
+		);
+		expect(packetLine(odd)).toContain(" dhcp type-99 ");
+		const opOnly = dissect(dhcpFrame(dhcpMessage({ op: 9, options: "ff" })));
+		expect(packetLine(opOnly)).toContain(" dhcp op-9 ");
+		const cut = dissect(dhcpFrame("00"));
+		expect(packetLine(cut)).toBe(
+			"10.0.2.15:68 > 10.0.2.3:67 udp len=1 [truncated dhcp/header]",
+		);
+	});
+});
+
 describe("dissect: never throws, spans stay inside the frame", () => {
 	test("every cut of real and built frames", () => {
 		const frames = [
 			frameOf(fixture("7.25.1-x86-sniffer-stream")[0] as string),
 			frameOf(lldpFixture("7.25.1-x86-optional-tlvs.hex")[0] as string),
+			dhcpFrame(
+				dhcpMessage({
+					options: `${opt(53, "01")}${opt(55, "0103")}${opt(12, "41")}ff000000`,
+				}),
+			),
 			bytes(
 				eth(
 					0x8100,

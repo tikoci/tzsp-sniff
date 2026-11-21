@@ -5,12 +5,13 @@
  * through the registry (`registry.ts`).
  *
  * A dissector is a module under `src/dissect/` that exports one
- * `Registration` per protocol: how it is reached (a link type, EtherType or
- * IP protocol), the function that reads it, and its fields, declared against
+ * `Registration` per protocol: how it is reached (a link type, EtherType,
+ * IP protocol, or UDP or TCP port), the function that reads it, and its fields, declared against
  * the fields interface so the compiler holds the two in step (DESIGN.md,
  * "Decided: a dissector registry").
  */
 import type { ArpLayer } from "./arp.ts";
+import type { DhcpLayer } from "./dhcp.ts";
 import type { EthernetLayer } from "./ethernet.ts";
 import type { IcmpLayer } from "./icmp.ts";
 import type { Ipv4Layer } from "./ipv4.ts";
@@ -53,6 +54,7 @@ export type Layer =
 	| IcmpLayer
 	| UdpLayer
 	| TcpLayer
+	| DhcpLayer
 	| DataLayer;
 
 /**
@@ -241,11 +243,24 @@ export type IpDissect = (
 	ip: IpContext,
 ) => void;
 
+/**
+ * As {@link IpDissect}, for a UDP or TCP payload: from `start` to `end` is
+ * the payload, never empty, and `ip` is the packet's (never a fragment).
+ */
+export type PortDissect = (
+	f: Frame,
+	start: number,
+	end: number,
+	ip: IpContext,
+) => void;
+
 /** How a dissector is reached, and the function that reads it there. */
 export type Match =
 	| { link: "ethernet"; dissect: LinkDissect }
 	| { etherType: number; dissect: EtherDissect }
-	| { ipProtocol: number; dissect: IpDissect };
+	| { ipProtocol: number; dissect: IpDissect }
+	| { udpPort: number; dissect: PortDissect }
+	| { tcpPort: number; dissect: PortDissect };
 
 /** One protocol: what `dissectors()` lists, and how dispatch reaches it. */
 export interface Registration {
@@ -264,6 +279,8 @@ export interface Dispatch {
 	link: ReadonlyMap<string, LinkDissect>;
 	etherType: ReadonlyMap<number, EtherDissect>;
 	ipProtocol: ReadonlyMap<number, IpDissect>;
+	udpPort: ReadonlyMap<number, PortDissect>;
+	tcpPort: ReadonlyMap<number, PortDissect>;
 }
 
 /** One dissection in progress: the bytes, the layers so far, and the way on. */
@@ -336,6 +353,35 @@ export class Frame {
 	/** The dissector the registry has for this IP protocol, or a `data` layer. */
 	ipPayload(start: number, end: number, protocol: number, ip: IpContext) {
 		const next = this.dispatch.ipProtocol.get(protocol);
+		if (next) next(this, start, end, ip);
+		else this.data(start, end);
+	}
+
+	/**
+	 * The dissector the registry has for a UDP datagram's or TCP segment's
+	 * ports, the lower port first, or a `data` layer (DESIGN.md, "Decided:
+	 * port matches"). The lower port first gives a request and its reply the
+	 * same dissector, and a well-known port is lower than an ephemeral one.
+	 * The dissector takes the bytes: none declines in 0.1.0. A first IP
+	 * fragment's payload is cut short, so it stays `data`; an empty payload
+	 * gets no layer.
+	 */
+	portPayload(
+		transport: "udp" | "tcp",
+		start: number,
+		end: number,
+		ports: readonly [number, number],
+		ip: IpContext,
+	) {
+		if (end <= start) return;
+		const table =
+			transport === "udp" ? this.dispatch.udpPort : this.dispatch.tcpPort;
+		const [a, b] = ports;
+		const low = Math.min(a, b);
+		const high = Math.max(a, b);
+		const next = ip.fragment
+			? undefined
+			: (table.get(low) ?? (high === low ? undefined : table.get(high)));
 		if (next) next(this, start, end, ip);
 		else this.data(start, end);
 	}

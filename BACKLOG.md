@@ -78,8 +78,14 @@ Small items, one or two sentences each, deleted when done or declined
   datagram over the path MTU (the `filter-stream=no` loop, #5) decodes
   whole.
 - Dissector registry: the heuristic hook for protocols on unusual ports,
-  with its first user (port matches are #29); DESIGN.md, "How port matches
-  fit".
+  and a way for a port match to decline, each with its first user (a TCP
+  port dissector needs decline or the flow layer); DESIGN.md, "Decided:
+  port matches".
+- LLDP: decode text with `ignoreBOM: true` as DHCP does, so a leading
+  byte-order mark is kept rather than stripped (cross-review of PR #34).
+- DHCP: follow option overload (52) into `file` and `sname` (RFC 2131 4.1),
+  and decode option 82 (relay agent) sub-options, if a lab shows either
+  from RouterOS.
 - Recovery hints that print placeholders (`tzsp-sniff decode <file>` for
   pcapng on listen; `run tzsp-sniff decode --input` for a flag of the wrong
   command) do not run as printed (tikoci-cli-mcp); point to a command that

@@ -240,6 +240,10 @@ describe("dissectors", () => {
 		expect(text).toContain(
 			"vlan: IEEE 802.1Q VLAN tag, and the 802.1ad outer tag (IEEE 802.1Q)\n  matched by etherType 0x8100, etherType 0x88a8\n",
 		);
+		expect(text).toContain(
+			"dhcp: DHCPv4 (RFC 2131)\n  matched by udpPort 67, udpPort 68\n",
+		);
+		expect(text).toContain("  otherOptions[].code (number): ");
 		expect(text).toContain("  extensions[].header (number): ");
 		expect(text).toContain("  protocolName (string, optional): ");
 	});

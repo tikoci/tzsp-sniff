@@ -5,13 +5,18 @@ ack # TCP acknowledgment
 actionlint # GitHub Actions workflow linter
 backpressure
 BER # ASN.1 Basic Encoding Rules (an LLDP OID)
+bootfile # DHCP option 67 name (IANA)
 BPF # Berkeley Packet Filter
 btest # MikroTik bandwidth test
 bunx # Bun's npx
 caplen # pcap record captured length (libpcap)
+CAPWAP # Control And Provisioning of Wireless Access Points (DHCP option 138)
 CDP # Cisco Discovery Protocol
 centrs # tikoci RouterOS CLI and library, https://github.com/tikoci/centrs
+chaddr # BOOTP client hardware address field
 CHR # Cloud Hosted Router: RouterOS as a VM
+ciaddr # BOOTP client IP address field
+clientid # RouterOS dhcp-client option name
 cmdline # /proc/<pid>/cmdline
 CMR # MikroTik Centralized Management for RouterOS (/cmr)
 CREAT # O_CREAT, the open(2) flag
@@ -35,10 +40,13 @@ EtherType
 EtherTypes
 EUI # EUI-64 IPv6 interface identifier
 FFI # foreign function interface
+FORCERENEW # DHCP message type 9 (RFC 3203)
 ftruncate # cut a file to a length
+giaddr # BOOTP relay agent address field
 GRE
 hlen # ARP hardware address length
 hostfwd # QEMU user-mode host-to-guest port forward
+hrd # ARP hardware type field
 HVF # Hypervisor.framework, the macOS QEMU accelerator
 ICMPV # as in ICMPV6_TYPES
 IDB # pcapng interface description block
@@ -50,6 +58,10 @@ isb # pcapng interface statistics block
 keepalive
 keepalives
 KVM
+leaseactive # DHCP message type 13 (RFC 4388)
+leasequery # DHCP message type 10 (RFC 4388)
+leaseunassigned # DHCP message type 11 (RFC 4388)
+leaseunknown # DHCP message type 12 (RFC 4388)
 libc
 libpcap
 LINKTYPE # tcpdump link-layer header type, LINKTYPE_TZSP
@@ -64,11 +76,16 @@ mld # Multicast Listener Discovery (ICMPv6)
 mldv # as in mldv2-report
 MNDP # MikroTik Neighbor Discovery Protocol
 MTU # maximum transmission unit
+NAK # DHCP negative acknowledgment
+netbios # NetBIOS over TCP/IP, in DHCP option names
 NIC # network interface card
+NIS # Network Information Service, in DHCP option names
 NONBLOCK # as in O_NONBLOCK, the open(2) flag
+NVT # Network Virtual Terminal (ASCII), RFC 2132 text options
 OID # SNMP object identifier
 OSPF
 pcapng
+pcode # DHCP option 100, POSIX time zone (IANA name)
 pgrep # procps process lookup by command line
 PHY # Ethernet physical layer
 pim # Protocol Independent Multicast
@@ -88,11 +105,14 @@ rst # TCP reset flag
 SCP # secure copy
 shb # pcapng section header block
 shellcheck
+siaddr # BOOTP next server address field
 SLIRP # QEMU user-mode networking
 SLL # libpcap Linux cooked capture
+sname # BOOTP server host name field
 SSDP # Simple Service Discovery Protocol (UPnP)
 TCG # QEMU's software CPU emulator (Tiny Code Generator)
 TCI # 802.1Q tag control information
+tcode # DHCP option 101, time zone database name (IANA name)
 tcpdump
 tikoci
 TLV # type, length, value
@@ -111,4 +131,7 @@ VRRP
 Wireshark
 Wireshark's
 WLAN
+WPAD # Web Proxy Auto-Discovery, DHCP option 252
+xid # BOOTP transaction id
+yiaddr # BOOTP "your" IP address field
 zizmor # GitHub Actions security linter, https://github.com/zizmorcore/zizmor

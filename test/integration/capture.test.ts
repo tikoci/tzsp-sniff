@@ -359,6 +359,54 @@ describe.skipIf(!LIVE)(`a ${TARGET} CHR streaming TZSP`, () => {
 	);
 
 	test(
+		"the router's own DHCP REQUEST decodes with no problem",
+		async () => {
+			// `/ip/dhcp-client/renew` on ether1 sends one REQUEST to QEMU's
+			// SLIRP server, which ACKs it (test/lab/dhcp/REPORT.md); both are
+			// DHCP, so the capture waits for two.
+			const ports = (await router.read("/interface/ethernet?name=ether1")) as {
+				"mac-address"?: string;
+			}[];
+			const mac = ports[0]?.["mac-address"]?.toLowerCase();
+			expect(mac).toMatch(/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/);
+			let records: StreamRecord[] = [];
+			await withUndo(
+				async () => {
+					records = await capture(
+						2,
+						async (port) => {
+							await router.exec(snifferStreamAll(port));
+							await router.exec("/tool/sniffer/start");
+							await router.sniffing();
+							await router.exec(
+								"/ip/dhcp-client/renew [find interface=ether1]",
+							);
+						},
+						{ proto: ["dhcp"] },
+					);
+				},
+				() => router.exec("/tool/sniffer/stop"),
+			);
+			expect(summaryOf(records)?.stoppedBy).toBe("count");
+			const request = packets(records).find(
+				(p) => p.src === GUEST && p.dstPort === 67,
+			);
+			expect(request?.protocols).toEqual(["ethernet", "ipv4", "udp", "dhcp"]);
+			expect(request?.problem).toBeUndefined();
+			expect(
+				request?.layers?.find((l) => l.protocol === "dhcp")?.fields,
+			).toMatchObject({
+				messageTypeName: "request",
+				ciaddr: GUEST,
+				chaddr: mac,
+				clientId: `01${mac?.replaceAll(":", "")}`,
+			});
+			results.passed.push({ test: "dhcp-own", packets: 2 });
+		},
+		TEST_MS,
+	);
+
+	test(
 		"/tool/sniffer streaming, read through the CLI's JSONL",
 		async () => {
 			// The CLI under Bun from src/; the built one runs under Node in test/node/.

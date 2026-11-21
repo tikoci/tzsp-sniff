@@ -860,8 +860,9 @@ Untrusted input, so the contract is enforced, not hoped for:
 - every loop advances by at least one byte or stops;
 - caps on work per packet: tags, IPv6 extension headers, nested tunnels
   and layers each have a maximum, and hitting one is `unsupported`;
-- IP fragments: the first is dissected to its transport header, later ones
-  are marked fragments and not dissected further; no reassembly;
+- IP fragments: the first is dissected to its transport header (its payload
+  is not dispatched by port, "Decided: port matches"), later ones are marked
+  fragments and not dissected further; no reassembly;
 - vectors in unit tests for each truncation and malformation, asserting both
   the problem and the preserved bytes.
 
@@ -869,7 +870,8 @@ Untrusted input, so the contract is enforced, not hoped for:
 issue #15; built in #25). Each protocol is a module under `src/dissect/` that
 exports a registration: its `protocol` (the layer name in records and the
 name `--proto` takes), a name and reference, how it is reached (the frame's
-link type, an EtherType, an IP protocol), the function that reads it there,
+link type, an EtherType, an IP protocol, a UDP or TCP port), the function
+that reads it there,
 and its fields. `src/dissect/registry.ts` lists the registrations and
 builds the dispatch tables from their matches, and a layer reaches the
 next one only through them; `dissectors()`, the `dissectors` command and
@@ -894,32 +896,16 @@ become a module and a line.
   declared optional: the first run found ICMP (v4) declared with ICMPv6's
   neighbor-discovery target.
 - **Each match is checked by dispatch**: a minimal frame per declared
-  EtherType (under Ethernet and a VLAN tag) and per IP protocol (in IPv4
-  and IPv6) reaches the dissector that declares it; every other EtherType
-  and IP protocol is `data`; no match is claimed twice.
-- **Not built until a dissector needs them:** matches on a UDP or TCP port,
-  and the heuristic hook for protocols on unusual ports. No 0.1.0 dissector
-  is reached either way. #25 as filed had the registry accept a port match;
-  the maintainer agreed to leave it out (2026-11-20, on PR #27), so it comes
-  with its first user. That is now DHCP in slice 6c (#29), before 0.1.0:
+  EtherType (under Ethernet and a VLAN tag), per IP protocol (in IPv4
+  and IPv6) and per UDP port (as source and as destination, in IPv4 and
+  IPv6) reaches the dissector that declares it; every other EtherType, IP
+  protocol and UDP port is `data`; no match is claimed twice.
+- **Not built until a dissector needs it:** the heuristic hook for
+  protocols on unusual ports. No 0.1.0 dissector is reached that way. Port
+  matches, left out of #25 the same way (maintainer, 2026-11-20, on PR
+  #27), came with their first user, DHCP in slice 6c (#29), before 0.1.0:
   `DissectorMatch` is exported, and adding port variants after the release
   would widen a public union (maintainer, 2026-11-20, on #18).
-- **How port matches fit, when they come.** The additions: `udpPort` and
-  `tcpPort` variants of `Match` and `DissectorMatch`, two dispatch maps,
-  and, where UDP and TCP now pass their payload to a `data` layer, a lookup
-  by port, as IP looks up by protocol number. The duplicate guard,
-  `dissectors()` and its text already take any match kind, and no existing
-  dissector changes. The one contract that changes: today a dissector the
-  registry picks always takes the bytes, which suits EtherTypes and IP
-  protocol numbers. A port is a convention (a port two protocols share, DNS
-  on UDP and TCP, other traffic on a well-known port), so a dissector
-  reached by port, or by the heuristic hook on a broader scope than a port,
-  may need to decline: an optional check on its match, and the layers a
-  declined attempt pushed dropped. Kept apart from this registry until a
-  dissector needs it, as the matches are now. Open until then: which port
-  is tried first, what counts as a clash when declining is allowed, a TCP
-  segment that does not start a message, and a first IP fragment, which
-  dispatches with its payload cut short.
 - **`dissectors` prints text or JSONL**, one `dissector` record per
   protocol with no `header` or `summary`: it is a fixed list, not a
   capture, so it has no stream to frame. `--format json` is refused as on
@@ -928,6 +914,94 @@ become a module and a line.
 - The `data` layer and TZSP itself are not listed: `data` is bytes no
   dissector reads, and TZSP is the record around the frame, read by
   `parseTzsp`.
+
+**Decided: port matches** (maintainer, 2026-11-21, on #29; built in slice
+6c). `udpPort` and `tcpPort` variants of `Match` and `DissectorMatch`, two
+dispatch tables, and UDP and TCP looking their payload up by port where
+they passed it to a `data` layer, as IP looks up by protocol number. Each
+rule has a test in `test/unit/registry.test.ts` ("port matches"), using
+registrations made for the test:
+
+- **The lower port is tried first**, then the other; equal ports once. A
+  request and its reply then reach the same dissector, and a well-known
+  port is lower than an ephemeral one. Destination first was the other
+  choice; the two differ only when both ports have a dissector.
+- **No decline in 0.1.0.** A dissector reached by port takes the bytes, as
+  one reached by EtherType or IP protocol does: other traffic on UDP 67 is
+  a `dhcp` layer with a problem, not `data`. A port is a convention (two
+  protocols can share one, DNS runs on UDP and TCP), so a later dissector
+  may need to decline: an optional check on its match, the layers a
+  declined attempt pushed dropped, and the other port or `data` tried
+  next. That check would go on `Match`, which is not exported, so adding it
+  is not a change to the public `DissectorMatch`; no 0.1.0 dissector (DHCP,
+  MNDP, the discovery protocol of #30) needs it.
+- **A clash** is a second claim on one transport and port, caught by the
+  duplicate guard; UDP 53 and TCP 53 are different keys.
+- **TCP.** `tcpPort` is there for the public union; no dissector here is
+  reached by TCP port yet. Under "one packet at a time" below, a TCP-port
+  dissector can read only a segment that starts a message, so the first one
+  needs decline (a segment that does not start one stays `data`) or the
+  flow layer, and comes with whichever it uses.
+- **A first IP fragment** is not dispatched by port: its transport payload
+  is cut short and not reassembled, so it stays `data` rather than a layer
+  marked `truncated` when the capture was whole. A later fragment has no
+  transport layer, as before. A datagram cut short by the capture (UDP's
+  length past the bytes there are) is dispatched over the bytes there are.
+- **An empty payload** (a bare ACK, a zero-length datagram) is not
+  dispatched, as it got no `data` layer before.
+
+**Decided: DHCPv4 as named fields** (#29; maintainer, 2026-11-21). What
+RouterOS sends, as a client and as a server, is in
+test/lab/dhcp/REPORT.md.
+
+- **Shape as LLDP's.** The fixed header is a field each (`chaddr` a MAC
+  for Ethernet), the options a router network shows most are named fields
+  (message type, subnet mask, routers, DNS servers, host name, domain
+  name, requested address, lease, overload, server id, parameter request
+  list, max message size, renewal and rebinding times, vendor class id,
+  client id), and every other option is in `otherOptions` as code, name and
+  hex. The order of options on the wire is not kept. The parameter request
+  list names each code (`subnet-mask`, `option-<n>` for one not named):
+  a field's type is a string or object list, not a number list.
+- **Repeated options are joined** before they are read, as RFC 3396
+  section 7 has a receiver do (a long option split in pieces); a wrong
+  length is judged on the joined value, and an option in `otherOptions`
+  carries the joined length. When a later piece runs past the datagram, the
+  pieces before it are kept raw in `otherOptions` and not read as the
+  option, which is incomplete (`truncated`, `option`).
+- **Option overload (52) is `unsupported` (`overload`).** It is decoded as
+  a field; the field it names (1 `file`, 2 `sname`, 3 both, RFC 2132 9.3)
+  is then kept as hex (`serverNameHex`, `bootFileHex`) and the options in
+  it are not read, while a field it does not name is still text. The #29
+  decision said "sname and file"; naming only the overloaded one is RFC
+  2132's reading (cross-review of dd43576). Any other value names no field:
+  `malformed` (`option-value`), kept raw, `sname` and `file` read as text. Following it (RFC
+  2131 4.1: options, then `file`, then `sname`) is more code for what only
+  host-made vectors would show; RouterOS sent no overload in the lab.
+- **Problems.** A header cut short (under 236 bytes) is `truncated`
+  (`header`) with no fields; a cookie cut short `truncated` (`cookie`); an
+  option past the datagram `truncated` (`option`); no End `truncated`
+  (`end`). A wrong cookie is `malformed` (`cookie`), and nothing after it
+  is read as options; a decoded option of the wrong length is `malformed`
+  (`option-length`) and kept in `otherOptions`; a host name, domain name,
+  `sname` or `file` that is not UTF-8 is `malformed` (`text`), read with
+  replacement characters; a hardware length over 16 is `malformed`
+  (`hardware-length`), reported only when nothing stopped the reading
+  first (a cut cookie or option, no End, the cap), so the cause that
+  stopped it is the one named. Trailing zero bytes of a host name or domain
+  name are deleted, as RFC 2132 section 2 has a receiver do. Text keeps a
+  leading byte-order mark (U+FEFF), so two vendor class ids that differ by
+  one still differ. The vendor class id is opaque (RFC 2132 9.13), so
+  one that is not UTF-8 is kept raw with no problem. After 64 options
+  (`MAX_DHCP_OPTIONS`, pad not counted) the layer is `unsupported`
+  (`option-limit`).
+- **The layer runs to the end of the datagram.** Padding after End is part
+  of the BOOTP message (RouterOS pads to 300 bytes), not a next layer; it is
+  not read as options.
+- **Text is UTF-8**, as LLDP's: RouterOS sends an identity of `lab-café` as
+  UTF-8 in the host name option (the lab's `server-exchange`).
+- **Sources.** Message types and option codes are from RFC 2132, RFC 3203,
+  RFC 4388 and IANA's "DHCP and BOOTP Parameters" registry.
 
 **Decided: LLDP as named fields** (#26; maintainer, 2026-11-20). What
 RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
@@ -1001,7 +1075,7 @@ the registry and the m2ir path that LLDP did not reach, using protocols that
 fit in one packet and that a CHR sends:
 
 - DHCPv4, from order 2, as the first dissector reached by UDP port (slice
-  6c, #29);
+  6c, #29; "Decided: port matches", "Decided: DHCPv4 as named fields");
 - MNDP, from order 4, as the first table generated from m2ir (6d, #31). It
   skips the raw-TLV stage, so it waited on tikoci/m2ir#8 (LICENSE) and
   tikoci/m2ir#9 (canonical MNDP YAML), both closed by 2026-11-21 UTC;

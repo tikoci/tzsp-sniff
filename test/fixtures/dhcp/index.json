@@ -1,0 +1,434 @@
+[
+	{
+		"file": "7.24.6-arm64-client-renew.hex",
+		"experiment": "client-renew",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "qemu-slirp",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:9c:42:f3:1b:0a",
+		"serverEther2": "02:1d:47:d4:f8:35",
+		"clientEther2": "02:e3:c8:79:d6:af",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-arm64-server-exchange.hex",
+		"experiment": "server-exchange",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:9c:42:f3:1b:0a",
+		"serverEther2": "02:1d:47:d4:f8:35",
+		"clientEther2": "02:e3:c8:79:d6:af",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-arm64-server-release.hex",
+		"experiment": "server-release",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:9c:42:f3:1b:0a",
+		"serverEther2": "02:1d:47:d4:f8:35",
+		"clientEther2": "02:e3:c8:79:d6:af",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-arm64-client-release.hex",
+		"experiment": "client-release",
+		"routeros": "7.24.6",
+		"architecture": "arm64",
+		"channel": "long-term",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			}
+		],
+		"serverEther1": "02:9c:42:f3:1b:0a",
+		"serverEther2": "02:1d:47:d4:f8:35",
+		"clientEther2": "02:e3:c8:79:d6:af",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-arm64.json"
+	},
+	{
+		"file": "7.24.6-x86-client-renew.hex",
+		"experiment": "client-renew",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "qemu-slirp",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:18:ce:ac:40:7f",
+		"serverEther2": "02:1d:58:4c:0c:ce",
+		"clientEther2": "02:dd:e6:d7:e4:92",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-server-exchange.hex",
+		"experiment": "server-exchange",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:18:ce:ac:40:7f",
+		"serverEther2": "02:1d:58:4c:0c:ce",
+		"clientEther2": "02:dd:e6:d7:e4:92",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-server-release.hex",
+		"experiment": "server-release",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:18:ce:ac:40:7f",
+		"serverEther2": "02:1d:58:4c:0c:ce",
+		"clientEther2": "02:dd:e6:d7:e4:92",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.24.6-x86-client-release.hex",
+		"experiment": "client-release",
+		"routeros": "7.24.6",
+		"architecture": "x86_64",
+		"channel": "long-term",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			}
+		],
+		"serverEther1": "02:18:ce:ac:40:7f",
+		"serverEther2": "02:1d:58:4c:0c:ce",
+		"clientEther2": "02:dd:e6:d7:e4:92",
+		"evidence": "test/lab/dhcp/evidence/7.24.6-x86.json"
+	},
+	{
+		"file": "7.25.1-arm64-client-renew.hex",
+		"experiment": "client-renew",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "qemu-slirp",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:a7:43:e1:5d:b9",
+		"serverEther2": "02:28:34:da:b3:02",
+		"clientEther2": "02:b5:43:fc:c6:81",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-arm64-server-exchange.hex",
+		"experiment": "server-exchange",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:a7:43:e1:5d:b9",
+		"serverEther2": "02:28:34:da:b3:02",
+		"clientEther2": "02:b5:43:fc:c6:81",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-arm64-server-release.hex",
+		"experiment": "server-release",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:a7:43:e1:5d:b9",
+		"serverEther2": "02:28:34:da:b3:02",
+		"clientEther2": "02:b5:43:fc:c6:81",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-arm64-client-release.hex",
+		"experiment": "client-release",
+		"routeros": "7.25.1",
+		"architecture": "arm64",
+		"channel": "stable",
+		"accelerator": "tcg",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			}
+		],
+		"serverEther1": "02:a7:43:e1:5d:b9",
+		"serverEther2": "02:28:34:da:b3:02",
+		"clientEther2": "02:b5:43:fc:c6:81",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-arm64.json"
+	},
+	{
+		"file": "7.25.1-x86-client-renew.hex",
+		"experiment": "client-renew",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "qemu-slirp",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:3e:2c:cf:d3:f9",
+		"serverEther2": "02:a9:7a:88:9b:ea",
+		"clientEther2": "02:2b:00:16:51:df",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-server-exchange.hex",
+		"experiment": "server-exchange",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:3e:2c:cf:d3:f9",
+		"serverEther2": "02:a9:7a:88:9b:ea",
+		"clientEther2": "02:2b:00:16:51:df",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-server-release.hex",
+		"experiment": "server-release",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "discover"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "offer"
+			},
+			{
+				"sender": "routeros-client",
+				"message": "request"
+			},
+			{
+				"sender": "routeros-server",
+				"message": "ack"
+			}
+		],
+		"serverEther1": "02:3e:2c:cf:d3:f9",
+		"serverEther2": "02:a9:7a:88:9b:ea",
+		"clientEther2": "02:2b:00:16:51:df",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-x86.json"
+	},
+	{
+		"file": "7.25.1-x86-client-release.hex",
+		"experiment": "client-release",
+		"routeros": "7.25.1",
+		"architecture": "x86_64",
+		"channel": "stable",
+		"accelerator": "kvm",
+		"date": "2026-11-21",
+		"lines": [
+			{
+				"sender": "routeros-client",
+				"message": "release"
+			}
+		],
+		"serverEther1": "02:3e:2c:cf:d3:f9",
+		"serverEther2": "02:a9:7a:88:9b:ea",
+		"clientEther2": "02:2b:00:16:51:df",
+		"evidence": "test/lab/dhcp/evidence/7.25.1-x86.json"
+	}
+]

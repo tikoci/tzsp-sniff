@@ -166,9 +166,81 @@ export const lldpFixtureIndex = () =>
 		identity: string;
 	}[];
 
+const DHCP_FIXTURES = join(import.meta.dir, "..", "fixtures", "dhcp");
+
+/** A DHCP fixture's TZSP datagrams, hex, one per line (test/lab/dhcp/). */
+export const dhcpFixture = (file: string) =>
+	readFileSync(join(DHCP_FIXTURES, file), "utf8").trim().split("\n");
+
+/** Every DHCP fixture's provenance, each line's sender, and the routers' MACs. */
+export const dhcpFixtureIndex = () =>
+	JSON.parse(readFileSync(join(DHCP_FIXTURES, "index.json"), "utf8")) as {
+		file: string;
+		experiment: string;
+		routeros: string;
+		architecture: string;
+		lines: { sender: string; message: string }[];
+		serverEther1: string;
+		serverEther2: string;
+		clientEther2: string;
+	}[];
+
 /** An LLDP TLV, hex: the 7-bit type and 9-bit length, then the value. */
 export const tlv = (type: number, value: string) =>
 	h16((type << 9) | (value.length / 2)) + value;
+
+/** A DHCP option, hex: code, length, value. */
+export const opt = (code: number, value: string) =>
+	h8(code) + h8(value.length / 2) + value;
+
+/**
+ * A DHCPv4 message, hex: the 236-byte header, the magic cookie and
+ * `options` (already encoded, End included when wanted). Fields left out
+ * are a client's DISCOVER from MAC_A.
+ */
+export function dhcpMessage(
+	o: {
+		op?: number;
+		htype?: number;
+		hlen?: number;
+		xid?: number;
+		flags?: number;
+		ciaddr?: string;
+		yiaddr?: string;
+		siaddr?: string;
+		giaddr?: string;
+		chaddr?: string;
+		sname?: string;
+		file?: string;
+		cookie?: string;
+		options?: string;
+	} = {},
+): string {
+	const pad = (hex: string, n: number) =>
+		hex.padEnd(n * 2, "0").slice(0, n * 2);
+	return (
+		h8(o.op ?? 1) +
+		h8(o.htype ?? 1) +
+		h8(o.hlen ?? 6) +
+		"00" +
+		h32(o.xid ?? 0x12345678) +
+		"0000" +
+		h16(o.flags ?? 0) +
+		ip4(o.ciaddr ?? "0.0.0.0") +
+		ip4(o.yiaddr ?? "0.0.0.0") +
+		ip4(o.siaddr ?? "0.0.0.0") +
+		ip4(o.giaddr ?? "0.0.0.0") +
+		pad(o.chaddr ?? mac(MAC_A), 16) +
+		pad(o.sname ?? "", 64) +
+		pad(o.file ?? "", 128) +
+		(o.cookie ?? "63825363") +
+		(o.options ?? `${opt(53, "01")}ff`)
+	);
+}
+
+/** A DHCP message in UDP 68 to 67 in IPv4 in Ethernet, as bytes. */
+export const dhcpFrame = (message: string, sp = 68, dp = 67) =>
+	bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, message) })));
 
 /** Hex of a string's UTF-8 bytes. */
 export const utf8 = (s: string) => Buffer.from(s, "utf8").toString("hex");

@@ -1,6 +1,7 @@
 /**
  * Frame dissectors: Ethernet, 802.1Q and 802.1ad, ARP, IPv4, IPv6, ICMP,
- * ICMPv6, UDP, TCP and LLDP (DESIGN.md, "Dissectors", order 1).
+ * ICMPv6, UDP, TCP and LLDP (DESIGN.md, "Dissectors", order 1), and DHCPv4,
+ * the first reached by UDP port.
  *
  * Pure and bounded, like `parseTzsp`: bytes in, layers out, no I/O, and it
  * never throws. Each layer keeps its span in the frame, so its bytes can be
@@ -19,6 +20,12 @@ import { DISPATCH } from "./dissect/registry.ts";
 import { type DissectProblem, Frame, type Layer } from "./dissect/core.ts";
 
 export type { ArpFields, ArpLayer } from "./dissect/arp.ts";
+export {
+	type DhcpFields,
+	type DhcpLayer,
+	type DhcpOtherOption,
+	MAX_DHCP_OPTIONS,
+} from "./dissect/dhcp.ts";
 export {
 	type DataFields,
 	type DataLayer,
