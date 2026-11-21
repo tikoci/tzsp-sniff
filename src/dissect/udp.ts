@@ -67,6 +67,7 @@ function udp(f: Frame, start: number, end: number, ip: IpContext) {
 		start + layer.length,
 		[fields.srcPort, fields.dstPort],
 		ip,
+		length <= available,
 	);
 }
 

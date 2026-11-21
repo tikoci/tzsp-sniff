@@ -280,12 +280,15 @@ export type IpDissect = (
 /**
  * As {@link IpDissect}, for a UDP or TCP payload: from `start` to `end` is
  * the payload, never empty, and `ip` is the packet's (never a fragment).
+ * `complete` is false when the capture ended inside the payload: a UDP
+ * length past the captured bytes, or a TCP segment in a cut IP packet.
  */
 export type PortDissect = (
 	f: Frame,
 	start: number,
 	end: number,
 	ip: IpContext,
+	complete: boolean,
 ) => void;
 
 /** How a dissector is reached, and the function that reads it there. */
@@ -406,6 +409,7 @@ export class Frame {
 		end: number,
 		ports: readonly [number, number],
 		ip: IpContext,
+		complete: boolean,
 	) {
 		if (end <= start) return;
 		const table =
@@ -416,7 +420,7 @@ export class Frame {
 		const next = ip.fragment
 			? undefined
 			: (table.get(low) ?? (high === low ? undefined : table.get(high)));
-		if (next) next(this, start, end, ip);
+		if (next) next(this, start, end, ip, complete);
 		else this.data(start, end);
 	}
 }

@@ -13,6 +13,7 @@ import {
 	type FieldDecls,
 	type Frame,
 	fieldInfo,
+	type IpContext,
 	formatIpv4,
 	formatIpv6,
 	formatMac,
@@ -38,7 +39,7 @@ import {
 
 export type { MndpTlvFields } from "./mndp-table.ts";
 
-/** The most TLVs read; one more is `unsupported` (`tlv-limit`). RouterOS sends 11 to 16. */
+/** The most TLVs read; one more is `unsupported` (`tlv-limit`). RouterOS sent 13 to 17 in the lab (test/lab/mndp/REPORT.md). */
 export const MAX_MNDP_TLVS = 64;
 
 export interface MndpOtherTlv {
@@ -84,7 +85,13 @@ const u32le = (b: Uint8Array, o: number) =>
 
 // m2ir physical/mndp.yaml: a 4-byte header, then u16be type, u16be length
 // and the value, repeated to the end of the UDP payload.
-function mndp(f: Frame, start: number, end: number) {
+function mndp(
+	f: Frame,
+	start: number,
+	end: number,
+	_ip: IpContext,
+	complete: boolean,
+) {
 	const b = f.b;
 	const available = end - start;
 	if (available < 4) {
@@ -122,8 +129,9 @@ function mndp(f: Frame, start: number, end: number) {
 
 	let offset = start + 4;
 	let count = 0;
-	// The TLVs end exactly at the datagram's end (m2ir framing-rule).
-	let framed = true;
+	// The TLVs end exactly at the datagram's end (m2ir framing-rule). Where
+	// the capture ended inside the datagram, its end is not known.
+	let framed = complete;
 	while (offset < end) {
 		if (count === MAX_MNDP_TLVS) {
 			mark("unsupported", "tlv-limit");
@@ -261,7 +269,7 @@ const FIELDS: FieldDecls<MndpFields> = {
 	},
 	request: {
 		type: "boolean",
-		description: `The datagram asks every router on the segment to announce now, by m2ir's request rule: its TLVs end at its end, and its header is zero or it carries an empty TLV 6. A router's first announcement after boot has a zero header, so it is a request too. False when a TLV runs past the datagram or the TLV limit stops the reading.`,
+		description: `The datagram asks every router on the segment to announce now, by m2ir's request rule: its TLVs end at its end, and its header is zero or it carries an empty TLV 6. A router's first announcement after boot has a zero header, so it is a request too. False when a TLV runs past the datagram, the TLV limit stops the reading, or the capture ended inside the datagram (its end is then unknown).`,
 		...MNDP_REQUEST_SOURCE,
 	},
 	...MNDP_TLV_FIELDS,

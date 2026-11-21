@@ -2341,6 +2341,34 @@ describe("dissect: MNDP", () => {
 		expect(packetLine(d)).toBe("10.0.2.15:5678 > 10.0.2.3:5678 mndp request");
 	});
 
+	test("a capture that ends inside the datagram is not a request: its end is unknown", () => {
+		// The whole datagram would be a request; the capture keeps only the
+		// header and an empty TLV 6, so the TLVs end where the bytes do.
+		for (const kept of ["00000000", "0000000000060000"]) {
+			const whole = mndpFrame(`${kept}${ID}`);
+			const d = dissect(whole.subarray(0, AT + kept.length / 2));
+			expect(d.layers.find((l) => l.protocol === "udp")?.problem).toBe(
+				"truncated",
+			);
+			const l = mndpOf(d);
+			expect(l.fields?.request).toBe(false);
+			expect(l.fields?.header).toBe("00000000");
+			expect(packetLine(d)).not.toContain("request");
+		}
+		// The same bytes as a whole datagram are one.
+		expect(of("0000000000060000").f?.request).toBe(true);
+	});
+
+	test("an empty UDP 5678 payload gets no MNDP layer, as any empty port payload", () => {
+		const d = dissect(mndpFrame(""));
+		expect(d.layers.map((l) => l.protocol)).toEqual([
+			"ethernet",
+			"ipv4",
+			"udp",
+		]);
+		expect(d.problem).toBeUndefined();
+	});
+
 	test("under 4 bytes is truncated (header), with no fields", () => {
 		const { d, l } = of("000000");
 		expect(l.fields).toBeUndefined();
@@ -2445,20 +2473,20 @@ describe("dissect: MNDP", () => {
 		expect(bom.f?.identity).toBe("﻿A");
 	});
 
-	test(`after ${MAX_MNDP_TLVS} TLVs the layer is unsupported (tlv-limit)`, () => {
-		const { d, f } = of(
-			`00000000${mtlv(15, "00".repeat(16)).repeat(MAX_MNDP_TLVS)}${ID}`,
-		);
+	test("after 64 TLVs the layer is unsupported (tlv-limit)", () => {
+		// 64 literally: the vectors do not take the limit from the code.
+		expect(MAX_MNDP_TLVS).toBe(64);
+		const { d, f } = of(`00000000${mtlv(15, "00".repeat(16)).repeat(64)}${ID}`);
 		expect(d.problem).toEqual({
 			protocol: "mndp",
 			problem: "unsupported",
 			reason: "tlv-limit",
 		});
-		expect(f?.address6).toHaveLength(MAX_MNDP_TLVS);
+		expect(f?.address6).toHaveLength(64);
 		expect(f?.identity).toBeUndefined();
 		// The rest was not read, so the framing is not known: not a request.
 		expect(f?.request).toBe(false);
-		expect(of(`00000000${ID.repeat(MAX_MNDP_TLVS)}`).d.problem).toBeUndefined();
+		expect(of(`00000000${ID.repeat(64)}`).d.problem).toBeUndefined();
 	});
 
 	test("reached from either port, in IPv6 too", () => {

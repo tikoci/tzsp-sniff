@@ -82,6 +82,24 @@ describe("m2ir generator", () => {
 		expect(table).toContain(" * - TLV 12 (board): guessed");
 	});
 
+	test("a named value or bit carries its own versions, exactly, and not the TLV's since", () => {
+		const table = writeTable(
+			model(),
+			parse(PROFILE).scope["versions-observed"],
+		);
+		const decl = (field: string) =>
+			table.split("\n").find((l) => l.trimStart().startsWith(`${field}: {`)) ??
+			"";
+		// dying-gasp was seen on 7.26beta5 only; TTL itself has since 7.24.5.
+		expect(decl("ttlName")).toContain('versionsSeen: ["7.26beta5"]');
+		expect(decl("ttlName")).not.toContain("since:");
+		expect(decl("ttl")).toContain('since: "7.24.5"');
+		expect(decl("runningFlags")).not.toContain("since:");
+		// Each name's versions are listed, not a count and a range.
+		expect(decl("ipv6EnabledName")).not.toMatch(/\d+ versions, /);
+		expect(table).not.toMatch(/\d+ versions, \S+ to /);
+	});
+
 	test("`all` is every version m2ir observed, and a version outside them stops it", () => {
 		const m = model();
 		expect(m.tlvs.find((t) => t.type === 1)?.versionsSeen).toEqual(
@@ -115,5 +133,39 @@ describe("m2ir generator", () => {
 				model(undefined, PHYSICAL.replace("width: u16be }", "width: u8 }")),
 			),
 		).toContain("expected u16be type and length");
+		// What the reader assumes of the physical file: a header of another
+		// size, an encoding in another byte order or body, an unknown endian.
+		const physical: [string, string, string][] = [
+			[
+				'size: 4\n        role: "profile-defined',
+				'size: 8\n        role: "profile-defined',
+				"expected a 4-byte header",
+			],
+			[
+				'endian: le\n    role: "unsigned 32-bit integer, little',
+				'endian: be\n    role: "unsigned 32-bit integer, little',
+				"value-encodings.u32le.endian",
+			],
+			[
+				'endian: be\n    role: "IPv4',
+				'endian: le\n    role: "IPv4',
+				"value-encodings.ipv4.endian",
+			],
+			["body: utf8", "body: latin1", "value-encodings.text.body"],
+			["size: 6\n", "size: 8\n", "value-encodings.mac48.size"],
+		];
+		for (const [from, to, message] of physical) {
+			expect(PHYSICAL).toContain(from);
+			expect(
+				error(() => model(undefined, PHYSICAL.replace(from, to))),
+			).toContain(message);
+		}
+		expect(
+			error(() =>
+				model((p) => {
+					p.header.fields[0]["byte-order-by-architecture"][0].endian = "middle";
+				}),
+			),
+		).toContain("expected le or be: middle");
 	});
 });

@@ -70,7 +70,7 @@ unit tier replays them.
   triggered; the IPv6 copy carries the same value. m2ir's arm64 reading
   rests on its FINDINGS.md, with no committed arm64 sample
   (`architectures-in-committed-samples`); these are arm64 samples.
-- **Two copies.** Each announcement went out to `255.255.255.255:5678` from
+- **Two copies.** With IPv6 enabled, each announcement went out to `255.255.255.255:5678` from
   10.0.2.15 and to `[ff02::1]:5678` from ether1's link-local address, the
   IPv6 copy first by 0 to 4 ms, from and to port 5678.
 - **Interval and TTL.** As booted, an announcement every 30 s with TLV 19 =
@@ -88,6 +88,8 @@ unit tier replays them.
   Machine` (arm64), so a check compares with `CHR`, not the board name.
 - **TLV 18** is 00 (no CAPsMAN, no CMR) and **TLV 16** `ether1`; TLV 17 is
   10.0.2.15 and TLV 15 the link-local address, the only IPv6 address.
+  m2ir's `versions-seen` for TLV 17 does not list 7.24.6; these samples
+  add it (in tikoci/m2ir#13).
 - **Packing on 7.24.6 and 7.25.1.** `unpacking=compress-all` adds TLVs 2,
   3, 4 and 9, with 9 = dc 05 00 00 (1500 little-endian) **on arm64 as on
   x86_64**. m2ir saw these TLVs on 7.26beta5 only, and leaves TLV 9's byte

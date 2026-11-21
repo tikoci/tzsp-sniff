@@ -1018,7 +1018,11 @@ m2ir, is in test/lab/mndp/REPORT.md.
   at the datagram's end, and the header is zero or a TLV 6 is empty. A
   router's first announcement after boot has a zero header, so it is a
   request too, as m2ir says. A datagram whose reading stopped early (a TLV
-  past the end, the TLV limit) is not one.
+  past the end, the TLV limit) is not one, nor is one the capture ended
+  inside (a UDP length past the captured bytes): its TLVs may end where
+  the capture did, not where the datagram does. Port dissectors are told
+  this as `complete` (the UDP length all captured; for TCP, the IP packet
+  not cut).
 - **Names are m2ir's, camelCased** (`macAddress`, `softwareId`,
   `ipv6Enabled`, `interfaceName` …). A `bytes` TLV gets a `Hex` suffix
   (`aggregatedSizeHex`, `requestHex`); an enum adds `<name>Name` (`ttlName:
@@ -1031,7 +1035,8 @@ m2ir, is in test/lab/mndp/REPORT.md.
   (`documented` or `observed-only`), `versionsSeen` and `since`, filled
   from m2ir for each generated field, and the text output prints them in
   brackets. An enum's or bitmask's name field takes its values' weakest
-  confidence and every version any was seen on. A TLV, value or bit m2ir
+  confidence and every version any was seen on, and no `since` (that is the
+  TLV's); its description lists each name's versions, exactly. A TLV, value or bit m2ir
   marks `inferred`, `guessed` or `superseded` gets no name: its bytes stay
   raw. A version-scoped meaning (TLV 14's `meaning-by-version`, TLV 9's
   `encoding-by-architecture`) is written into the field's description with
@@ -1043,7 +1048,9 @@ m2ir, is in test/lab/mndp/REPORT.md.
   `otherTlvs`, with no problem, as LLDP's "should not" TLVs; the first one
   read is the field (a first of the wrong length does not take it). m2ir
   does not call a repeat malformed.
-- **Problems.** Under 4 bytes is `truncated` (`header`) with no fields; a
+- **Problems.** An empty UDP 5678 payload gets no MNDP layer, as any empty
+  port payload (see "Decided: port matches"); 1 to 3 bytes is `truncated`
+  (`header`) with no fields; a
   TLV header or value past the datagram `truncated` (`tlv`), the TLVs
   before it kept. m2ir's framing rule calls such a datagram malformed (no
   router answers it); here `truncated` names what the reader met, as DHCP

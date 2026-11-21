@@ -97,6 +97,27 @@ const ENCODINGS = {
 type Encoding = keyof typeof ENCODINGS;
 const isEncoding = (e: string): e is Encoding => e in ENCODINGS;
 
+/**
+ * What src/dissect/mndp.ts assumes of each encoding m2ir defines: its size,
+ * byte order and body. A change to any of them stops the generator, since
+ * the reader would go on reading the old way.
+ */
+const ENCODING_PROPERTIES: Record<
+	Encoding | "u32-sender-order",
+	Record<string, unknown>
+> = {
+	empty: { size: 0 },
+	u8: { size: 1 },
+	"u32-sender-order": { size: 4, endian: "sender" },
+	u32le: { size: 4, endian: "le" },
+	mac48: { size: 6 },
+	ipv4: { size: 4, endian: "be" },
+	ipv6: { size: 16, endian: "be" },
+	text: { size: null, body: "utf8" },
+	bytes: { size: null },
+	"bitmask-u8": { size: 1 },
+};
+
 const camel = (name: string) =>
 	name.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 
@@ -168,11 +189,30 @@ export function readMndp(
 	});
 	if (shape.join(",") !== "type:u16be,length:u16be,value:length")
 		fail(where, `expected u16be type and length, then the value: ${shape}`);
+	const dWhere = "physical/mndp.yaml structure.datagram";
+	const datagram = list(
+		obj(obj(physical.structure, "structure").datagram, dWhere).seq,
+		dWhere,
+	).map((s, i) => obj(s, `${dWhere}.seq[${i}]`));
+	const dShape = datagram.map((e) =>
+		[e.name, e.size ?? "", e.kind ?? "", e.repeat ?? ""].join(":"),
+	);
+	if (dShape.join(",") !== "header:4::,records::tlv:eos")
+		fail(dWhere, `expected a 4-byte header, then TLVs to the end: ${dShape}`);
 	const port = num(
 		obj(physical.transport, "physical transport").port,
 		"physical transport.port",
 	);
 	const sizes = obj(physical["value-encodings"], "value-encodings");
+	for (const [e, want] of Object.entries(ENCODING_PROPERTIES)) {
+		const got = obj(sizes[e], `value-encodings.${e}`);
+		for (const [k, v] of Object.entries(want))
+			if (got[k] !== v)
+				fail(
+					`value-encodings.${e}.${k}`,
+					`expected ${JSON.stringify(v)}, the reader assumes it: ${JSON.stringify(got[k])}`,
+				);
+	}
 
 	const scope = obj(profile.scope, "scope");
 	const observed = strings(
@@ -205,7 +245,13 @@ export function readMndp(
 	)
 		.map((o, i) => {
 			const e = obj(o, `header byte-order-by-architecture[${i}]`);
-			const end = str(e.endian, "endian") === "le" ? "little" : "big";
+			const endian = str(e.endian, "endian");
+			if (endian !== "le" && endian !== "be")
+				fail(
+					`header byte-order-by-architecture[${i}].endian`,
+					`expected le or be: ${endian}`,
+				);
+			const end = endian === "le" ? "little" : "big";
 			return `${end}-endian on ${strings(e.architectures, "architectures").join(", ")}`;
 		})
 		.join("; ");
@@ -383,10 +429,8 @@ const HAND_FIELDS = [
 
 // ── writing the table ───────────────────────────────────────────────────────
 
-function versionText(vs: readonly string[]): string {
-	if (vs.length <= 3) return vs.join(", ");
-	return `${vs.length} versions, ${vs[0]} to ${vs[vs.length - 1]}`;
-}
+/** Every version, exactly: a range would claim the versions between. */
+const versionText = (vs: readonly string[]) => vs.join(", ");
 
 const WHAT: Record<Encoding, (t: Tlv) => string> = {
 	empty: () => "true when the TLV is there; it carries no value",
@@ -459,7 +503,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 				`\t/** The name of ${t.field}'s value. */\n\t${t.field}Name?: string;`,
 			);
 			decls.push(
-				`\t${t.field}Name: { type: "string", optional: true, description: ${j(`The name of ${t.field}'s value: ${t.values.map((n) => namedText(n, String)).join(", ")}. Absent for another value.`)}, ${src(s.confidence, s.versionsSeen, t.since)} },`,
+				`\t${t.field}Name: { type: "string", optional: true, description: ${j(`The name of ${t.field}'s value: ${t.values.map((n) => namedText(n, String)).join(", ")}. Absent for another value.`)}, ${src(s.confidence, s.versionsSeen)} },`,
 			);
 		}
 		if (t.bits) {
@@ -468,7 +512,7 @@ export function writeTable(m: Model, observed: readonly string[]): string {
 				`\t/** The names of the bits set in ${t.field}. */\n\t${t.field}Flags?: string[];`,
 			);
 			decls.push(
-				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first: ${t.bits.map((n) => namedText(n, hex2)).join(", ")}; a bit not named here is bit-0x04 and so on.`)}, ${src(s.confidence, s.versionsSeen, t.since)} },`,
+				`\t${t.field}Flags: { type: "string[]", optional: true, description: ${j(`The names of the bits set in ${t.field}, lowest first: ${t.bits.map((n) => namedText(n, hex2)).join(", ")}; a bit not named here is bit-0x04 and so on.`)}, ${src(s.confidence, s.versionsSeen)} },`,
 			);
 		}
 	}
@@ -594,12 +638,20 @@ async function readSource(): Promise<Source> {
 export async function generate(): Promise<string> {
 	const source = await readSource();
 	const read = (p: string) => readFile(join(VENDOR, p), "utf8");
-	const profileYaml = await read("profiles/mndp/profile.yaml");
-	const model = readMndp(
+	return tableFrom(
 		await read("physical/mndp.yaml"),
-		profileYaml,
+		await read("profiles/mndp/profile.yaml"),
 		source.commit,
 	);
+}
+
+/** The table m2ir's two files at `commit` give, formatted; throws as readMndp. */
+async function tableFrom(
+	physicalYaml: string,
+	profileYaml: string,
+	commit: string,
+): Promise<string> {
+	const model = readMndp(physicalYaml, profileYaml, commit);
 	const observed = strings(
 		obj(obj(Bun.YAML.parse(profileYaml), "profile").scope, "scope")[
 			"versions-observed"
@@ -642,7 +694,12 @@ export async function check(): Promise<string[]> {
 	return problems;
 }
 
-/** Vendor m2ir's files at `ref`, a commit on its main branch. Networked. */
+/**
+ * Vendor m2ir's files at `ref`, a commit on its main branch, and write the
+ * table they give. Networked. Every file is fetched and the table made
+ * before anything is written, so a failed fetch or a schema the generator
+ * refuses leaves the snapshot and the table as they were.
+ */
 async function refresh(ref: string): Promise<Source> {
 	const api = async (path: string) => {
 		const r = await fetch(
@@ -662,13 +719,22 @@ async function refresh(ref: string): Promise<Source> {
 		throw new GenerateError(
 			`${sha} is not on ${REPOSITORY} main (${compare.status}); only main is vendored`,
 		);
-	const files: Record<string, string> = {};
+	const bodies = new Map<string, Uint8Array>();
 	for (const p of FILES) {
 		const r = await fetch(
 			`https://raw.githubusercontent.com/${REPOSITORY}/${sha}/${p}`,
 		);
 		if (!r.ok) throw new GenerateError(`${p} at ${sha}: ${r.status}`);
-		const body = new Uint8Array(await r.arrayBuffer());
+		bodies.set(p, new Uint8Array(await r.arrayBuffer()));
+	}
+	const text = (p: string) => new TextDecoder().decode(bodies.get(p));
+	const table = await tableFrom(
+		text("physical/mndp.yaml"),
+		text("profiles/mndp/profile.yaml"),
+		sha,
+	);
+	const files: Record<string, string> = {};
+	for (const [p, body] of bodies) {
 		await mkdir(dirname(join(VENDOR, p)), { recursive: true });
 		await writeFile(join(VENDOR, p), body);
 		files[p] = sha256(body);
@@ -684,6 +750,7 @@ async function refresh(ref: string): Promise<Source> {
 		join(VENDOR, "SOURCE.json"),
 		`${JSON.stringify(source, null, "\t")}\n`,
 	);
+	await writeFile(TABLE, table);
 	return source;
 }
 
@@ -701,8 +768,7 @@ if (import.meta.main) {
 		} else if (first !== undefined) {
 			console.error("usage: bun scripts/m2ir.ts [--check | refresh [ref]]");
 			process.exit(2);
-		}
-		await writeFile(TABLE, await generate());
+		} else await writeFile(TABLE, await generate());
 		console.error(`m2ir: wrote ${TABLE.slice(ROOT.length + 1)}`);
 	} catch (error) {
 		if (!(error instanceof GenerateError)) throw error;

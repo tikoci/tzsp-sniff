@@ -560,7 +560,7 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 		type: "string",
 		optional: true,
 		description:
-			"The name of ipv6Enabled's value: disabled (0; observed-only, seen on 7 versions, 6.49.21 to 7.26beta5), enabled (1; observed-only, seen on 16 versions, 6.49.23 to 7.26beta5). Absent for another value.",
+			"The name of ipv6Enabled's value: disabled (0; observed-only, seen on 6.49.21, 6.49.23, 7.18.2, 7.20.8, 7.21.3, 7.23beta4, 7.26beta5), enabled (1; observed-only, seen on 6.49.23, 7.6, 7.11beta6, 7.11, 7.12.1, 7.17.2, 7.18.2, 7.19.4, 7.20, 7.20.8, 7.24.5, 7.24.6, 7.25beta5, 7.25, 7.25.1, 7.26beta5). Absent for another value.",
 		confidence: "observed-only",
 		versionsSeen: [
 			"6.49.21",
@@ -686,7 +686,6 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 			"The names of the bits set in running, lowest first: capsman (0x01; observed-only, seen on 7.24.5, 7.26beta5), cmr (0x02; observed-only, seen on 7.26beta5); a bit not named here is bit-0x04 and so on.",
 		confidence: "observed-only",
 		versionsSeen: ["7.24.5", "7.26beta5"],
-		since: "7.20",
 	},
 	ttl: {
 		type: "number",
@@ -711,6 +710,5 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 			"The name of ttl's value: dying-gasp (0; observed-only, seen on 7.26beta5). Absent for another value.",
 		confidence: "observed-only",
 		versionsSeen: ["7.26beta5"],
-		since: "7.24.5",
 	},
 };
