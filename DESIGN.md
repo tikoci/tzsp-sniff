@@ -108,9 +108,10 @@ Attribution:
   and source MAC as a heuristic for one lab's TCP and MNDP sightings; it is
   not general attribution, and this tool does not claim any.
 - **Bind address**: `--bind` picks the local address (default all IPv4
-  addresses; IPv6 with `--bind ::`). `setup --quickchr` targets the SLIRP
-  gateway 10.0.2.2, which reaches the host's loopback; for a physical router
-  `setup` targets the host address the user selects (see `setup`).
+  addresses; IPv6 with `--bind ::`). A CHR under QEMU user-mode networking
+  sends to the SLIRP gateway 10.0.2.2, which reaches the host's loopback; a
+  physical router sends to the host address the user selects. Either way
+  `setup` takes it as `--target` (see `setup`).
 - **Sockets stay unconnected.** A socket connected to one peer receives only
   that peer's datagrams; a listener that must accept every router, or a
   SLIRP-rewritten peer it cannot predict, stays unconnected (`recvfrom`).
@@ -129,12 +130,17 @@ differently, which is why centrs sets it for MNDP; that does not carry over.)
 **Not quickchr's port map.** quickchr's service map creates `hostfwd`
 listeners for host-to-guest traffic. TZSP flows guest to host, and
 tzsp-sniff must own the host UDP socket, so adding TZSP to that map would
-have QEMU hold the receiver's port. If quickchr wants to help, it advertises
-a receiver endpoint per VM: tikoci/quickchr#299 asks for a named
-guest-to-host receive port per machine, reserved but never bound by quickchr,
-and listed in `quickchr inspect --json`. Every CHR's gateway is `10.0.2.2`
-and SLIRP rewrites the source to loopback, so a port per machine is the only
-label that tells two routers' streams apart.
+have QEMU hold the receiver's port. quickchr instead records a receive
+slot per machine (tikoci/quickchr#299, PR tikoci/quickchr#303): a named
+guest-to-host port, reserved but never bound by quickchr, unique across its
+machines, and listed in `quickchr inspect`. Every CHR's gateway is
+`10.0.2.2` and SLIRP rewrites the source to loopback, so a port per machine
+is the only label that tells two routers' streams apart. The slot name is a
+label, not a protocol: nothing here reads `receive.tzsp` as TZSP. The
+integration tier binds its listener first (port 0, so the port is known to
+be free) and then records that port with `addReceivePort`, so quickchr can
+catch a clash between machines; shipped code does not read slots
+("Decided: no `--quickchr`").
 
 ## Library
 
@@ -798,10 +804,21 @@ open, it was made in the slice, and each is tested in
 listener, for `/tool/sniffer` (the default) or `--mangle` (`sniff-tzsp`,
 with `--chain`).
 
-- **Destination**: `--quickchr` uses 10.0.2.2 and the listener's port. Otherwise
-  it uses `--target <address>`; without one it lists the host's candidate
-  addresses and asks for `--target`, because it cannot know which one the
-  router reaches. One block of commands per listener port, labelled.
+- **Destination**: `--target <address>` and the listener's port. Without
+  `--target` it lists the host's candidate addresses and asks for one,
+  because it cannot know which one the router reaches; the refusal, `--help`
+  and README add the quickchr case: `--target 10.0.2.2`, and
+  `quickchr set <name> --receive tzsp` to record the port for that machine.
+  One block of commands per listener port, labelled.
+- **Decided: no `--quickchr`** (maintainer, 2026-11-20). `setup` is a
+  command builder for the sending side, and the caller brings the router:
+  `centrs`, `quickchr exec` or a person at a real device runs what it
+  prints. tzsp-sniff never calls quickchr or centrs, and reads no quickchr
+  descriptor: quickchr is Bun-only, and shipped code here runs on Node too
+  ("Decided: Node and `npx`"), so reading it would mean a `quickchr` on
+  `PATH`. A flag named after quickchr would also promise more than a fixed
+  10.0.2.2. The commands are kept and tested here, on a CHR, so centrs and
+  quickchr can rely on them without growing their own sniffer tests.
 - **Values are quoted** for RouterOS, and every block has its matching stop
   or remove command, printed with it.
 - **Filter translation is limited to flags with a proven router
@@ -986,8 +1003,8 @@ fit in one packet and that a CHR sends:
 - DHCPv4, from order 2, as the first dissector reached by UDP port (slice
   6c, #29);
 - MNDP, from order 4, as the first table generated from m2ir (6d, #31). It
-  skips the raw-TLV stage, so it waits on tikoci/m2ir#8 (LICENSE) and
-  tikoci/m2ir#9 (canonical MNDP YAML);
+  skips the raw-TLV stage, so it waited on tikoci/m2ir#8 (LICENSE) and
+  tikoci/m2ir#9 (canonical MNDP YAML), both closed by 2026-11-21 UTC;
 - one service-discovery protocol, a class this order did not list: mDNS,
   SSDP or NAT-PMP, picked by a CHR lab of what RouterOS sends (6e, #30).
 
