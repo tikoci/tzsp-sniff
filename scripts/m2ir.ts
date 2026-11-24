@@ -271,7 +271,7 @@ export function readMndp(
 			"physical transport.protocol",
 			`expected udp, the dissector is registered on: ${transport.protocol}`,
 		);
-	const port = num(transport.port, "physical transport.port");
+	const port = u16(transport.port, "physical transport.port");
 	const sizes = obj(physical["value-encodings"], "value-encodings");
 	for (const [e, want] of Object.entries(ENCODING_PROPERTIES)) {
 		const got = obj(sizes[e], `value-encodings.${e}`);
@@ -397,7 +397,21 @@ export function readMndp(
 		const length = t.length === "any" ? "any" : num(t.length, `${at}.length`);
 		if (size !== null && length !== size)
 			fail(at, `length ${length} does not fit ${e} (size ${size})`);
-		const repeat = t.repeat === true;
+		const repeat =
+			t.repeat === undefined
+				? false
+				: typeof t.repeat === "boolean"
+					? t.repeat
+					: fail(
+							`${at}.repeat`,
+							`expected true or false: ${JSON.stringify(t.repeat)}`,
+						);
+		const seenOf = t["versions-seen-of"] ?? "sender";
+		if (seenOf !== "sender" && seenOf !== "receiver")
+			fail(
+				`${at}.versions-seen-of`,
+				`expected sender or receiver: ${JSON.stringify(seenOf)}`,
+			);
 		if (repeat && !REPEATS.has(e))
 			fail(at, `only ${[...REPEATS].join(", ")} may repeat, not ${e}`);
 		const tlv: Tlv = {
@@ -409,7 +423,7 @@ export function readMndp(
 			repeat,
 			confidence: c as Confidence,
 			versionsSeen: versions(t["versions-seen"], `${at}.versions-seen`),
-			receiverVersions: t["versions-seen-of"] === "receiver",
+			receiverVersions: seenOf === "receiver",
 			notes: [],
 		};
 		if (typeof t["neighbor-field"] === "string")

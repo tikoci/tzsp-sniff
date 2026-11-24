@@ -232,6 +232,13 @@ describe("m2ir generator", () => {
 			["unknown label", (p) => (p.tlvs[7].confidence = "sure")],
 			["is named twice", (p) => (p.tlvs[8].name = "identity")],
 			["is named twice", (p) => (p.tlvs[8].name = "other-tlvs")],
+			// A value the reader does not know is refused, not read as false
+			// or as the senders.
+			["expected true or false", (p) => (p.tlvs[15].repeat = "yes")],
+			[
+				"expected sender or receiver",
+				(p) => (p.tlvs[6]["versions-seen-of"] = "recevier"),
+			],
 		];
 		for (const [message, change] of cases)
 			expect(error(() => model(change))).toContain(message);
@@ -290,6 +297,12 @@ describe("m2ir generator", () => {
 				model(undefined, PHYSICAL.replace("protocol: udp", "protocol: tcp")),
 			),
 		).toContain("expected udp");
+		// A port no UDP datagram can carry.
+		expect(
+			error(() =>
+				model(undefined, PHYSICAL.replace("port: 5678", "port: 65536")),
+			),
+		).toContain("65536 is not a 16-bit number");
 		expect(
 			error(() =>
 				model((p) => {
