@@ -25,7 +25,12 @@ export interface M2irValueFacts {
 
 /** m2ir's scope for one field a protocol's layer has. */
 export interface M2irFieldFacts {
-	/** The field, as records and `dissectors()` name it. */
+	/**
+	 * The field, as records and `dissectors()` name it. A field derived from
+	 * another has no entry of its own: `<field>Name` is under `<field>`'s
+	 * `values`, `<field>Flags` under its `bits`, and MNDP's `counterLe` and
+	 * `counterBe` under `header`.
+	 */
 	field: string;
 	/** The TLV it is read from; absent for a field read from the header. */
 	tlv?: number;

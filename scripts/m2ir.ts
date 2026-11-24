@@ -198,6 +198,8 @@ export interface Model {
 		confidence: Confidence;
 		versionsSeen: string[];
 		orders: string;
+		/** m2ir's example per byte order and its evidence, for the comment. */
+		grounding: string[];
 	};
 	request: {
 		headers: number[];
@@ -309,10 +311,20 @@ export function readMndp(
 	const hConfidence = confidence(h.confidence, "header.fields[0]");
 	if (!NAMED.has(hConfidence))
 		fail("header.fields[0]", `confidence ${hConfidence}`);
-	const orders = list(
+	const byOrder = list(
 		h["byte-order-by-architecture"],
 		"header byte-order-by-architecture",
-	)
+	);
+	const grounding = [
+		...byOrder.flatMap((o) => {
+			const e = obj(o, "header byte-order-by-architecture");
+			return typeof e.example === "string" ? [`e.g. ${e.example}`] : [];
+		}),
+		...(h.evidence === undefined ? [] : list(h.evidence, "header.evidence"))
+			.map((v) => obj(v, "header.evidence").ref)
+			.filter((r): r is string => typeof r === "string"),
+	];
+	const orders = byOrder
 		.map((o, i) => {
 			const e = obj(o, `header byte-order-by-architecture[${i}]`);
 			const endian = str(e.endian, "endian");
@@ -330,6 +342,11 @@ export function readMndp(
 	const rule = obj(obj(profile.requests, "requests").rule, "requests.rule");
 	if (rule.requires !== "framing-rule")
 		fail("requests.rule", "expected requires: framing-rule");
+	const ruleExtra = Object.keys(rule).filter(
+		(k) => k !== "requires" && k !== "any-of",
+	);
+	if (ruleExtra.length)
+		fail("requests.rule", `unknown key ${ruleExtra.join(", ")}`);
 	const request: Model["request"] = {
 		headers: [],
 		tlvs: [],
@@ -373,6 +390,7 @@ export function readMndp(
 	}
 
 	const tlvs: Tlv[] = [];
+	const types = new Set<number>();
 	const entries = Object.entries(obj(profile.tlvs, "tlvs"));
 	for (const [key, raw] of entries.sort(
 		(a, b) => Number(a[0]) - Number(b[0]),
@@ -382,6 +400,9 @@ export function readMndp(
 		const type = Number(key);
 		if (!Number.isInteger(type) || type < 0 || type > 0xffff)
 			fail(at, "a TLV type is a 16-bit number");
+		// "19" and "019" are one type: the reader would keep only one of them.
+		if (types.has(type)) fail(at, `TLV type ${type} is listed twice`);
+		types.add(type);
 		const name = str(t.name, `${at}.name`);
 		const c = confidence(t.confidence, at);
 		if (!NAMED.has(c)) {
@@ -394,7 +415,7 @@ export function readMndp(
 			fail(`${at}.encoding`, `${encoding} is not one the dissector reads`);
 		const e = encoding as Encoding;
 		const size = obj(sizes[e], `value-encodings.${e}`).size;
-		const length = t.length === "any" ? "any" : num(t.length, `${at}.length`);
+		const length = t.length === "any" ? "any" : u16(t.length, `${at}.length`);
 		if (size !== null && length !== size)
 			fail(at, `length ${length} does not fit ${e} (size ${size})`);
 		const repeat =
@@ -431,8 +452,10 @@ export function readMndp(
 		if (t.since !== undefined) tlv.since = str(t.since, `${at}.since`);
 		if (t.introduced !== undefined)
 			tlv.introduced = str(t.introduced, `${at}.introduced`);
-		const named = (key: "values" | "bits", id: "value" | "mask") =>
-			list(t[key], `${at}.${key}`).flatMap((v, i) => {
+		const named = (key: "values" | "bits", id: "value" | "mask") => {
+			// The reader takes the first entry that matches; a second is never used.
+			const ids = new Set<number>();
+			return list(t[key], `${at}.${key}`).flatMap((v, i) => {
 				const n = obj(v, `${at}.${key}[${i}]`);
 				const nc = confidence(n.confidence, `${at}.${key}[${i}]`);
 				const value = num(n[id], `${at}.${key}[${i}].${id}`);
@@ -446,6 +469,9 @@ export function readMndp(
 						`${at}.${key}[${i}].${id}`,
 						`${value} is not ${id === "value" ? "a byte" : "one bit of a byte"}`,
 					);
+				if (ids.has(value))
+					fail(`${at}.${key}[${i}]`, `${id} ${value} is listed twice`);
+				ids.add(value);
 				const vname = str(n.name, `${at}.${key}[${i}].name`);
 				if (!NAMED.has(nc)) {
 					skipped.push(`TLV ${type} ${key} ${value} (${vname}): ${nc}`);
@@ -463,6 +489,7 @@ export function readMndp(
 					},
 				];
 			});
+		};
 		if (t.values !== undefined) {
 			if (e !== "u8") fail(at, "values on an encoding other than u8");
 			// None left: no name field, as for a value m2ir does not name.
@@ -527,6 +554,7 @@ export function readMndp(
 			confidence: hConfidence as Confidence,
 			versionsSeen: versions(h["versions-seen"], "header.versions-seen"),
 			orders,
+			grounding,
 		},
 		request,
 		tlvs,
@@ -568,12 +596,11 @@ function describe(t: Tlv): string {
 	];
 	if (t.length !== "any")
 		parts.push(
-			`A value other than ${t.length} bytes is malformed (tlv-length) and the TLV kept in otherTlvs.`,
+			`A value other than ${t.length} byte${t.length === 1 ? "" : "s"} is malformed (tlv-length) and the TLV kept in otherTlvs.`,
 		);
 	if (!t.repeat) parts.push("A second one is kept in otherTlvs.");
 	parts.push(...t.notes);
-	if (t.introduced)
-		parts.push(`Added in RouterOS ${t.introduced} (changelog).`);
+	// Which release added it is version scope: m2irFacts() has `introduced`.
 	return parts.join(" ");
 }
 
@@ -588,6 +615,28 @@ const weakest = (ns: readonly Named[]) =>
 		: "observed-only";
 
 /** The TypeScript of src/dissect/mndp-table.ts, before formatting. */
+/**
+ * The request rule in words, from the same clauses MNDP_REQUEST holds, so
+ * what dissectors() says cannot drift from what the reader matches.
+ */
+function requestText(r: Model["request"]): string {
+	const sizes = (ls: readonly number[]) => {
+		if (ls.length === 1 && ls[0] === 0) return "no value";
+		const each = ls.map((n) => `${n}-`);
+		const last = each.pop();
+		return `a ${each.length ? `${each.join(", ")} or ` : ""}${last}byte value`;
+	};
+	const clauses = [
+		...r.headers.map(() => "its header is zero"),
+		...r.tlvs.map((t) => `it carries TLV ${t.type} with ${sizes(t.lengths)}`),
+	];
+	let text = `${clauses.join(", or ")}.`;
+	if (r.headers.includes(0))
+		text +=
+			" A router's first announcement after boot has a zero header, so it is a request too.";
+	return text;
+}
+
 export function writeTable(m: Model, observed: readonly string[]): string {
 	const j = (v: unknown) => JSON.stringify(v);
 	const iface: string[] = [];
@@ -730,6 +779,9 @@ ${specs.join("\n")}
  */
 export const MNDP_REQUEST = ${j({ headers: m.request.headers, tlvs: m.request.tlvs })};
 
+/** MNDP_REQUEST in words, for the request field's description. */
+export const MNDP_REQUEST_TEXT = ${j(requestText(m.request))};
+
 /** How sure m2ir is of the header counter: ${commentText(m.header.orders)}. */
 export const MNDP_HEADER_CONFIDENCE: FieldConfidence = ${j(m.header.confidence)};
 
@@ -745,7 +797,12 @@ export const MNDP_UNNAMED: readonly string[] = ${j(m.skipped)};
 /** m2ir's scope for each field: what m2irFacts() returns for MNDP. */
 export const MNDP_M2IR_FACTS: readonly M2irFieldFacts[] = ${j(facts)};
 
-/** The header counter's byte order by sender architecture, as m2ir gives it. */
+/**
+ * The header counter's byte order by sender architecture, as m2ir gives it
+ * (profiles/mndp/profile.yaml \`header\`, at M2IR_COMMIT; evidence paths are
+ * in m2ir):
+${m.header.grounding.map((g) => ` * - ${commentText(g)}`).join("\n")}
+ */
 export const MNDP_HEADER_ORDERS = ${j(m.header.orders)};
 
 /** The fields MNDP's TLVs are read into, each absent when its TLV is. */

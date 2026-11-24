@@ -121,6 +121,7 @@ describe("m2ir generator", () => {
 			expect(decl(f)).not.toContain("versionsSeen");
 			expect(decl(f)).not.toContain("since");
 			expect(decl(f)).not.toContain("seen on");
+			expect(decl(f)).not.toContain("Added in");
 		}
 		// The facts keep them: TTL since 7.24.5, its dying-gasp value on 7.26beta5 only.
 		const facts = table.slice(
@@ -130,10 +131,30 @@ describe("m2ir generator", () => {
 		expect(facts).toContain(
 			'"field":"ttl","tlv":19,"name":"ttl","confidence":"observed-only"',
 		);
-		expect(facts).toContain('"since":"7.24.5"');
+		expect(facts).toContain('"since":"7.24.5","introduced":"7.24"');
 		expect(facts).toContain(
 			'{"value":0,"name":"dying-gasp","confidence":"observed-only","versionsSeen":["7.26beta5"]}',
 		);
+	});
+
+	test("the request field's description is written from the rule the reader uses", () => {
+		const rule = (change: (p: any) => void = () => {}) => {
+			const table = writeTable(
+				model(change),
+				parse(PROFILE).scope["versions-observed"],
+			);
+			return table.split("\n").find((l) => l.includes("MNDP_REQUEST_TEXT ="));
+		};
+		expect(rule()).toContain(
+			"its header is zero, or it carries TLV 6 with no value. A router's first announcement after boot has a zero header, so it is a request too.",
+		);
+		const wider = rule(
+			(p) => (p.requests.rule["any-of"][1]["tested-value-lengths"] = [0, 1]),
+		);
+		expect(wider).toContain("it carries TLV 6 with a 0- or 1-byte value");
+		expect(wider).not.toContain("with no value");
+		const tlvOnly = rule((p) => p.requests.rule["any-of"].shift());
+		expect(tlvOnly).toContain('"it carries TLV 6 with no value."');
 	});
 
 	test("m2ir text in a generated comment cannot end it", () => {
@@ -179,6 +200,52 @@ describe("m2ir generator", () => {
 		expect(flags).toContain("m2ir names none");
 		expect(flags).not.toContain("confidence");
 	});
+
+	test("src/ type-checks against a table in which m2ir names nothing", () => {
+		// A refresh may drop any generated field: code outside the table that
+		// names one would stop the build after the table is published.
+		const p = parse(PROFILE);
+		for (const t of Object.values(p.tlvs) as any[]) {
+			t.confidence = "guessed";
+			for (const n of [...(t.values ?? []), ...(t.bits ?? [])])
+				n.confidence = "guessed";
+		}
+		const m = readMndp(PHYSICAL, JSON.stringify(p), "0".repeat(40));
+		expect(m.tlvs).toEqual([]);
+		const root = join(VENDOR, "..", "..");
+		const dir = mkdtempSync(join(tmpdir(), "tzsp-sniff-m2ir-tsc-"));
+		try {
+			cpSync(join(root, "src"), join(dir, "src"), { recursive: true });
+			writeFileSync(
+				join(dir, "src", "dissect", "mndp-table.ts"),
+				writeTable(m, p.scope["versions-observed"]),
+			);
+			writeFileSync(
+				join(dir, "tsconfig.json"),
+				JSON.stringify({
+					extends: join(root, "tsconfig.json"),
+					compilerOptions: {
+						types: ["node"],
+						typeRoots: [join(root, "node_modules", "@types")],
+					},
+					include: ["src"],
+				}),
+			);
+			const tsc = Bun.spawnSync(
+				[
+					process.execPath,
+					join(root, "node_modules", "typescript", "bin", "tsc"),
+					"-p",
+					".",
+				],
+				{ cwd: dir, env: childEnv() },
+			);
+			expect(tsc.stdout.toString()).toBe("");
+			expect(tsc.exitCode).toBe(0);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	}, 30_000);
 
 	test("what the dissector cannot read stops it, rather than being left out", () => {
 		const cases: [string, (p: any) => void][] = [
@@ -239,6 +306,24 @@ describe("m2ir generator", () => {
 				"expected sender or receiver",
 				(p) => (p.tlvs[6]["versions-seen-of"] = "recevier"),
 			],
+			// One wire id, two names: the reader keeps one, dissectors() lists both.
+			[
+				"TLV type 19 is listed twice",
+				(p) => (p.tlvs["019"] = { ...p.tlvs[19], name: "ttl-again" }),
+			],
+			[
+				"value 0 is listed twice",
+				(p) =>
+					p.tlvs[19].values.push({ ...p.tlvs[19].values[0], name: "zero" }),
+			],
+			[
+				"mask 1 is listed twice",
+				(p) => p.tlvs[18].bits.push({ ...p.tlvs[18].bits[0], name: "caps" }),
+			],
+			// A length no TLV can carry.
+			["65536 is not a 16-bit number", (p) => (p.tlvs[5].length = 65536)],
+			// A rule key the reader would ignore.
+			["unknown key all-of", (p) => (p.requests.rule["all-of"] = [])],
 		];
 		for (const [message, change] of cases)
 			expect(error(() => model(change))).toContain(message);

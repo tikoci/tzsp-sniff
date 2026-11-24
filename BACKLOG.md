@@ -87,8 +87,8 @@ Small items, one or two sentences each, deleted when done or declined
   and decode option 82 (relay agent) sub-options, if a lab shows either
   from RouterOS.
 - MNDP: `bun run m2ir:refresh` once tikoci/m2ir#13 (this lab's 7.24.6,
-  7.25.1 and arm64 evidence) lands on m2ir's `main`, so `dissectors` shows
-  the wider `versionsSeen` and TLV 14's settled meaning.
+  7.25.1 and arm64 evidence) lands on m2ir's `main`, so `m2irFacts()` shows
+  the wider `versionsSeen`, and `dissectors` TLV 14's settled meaning.
 - MNDP lab: a boot announcement (header 0), a request and its reply, and a
   dying gasp from a CHR, which the lab does not capture today (it starts
   after boot and sends nothing); the vectors for them are built from m2ir's

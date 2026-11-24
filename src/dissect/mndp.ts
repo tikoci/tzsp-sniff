@@ -31,6 +31,7 @@ import {
 	MNDP_PORT,
 	MNDP_REQUEST,
 	MNDP_REQUEST_CONFIDENCE,
+	MNDP_REQUEST_TEXT,
 	MNDP_TLV_FIELDS,
 	MNDP_TLVS,
 	type MndpTlvFields,
@@ -39,7 +40,11 @@ import {
 
 export type { MndpTlvFields } from "./mndp-table.ts";
 
-/** The most TLVs read; bytes after the last are `unsupported` (`tlv-limit`). RouterOS sent 13 to 17 in the lab (test/lab/mndp/REPORT.md). */
+/**
+ * The most TLVs read; bytes after the last are `unsupported` (`tlv-limit`).
+ * RouterOS 7.24.6 and 7.25.1 sent 13, and 17 with `/ip/packing`, on x86_64
+ * and arm64 CHRs (quickchr 0.6.0, 2026-11-21; test/lab/mndp/REPORT.md).
+ */
 export const MAX_MNDP_TLVS = 64;
 
 export interface MndpOtherTlv {
@@ -274,7 +279,7 @@ const FIELDS: FieldDecls<MndpFields> = {
 	},
 	request: {
 		type: "boolean",
-		description: `The datagram asks every router on the segment to announce now, by m2ir's request rule: its TLVs end at its end, and its header is zero or it carries an empty TLV 6. A router's first announcement after boot has a zero header, so it is a request too. False when a TLV runs past the datagram, the TLV limit stops the reading, or the capture ended inside the datagram (its end is then unknown).`,
+		description: `The datagram asks every router on the segment to announce now, by m2ir's request rule: its TLVs end at its end, and ${MNDP_REQUEST_TEXT} False when a TLV runs past the datagram, the TLV limit stops the reading, or the capture ended inside the datagram (its end is then unknown).`,
 		confidence: MNDP_REQUEST_CONFIDENCE,
 	},
 	...MNDP_TLV_FIELDS,

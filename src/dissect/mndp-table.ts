@@ -215,6 +215,10 @@ export const MNDP_TLVS: readonly MndpTlvSpec[] = [
  */
 export const MNDP_REQUEST = { headers: [0], tlvs: [{ type: 6, lengths: [0] }] };
 
+/** MNDP_REQUEST in words, for the request field's description. */
+export const MNDP_REQUEST_TEXT =
+	"its header is zero, or it carries TLV 6 with no value. A router's first announcement after boot has a zero header, so it is a request too.";
+
 /** How sure m2ir is of the header counter: little-endian on x86_64, arm, arm64; big-endian on mipsbe. */
 export const MNDP_HEADER_CONFIDENCE: FieldConfidence = "observed-only";
 
@@ -722,7 +726,15 @@ export const MNDP_M2IR_FACTS: readonly M2irFieldFacts[] = [
 	},
 ];
 
-/** The header counter's byte order by sender architecture, as m2ir gives it. */
+/**
+ * The header counter's byte order by sender architecture, as m2ir gives it
+ * (profiles/mndp/profile.yaml `header`, at M2IR_COMMIT; evidence paths are
+ * in m2ir):
+ * - e.g. 20 7c 01 00 = 97,312 (7.26beta5 RB1100Dx4, 973,177 s uptime, 10 s interval)
+ * - e.g. 00 00 23 58 = 9,048 (7.25beta5 RB912R, 271,468 s uptime, 30 s interval); 7.23beta4 RB924iR reads the same way
+ * - field capture header bytes by CPU; see work/2026-11-mndp-grounding/evidence/field-summary.json
+ * - boot announcements with header 0; see work/2026-11-mndp-grounding/evidence/dying-gasp-7.26beta5.json and hub-session-2026-11-16.json
+ */
 export const MNDP_HEADER_ORDERS =
 	"little-endian on x86_64, arm, arm64; big-endian on mipsbe";
 
@@ -861,7 +873,7 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 		type: "number",
 		optional: true,
 		description:
-			"TLV 14, ipv6-enabled (/ip/neighbor ipv6): a number. A value other than 1 bytes is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs. What it follows depends on the sender's version (m2ir meaning-by-version): ipv6-package on 6.0 to 6.49.23 (observed-only); none on 7.0 to 7.17.2 (observed-only); disable-ipv6 on 7.18 to 7.20.8 (observed-only); disable-ipv6 on 7.21 to 7.25.1 (guessed); disable-ipv6 from 7.26beta5 (observed-only).",
+			"TLV 14, ipv6-enabled (/ip/neighbor ipv6): a number. A value other than 1 byte is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs. What it follows depends on the sender's version (m2ir meaning-by-version): ipv6-package on 6.0 to 6.49.23 (observed-only); none on 7.0 to 7.17.2 (observed-only); disable-ipv6 on 7.18 to 7.20.8 (observed-only); disable-ipv6 on 7.21 to 7.25.1 (guessed); disable-ipv6 from 7.26beta5 (observed-only).",
 		confidence: "observed-only",
 	},
 	ipv6EnabledName: {
@@ -896,7 +908,7 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 		type: "number",
 		optional: true,
 		description:
-			"TLV 18, running (/ip/neighbor running): the flag byte, as a number. A value other than 1 bytes is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs.",
+			"TLV 18, running (/ip/neighbor running): the flag byte, as a number. A value other than 1 byte is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs.",
 		confidence: "observed-only",
 	},
 	runningFlags: {
@@ -910,7 +922,7 @@ export const MNDP_TLV_FIELDS: FieldDecls<MndpTlvFields> = {
 		type: "number",
 		optional: true,
 		description:
-			"TLV 19, ttl: a number. A value other than 1 bytes is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs. Added in RouterOS 7.24 (changelog).",
+			"TLV 19, ttl: a number. A value other than 1 byte is malformed (tlv-length) and the TLV kept in otherTlvs. A second one is kept in otherTlvs.",
 		confidence: "observed-only",
 	},
 	ttlName: {

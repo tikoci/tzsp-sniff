@@ -178,8 +178,10 @@ MNDP's TLV names, types and lengths are generated from
 [m2ir](https://github.com/tikoci/m2ir)'s MNDP profile, not written by hand.
 Each MNDP field in `dissectors` says how sure m2ir is of it (`documented`
 or `observed-only`); the RouterOS versions m2ir saw each field, value and
-bit on, and since when, are in the library's `m2irFacts()`, with the m2ir
-commit they come from. The 4-byte header is a counter in the
+bit on, since when, and the release that added it, are in the library's
+`m2irFacts()`, with the m2ir commit they come from. A field derived from
+another is found under that one: `ttlName` under `ttl`, `runningFlags`
+under `running`, `counterLe` and `counterBe` under `header`. The 4-byte header is a counter in the
 sender's CPU byte order, which a receiver cannot know, so it is given read
 both ways (`counterLe`, `counterBe`); `request` says whether the datagram
 asks routers to announce now.
