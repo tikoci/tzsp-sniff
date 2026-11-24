@@ -95,6 +95,7 @@ function tcp(f: Frame, start: number, end: number, ip: IpContext) {
 		end,
 		[fields.srcPort, fields.dstPort],
 		ip,
+		!ip.cut,
 	);
 }
 

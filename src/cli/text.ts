@@ -237,10 +237,16 @@ export function summaryText(
 
 const matchText = (m: DissectorMatch) => `${m.by} ${m.value}`;
 
+/**
+ * A generated field's confidence, in brackets after its description.
+ * Nothing for a field read from a standard.
+ */
+const sourceText = (f: FieldInfo) => (f.confidence ? ` [${f.confidence}]` : "");
+
 /** One field line, and an `object[]` field's own fields under it as `name[].item`. */
 function fieldLines(fields: readonly FieldInfo[], prefix = ""): string[] {
 	return fields.flatMap((f) => [
-		`  ${prefix}${f.name} (${f.type}${f.optional ? ", optional" : ""}): ${f.description}`,
+		`  ${prefix}${f.name} (${f.type}${f.optional ? ", optional" : ""}): ${f.description}${sourceText(f)}`,
 		...(f.items ? fieldLines(f.items, `${prefix}${f.name}[].`) : []),
 	]);
 }

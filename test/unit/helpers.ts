@@ -166,6 +166,25 @@ export const lldpFixtureIndex = () =>
 		identity: string;
 	}[];
 
+const MNDP_FIXTURES = join(import.meta.dir, "..", "fixtures", "mndp");
+
+/** An MNDP fixture's TZSP datagrams, hex, one per line (test/lab/mndp/). */
+export const mndpFixture = (file: string) =>
+	readFileSync(join(MNDP_FIXTURES, file), "utf8").trim().split("\n");
+
+/** Every MNDP fixture's provenance, and what its router reported. */
+export const mndpFixtureIndex = () =>
+	JSON.parse(readFileSync(join(MNDP_FIXTURES, "index.json"), "utf8")) as {
+		file: string;
+		experiment: string;
+		routeros: string;
+		architecture: string;
+		mac: string;
+		identity: string;
+		board: string;
+		versionString: string;
+	}[];
+
 const DHCP_FIXTURES = join(import.meta.dir, "..", "fixtures", "dhcp");
 
 /** A DHCP fixture's TZSP datagrams, hex, one per line (test/lab/dhcp/). */
@@ -237,6 +256,14 @@ export function dhcpMessage(
 		(o.options ?? `${opt(53, "01")}ff`)
 	);
 }
+
+/** An MNDP TLV, hex: big-endian type and length, then the value. */
+export const mtlv = (type: number, value: string) =>
+	h16(type) + h16(value.length / 2) + value;
+
+/** An MNDP datagram (header and TLVs, hex) in UDP 5678 to 5678 in IPv4 in Ethernet, as bytes. */
+export const mndpFrame = (payload: string, sp = 5678, dp = 5678) =>
+	bytes(eth(0x0800, ipv4({ proto: 17, payload: udp(sp, dp, payload) })));
 
 /** A DHCP message in UDP 68 to 67 in IPv4 in Ethernet, as bytes. */
 export const dhcpFrame = (message: string, sp = 68, dp = 67) =>

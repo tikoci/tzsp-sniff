@@ -1,0 +1,10 @@
+{
+	"repository": "tikoci/m2ir",
+	"commit": "677ece80888be905078f6825ad32a0d796b9ea1d",
+	"committed": "2026-11-21T02:24:23Z",
+	"files": {
+		"LICENSE": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+		"physical/mndp.yaml": "24f885cee6d4be7ff956d8a53ea7aa4a1c3f69463075c07d71d70450ed655633",
+		"profiles/mndp/profile.yaml": "427e5a02636c33587b027944792b4ca2b6e3c5359c2246373886f8d095ea8e18"
+	}
+}

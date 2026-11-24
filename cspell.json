@@ -10,7 +10,8 @@
 		"dist",
 		"bun.lock",
 		".agents/skills/tikoci-*",
-		".scratch"
+		".scratch",
+		"src/dissect/mndp-table.ts"
 	],
 	"flagWords": ["hte", "teh"],
 	"ignoreWords": [],

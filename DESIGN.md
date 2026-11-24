@@ -160,6 +160,7 @@ fileSink(path, { overwrite }): FileSink                  // exists: --write's fi
 openDecode(input, options): Promise<DecodeStream>        // exists: decode, the same records from a file
 snifferCommands(options): string[]                       // RouterOS lines for /tool/sniffer or mangle
 dissectors(): DissectorInfo[]                            // exists: the registry, as listed
+m2irFacts(): M2irFacts[]                                 // exists: m2ir's version scope, by field
 ```
 
 **Requirement, bytes in and records out:**
@@ -1003,6 +1004,81 @@ test/lab/dhcp/REPORT.md.
 - **Sources.** Message types and option codes are from RFC 2132, RFC 3203,
   RFC 4388 and IANA's "DHCP and BOOTP Parameters" registry.
 
+**Decided: MNDP from the m2ir table** (maintainer, 2026-11-21, on
+issue #31). The TLVs are named, typed and checked from `src/dissect/mndp-table.ts`,
+generated from m2ir ("Tables from m2ir, not by hand" below); `mndp.ts` is
+only the reader. What RouterOS sends, and where it differs from or adds to
+m2ir, is in test/lab/mndp/REPORT.md.
+
+- **The header in both orders.** It is an announcement counter in the
+  sender's CPU byte order (m2ir `u32-sender-order`: little-endian on x86_64,
+  arm and arm64, big-endian on mipsbe), which a receiver cannot know. The
+  layer has `header` as hex and `counterLe` and `counterBe`, for the
+  caller to pick from; no single `counter` is presented as fact.
+- **`request`** is m2ir's structured request rule, generated: the TLVs end
+  at the datagram's end, and the header is zero or a TLV 6 is empty. A
+  router's first announcement after boot has a zero header, so it is a
+  request too, as m2ir says. A datagram whose reading stopped early (a TLV
+  past the end, the TLV limit) is not one, nor is one the capture ended
+  inside (a UDP length past the captured bytes): its TLVs may end where
+  the capture did, not where the datagram does. Port dissectors are told
+  this as `complete` (the UDP length all captured; for TCP, the IP packet
+  not cut).
+- **Names are m2ir's, camelCased** (`macAddress`, `softwareId`,
+  `ipv6Enabled`, `interfaceName` …). A `bytes` TLV gets a `Hex` suffix
+  (`aggregatedSizeHex`, `requestHex`); an enum adds `<name>Name` (`ttlName:
+  dying-gasp`), a bitmask `<name>Flags` (`runningFlags`, a bit m2ir does not
+  name as `bit-0x04`); an `empty` TLV is `true`; a repeating TLV (only 15,
+  `address6`) a list. m2ir's `neighbor-field` names were the other choice,
+  but TLVs 6, 9 and 19 have none and TLVs 2 to 4 share `unpack`.
+- **Confidence goes in `dissectors`; version scope in `m2irFacts()`**
+  (maintainer, 2026-11-21, on PR #35, replacing the first form of this
+  decision, which put `versionsSeen` and `since` on `FieldInfo` too).
+  The exported `FieldInfo` has an optional `confidence` (`documented` or
+  `observed-only`) for each generated field, and the text output prints it
+  in brackets; an enum's or bitmask's name field takes its values' weakest
+  confidence. The versions each field, value and bit was seen on, whose
+  versions they are (senders', or the routers that answered TLV 6),
+  `since` and `introduced` are m2ir's bookkeeping: a caller who asks gets
+  them from `m2irFacts()`, with the m2ir commit and files, and the
+  provenance m2ir keeps stays the one place for them. Why not on every
+  field: they cost every reader of `dissectors` tokens to answer a question
+  few ask; a TLV that is absent never reaches the output, so `since` cannot
+  explain it there; and `versionsSeen` records how far m2ir's samples
+  reached, not the protocol, so it goes stale at each refresh (TLV 17 on
+  7.24.6 already had). Not in records either. A TLV, value or bit m2ir
+  marks `inferred`, `guessed` or `superseded` gets no name: its bytes stay
+  raw. A version-scoped meaning (TLV 14's `meaning-by-version`, TLV 9's
+  `encoding-by-architecture`) is written into the field's description with
+  its confidence, so `disable-ipv6 on 7.21 to 7.25.1 (guessed)` reads as a
+  guess.
+- **TLV 9 stays hex.** m2ir reads it as u32le from x86_64 senders only, and
+  a receiver can only guess the sender's architecture.
+- **Repeats.** A second TLV of a type that does not repeat is kept raw in
+  `otherTlvs`, with no problem, as LLDP's "should not" TLVs; the first one
+  read is the field (a first of the wrong length does not take it). m2ir
+  does not call a repeat malformed.
+- **Problems.** An empty UDP 5678 payload gets no MNDP layer, as any empty
+  port payload (see "Decided: port matches"); 1 to 3 bytes is `truncated`
+  (`header`) with no fields; a
+  TLV header or value past the datagram `truncated` (`tlv`), the TLVs
+  before it kept. m2ir's framing rule calls such a datagram malformed (no
+  router answers it); here `truncated` names what the reader met, as DHCP
+  and LLDP do, and the capture may be what cut it. A value whose length is
+  wrong for its type is `malformed` (`tlv-length`), kept in `otherTlvs`
+  with its m2ir name; text that is not UTF-8 `malformed` (`text`), read with
+  replacement characters, a leading byte-order mark kept. At most 64 TLVs
+  are read (`MAX_MNDP_TLVS`): bytes after the 64th make the layer
+  `unsupported` (`tlv-limit`) unless an earlier TLV already gave it a
+  problem (the first problem is the one reported), and a datagram of
+  exactly 64 is read whole.
+  A wrong length is `malformed` even on a repeat of a type that does not
+  repeat.
+- **The layer runs to the end of the datagram**; MNDP has no End TLV.
+- **The lab redacts the software id** (TLV 11), which m2ir says to treat as
+  device-identifying: its value is overwritten with as many `X` bytes, so
+  lengths stay as sent (test/lab/mndp/lab.ts).
+
 **Decided: LLDP as named fields** (#26; maintainer, 2026-11-20). What
 RouterOS sends is in test/lab/lldp/REPORT.md (7.25.1 and 7.24.6 x86_64,
 7.25.1 arm64 CHRs).
@@ -1095,9 +1171,57 @@ to m2ir as evidence, not into a second catalog. **Requirement:**
 - generated tables keep m2ir's scope and confidence: a field scoped to a
   handler or RouterOS version is labelled that way, and an unconfirmed
   meaning is not presented as fact;
-- **Unverified, licensing:** m2ir's README says its schema content is
-  CC0-1.0, but the repo has no LICENSE file (GitHub's license API returns
-  404). Nothing is generated from m2ir until it has one (tikoci/m2ir#8).
+- **Settled, licensing** (was **Unverified**): m2ir has a root LICENSE,
+  CC0-1.0, since tikoci/m2ir#10 (tikoci/m2ir#8, closed 2026-11-20). Its
+  README lists the third-party material that keeps its own terms; none of
+  it is in the MNDP YAML. The LICENSE is vendored with the files.
+
+**Built in slice 6d** (#31), for MNDP:
+
+- **The snapshot** is `vendor/m2ir/`: m2ir's `physical/mndp.yaml`,
+  `profiles/mndp/profile.yaml` and `LICENSE`, byte for byte, and
+  `SOURCE.json` with the commit, its date and each file's sha256. Biome
+  skips it (it would reformat the YAML).
+- **`bun run m2ir:refresh [ref]`** is the one networked step: it resolves
+  `ref` (default `main`) to a commit, refuses one that is not on m2ir's
+  `main` (GitHub's compare API), fetches the files at that commit and
+  regenerates. Its output is a change to review. It refuses a `LICENSE`
+  other than the CC0-1.0 text the table's banner names
+  (`LICENSE_SHA256` in scripts/m2ir.ts, which `--check` also holds the
+  snapshot to): a new license is read, and the hash and banner changed
+  together, by hand. Nothing is written until everything is fetched and
+  the table made; each output is then staged beside its file
+  (`.m2ir-refresh`, created only if absent) and renamed into place once all
+  are staged, so a failed write leaves the old files and a second refresh
+  of the same checkout stops on the first staged file it meets. A failure
+  between two renames is the one gap left: the staged files not yet renamed
+  are removed, `bun run lint` reports the mix, and git restores it.
+- **`bun run m2ir:generate`** writes `src/dissect/mndp-table.ts` from the
+  snapshot alone: the TLV specs the reader walks, the request rule, the
+  `MndpTlvFields` interface and its field declarations with confidence,
+  and `MNDP_M2IR_FACTS`, the versions and `since` `m2irFacts()` returns.
+  The file is formatted by Biome and checked by
+  `tsc`, so it reads like the rest of `src/` and runs on Node.
+- **`bun run lint:m2ir`** (`--check`, part of `bun run lint` and so of
+  `check`) fails when a vendored file is not the one `SOURCE.json` names,
+  or the table is not what the snapshot generates. Offline.
+- **The generator refuses what it does not know** rather than leaving it
+  out: an encoding the reader does not read, a length that does not fit its
+  encoding, a repeat of an encoding the reader does not collect into a
+  list (only `ipv6`, `text` and `bytes` are), a header that is not one
+  `u32-sender-order` at offset 0, a request clause other than `header` or
+  `has-tlv` or with a key the reader does not match on, a nonzero request
+  header (the reader compares the header read big-endian, so only zero
+  holds in either byte order), a named value that is not a byte or a named
+  bit that is not one bit, a version outside `scope.versions-observed`, a
+  TLV record that is not u16be type and length (by key and value), a name
+  that is not lower-case words (it becomes an identifier), a commit that
+  is not a 40-digit sha, a field name taken twice or one every object
+  already has (`constructor`), a `has-tlv` type or length outside 16 bits, a bitmask's `…Flags`
+  included whether or not m2ir names a bit (test/unit/m2ir.test.ts). m2ir
+  text in a generated comment has its `*/` broken.
+- **`versions-seen: all`** becomes m2ir's `scope.versions-observed`, so a
+  field's `versionsSeen` in `m2irFacts()` is always a list.
 
 ## Decided: no embedded Lua or Wireshark
 

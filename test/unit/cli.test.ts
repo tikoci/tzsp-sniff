@@ -22,6 +22,7 @@ import {
 	expectPortFree,
 	fixture,
 	holdPort,
+	mndpFixture,
 	send,
 	until,
 } from "./helpers.ts";
@@ -242,6 +243,23 @@ describe("dissectors", () => {
 		);
 		expect(text).toContain(
 			"dhcp: DHCPv4 (RFC 2131)\n  matched by udpPort 67, udpPort 68\n",
+		);
+		expect(text).toContain(
+			"mndp: MNDP (m2ir profiles/mndp/profile.yaml at 677ece8)\n  matched by udpPort 5678\n",
+		);
+		// A field from the m2ir table says how sure m2ir is, and where it was seen.
+		expect(text).toMatch(
+			/\n {2}ttl \(number, optional\): TLV 19, ttl: [^\n]*\[observed-only\]\n/,
+		);
+		expect(text).toMatch(
+			/\n {2}ttlName \(string, optional\): [^\n]*\[observed-only\]\n/,
+		);
+		expect(text).toMatch(
+			/\n {2}identity \(string, optional\): [^\n]*\[documented\]\n/,
+		);
+		// A field read from a standard has no brackets.
+		expect(text).toMatch(
+			/\n {2}xid \(string\): The transaction id, as 0x18152c13\.\n/,
 		);
 		expect(text).toContain("  otherOptions[].code (number): ");
 		expect(text).toContain("  extensions[].header (number): ");
@@ -787,6 +805,46 @@ describe("main", () => {
 		const summary = records.at(-1);
 		expect(Object.keys(summary)).toEqual(["type", "status", "counters"]);
 		expect(summary.counters).toMatchObject({ packets: 1, filtered: 1 });
+	});
+
+	test("--proto mndp: the router's announcement is decoded, other traffic filtered", async () => {
+		const m = memoryIo();
+		const run = main(
+			[
+				"--port",
+				"0",
+				"--format",
+				"jsonl",
+				"--idle",
+				"200ms",
+				"--proto",
+				"mndp",
+			],
+			m.io,
+		);
+		await until(() => m.out.length > 0);
+		// The IPv4 copy of a 7.25.1 x86_64 announcement, between two pings.
+		const announcement = mndpFixture("7.25.1-x86-default.hex")[1] as string;
+		await send(boundPort(m.stdout()), [
+			STREAM[0] as string,
+			announcement,
+			STREAM[1] as string,
+		]);
+		expect(await run).toBe(0);
+		const records = m
+			.stdout()
+			.trimEnd()
+			.split("\n")
+			.map((l) => JSON.parse(l));
+		const packets = records.filter((r) => r.type === "packet");
+		expect(packets).toHaveLength(1);
+		expect(packets[0]).toMatchObject({
+			protocols: ["ethernet", "ipv4", "udp", "mndp"],
+			srcPort: 5678,
+			dstPort: 5678,
+			line: '10.0.2.15:5678 > 255.255.255.255:5678 mndp identity CHR mac 02:d8:96:77:4c:42 version "7.25.1 2026-11-02 12:39:53" board CHR',
+		});
+		expect(records.at(-1).counters).toMatchObject({ packets: 1, filtered: 2 });
 	});
 
 	test("text --fields: key=value lines; the start line names the filters", async () => {

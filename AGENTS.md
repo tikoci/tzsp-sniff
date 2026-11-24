@@ -38,7 +38,9 @@ README.md is the user overview.
   behind `TZSP_SNIFF_INTEGRATION`. `test/lab/`: experiments run by hand,
   with a `REPORT.md`. `test/chr/`: the quickchr machine handling and
   router REST calls those two share.
-- `scripts/`: repo tooling run by Bun.
+- `scripts/`: repo tooling run by Bun. `scripts/m2ir.ts` generates
+  `src/dissect/mndp-table.ts` from the m2ir snapshot in `vendor/m2ir/`
+  (never edit either by hand: `bun run m2ir:refresh`, then review).
 - `.scratch/`: gitignored temporary work.
 
 ## Rules for this repo

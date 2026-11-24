@@ -8,6 +8,36 @@ package.json's `X.Y.Z-next`; the stable release replaces `next` with the date.
 
 ### Added
 
+- MNDP (UDP 5678), the first dissector read with a table generated from
+  [m2ir](https://github.com/tikoci/m2ir)'s MNDP profile: the header as hex
+  and as a counter read both ways (`counterLe`, `counterBe`, since its byte
+  order is the sender's CPU's), `request` by m2ir's request rule (never on
+  a datagram the capture ended inside), and each
+  TLV m2ir names as a field (`macAddress`, `identity`, `version`,
+  `platform`, `uptime`, `softwareId`, `board`, `ipv6Enabled`, `address6`,
+  `interfaceName`, `address4`, `running`, `ttl`, the `/ip/packing` flags,
+  `aggregatedSizeHex`, `requestHex`), with `ipv6EnabledName`, `ttlName`
+  (`dying-gasp`) and `runningFlags` (`capsman`, `cmr`). Every other TLV, a
+  repeat of one that does not repeat, and one of the wrong length are kept
+  in `otherTlvs` as type, length and hex, with m2ir's name when the table
+  has one; a value or bit m2ir does not name stays a number in its field. At most 64 TLVs
+  are read (bytes after the 64th are `unsupported/tlv-limit`, unless an
+  earlier problem came first); a header or TLV past the datagram is
+  `truncated`; a wrong length (kept raw) or text that is not UTF-8 is
+  `malformed`. The text line names the identity, MAC, version and board,
+  and says `request` or `dying-gasp`. `--proto mndp` selects it. Checked
+  against what RouterOS 7.25.1 and 7.24.6 send on x86_64 and arm64 CHRs.
+
+- `FieldInfo` (and so `dissectors`) has an optional `confidence`
+  (`documented` or `observed-only`) for a field from a generated table;
+  the text output prints it in brackets after the description.
+
+- `m2irFacts()`: for each protocol generated from m2ir (MNDP), the m2ir
+  commit and files, and each field's `versionsSeen`, whose versions they
+  are, `since`, `introduced`, and each named value's and bit's own
+  confidence and versions. The package includes m2ir's CC0-1.0 license
+  (`vendor/m2ir/LICENSE`), which the generated table is under.
+
 - DHCPv4 (RFC 2131, 2132) on UDP 67 and 68: the BOOTP header (op, hardware
   type and length, hops, xid, secs, flags and the broadcast flag, ciaddr,
   yiaddr, siaddr, giaddr, chaddr as a MAC for Ethernet, sname and file as

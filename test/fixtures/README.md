@@ -114,3 +114,32 @@ Regenerate:
 bun test/lab/dhcp/lab.ts       # new evidence, on CHRs
 bun test/lab/dhcp/fixtures.ts  # fixtures from evidence/, on any checkout
 ```
+
+## `mndp/`: the MNDP RouterOS sends
+
+The router's own MNDP announcements, captured by the lab in
+[`test/lab/mndp/`](../lab/mndp/) for issue #31; what they show, against
+m2ir's profile, is in its [REPORT.md](../lab/mndp/REPORT.md). The MNDP
+tests in [`test/unit/dissect.test.ts`](../unit/dissect.test.ts) decode each
+one and check it against what the router reported.
+
+| File pattern | What it is |
+| --- | --- |
+| `<version>-<arch>-<experiment>.hex` | One TZSP datagram from `/tool/sniffer` streaming per line, in arrival order, as hex: each announcement over IPv4 and, when sent, its IPv6 copy |
+| `index.json` | Each file's experiment, RouterOS version and architecture, channel, accelerator, UTC date, ether1's MAC, the identity as booted, the board, the version string, and the run's evidence file |
+
+Experiments: `default` (two announcements as booted), `discover-interval`
+(10 s), `identity-utf8`, `packing` (an `/ip/packing` entry on ether1 with
+`unpacking=compress-all aggregated-size=1500`) and `ipv6-disabled` (the two
+announcements after `disable-ipv6=yes`). Captured with quickchr 0.6.0 on a
+Linux x86_64 host. Only frames that are UDP to or from port 5678 are
+stored, and the software id (TLV 11) is overwritten at capture with as
+many `X` bytes; they carry the CHR's random MAC, the SLIRP and link-local
+addresses, and the identities `CHR` and `lab-café`, nothing from the host.
+
+Regenerate:
+
+```sh
+bun test/lab/mndp/lab.ts       # new evidence, on CHRs
+bun test/lab/mndp/fixtures.ts  # fixtures from evidence/, on any checkout
+```

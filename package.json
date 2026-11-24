@@ -21,7 +21,8 @@
 		"dist/",
 		"README.md",
 		"CHANGELOG.md",
-		"LICENSE"
+		"LICENSE",
+		"vendor/m2ir/LICENSE"
 	],
 	"packageManager": "bun@1.4.4",
 	"engines": {
@@ -30,13 +31,14 @@
 	},
 	"scripts": {
 		"check": "bun run lint && bun run test && bun run build && bun run test:node && bun run test:node-terminal",
-		"lint": "bun run lint:types && bun run lint:code && bun run lint:markdown && bun run lint:words && bun run lint:bun-pin && bun run lint:external",
+		"lint": "bun run lint:types && bun run lint:code && bun run lint:markdown && bun run lint:words && bun run lint:bun-pin && bun run lint:m2ir && bun run lint:external",
 		"lint:types": "tsc -p tsconfig.json && tsc -p tsconfig.src.json",
 		"lint:code": "biome check --error-on-warnings .",
 		"lint:markdown": "markdownlint-cli2 && cspell lint --no-progress",
 		"lint:words": "sed -e '/^#/d' -e 's/ *#.*//' -e '/^$/d' project-words.txt | LC_ALL=C sort -c -f -u",
 		"lint:bun-pin": "bun scripts/check-bun-pin.ts",
 		"lint:external": "sh scripts/lint-external.sh",
+		"lint:m2ir": "bun scripts/m2ir.ts --check",
 		"lint:fix": "biome check --write .",
 		"test": "bun test test/unit",
 		"test:coverage": "bun test --coverage test/unit",
@@ -45,7 +47,9 @@
 		"build": "rm -rf dist && bun build src/index.ts src/cli/bin.ts --target node --format esm --outdir dist && tsc -p tsconfig.build.json",
 		"test:node": "node test/smoke/node-smoke.mjs",
 		"test:node-terminal": "bun test test/node",
-		"audit": "bun scripts/audit.ts"
+		"audit": "bun scripts/audit.ts",
+		"m2ir:generate": "bun scripts/m2ir.ts",
+		"m2ir:refresh": "bun scripts/m2ir.ts refresh"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.8",

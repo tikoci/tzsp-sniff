@@ -511,6 +511,7 @@ export function packetLine(d: Dissection): string {
 	const udp = find(d, "udp");
 	const tcp = find(d, "tcp");
 	const dhcp = find(d, "dhcp");
+	const mndp = find(d, "mndp");
 
 	if (arp?.fields) {
 		const f = arp.fields;
@@ -558,6 +559,31 @@ export function packetLine(d: Dissection): string {
 			if (h.requestedAddress !== undefined)
 				dhcpParts.push(`requested ${h.requestedAddress}`);
 			parts.push(dhcpParts.join(" "));
+		} else if (udp?.fields && mndp?.fields) {
+			const u = udp.fields;
+			// The TLV fields come from the m2ir table, and a refresh may drop
+			// any of them, so they are looked up by name, not typed here.
+			const tlv: { readonly [field: string]: unknown } = { ...mndp.fields };
+			const text = (field: string) => {
+				const v = tlv[field];
+				return typeof v === "string" ? v : undefined;
+			};
+			const mndpParts = [
+				`${hostPort(f.src, u.srcPort)} > ${hostPort(f.dst, u.dstPort)} mndp`,
+			];
+			if (mndp.fields.request) mndpParts.push("request");
+			for (const [field, label] of [
+				["identity", "identity"],
+				["macAddress", "mac"],
+				["version", "version"],
+				["board", "board"],
+			] as const) {
+				const v = text(field);
+				if (v !== undefined) mndpParts.push(`${label} ${word(v)}`);
+			}
+			const ttlName = text("ttlName");
+			if (ttlName !== undefined) mndpParts.push(ttlName);
+			parts.push(mndpParts.join(" "));
 		} else if (udp?.fields) {
 			const u = udp.fields;
 			parts.push(

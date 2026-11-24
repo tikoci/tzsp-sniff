@@ -21,6 +21,7 @@ import { ICMP, ICMPV6 } from "./icmp.ts";
 import { IPV4 } from "./ipv4.ts";
 import { IPV6 } from "./ipv6.ts";
 import { LLDP } from "./lldp.ts";
+import { MNDP } from "./mndp.ts";
 import { TCP } from "./tcp.ts";
 import { UDP } from "./udp.ts";
 import { VLAN } from "./vlan.ts";
@@ -38,6 +39,7 @@ export const REGISTRATIONS: readonly Registration[] = [
 	UDP,
 	TCP,
 	DHCP,
+	MNDP,
 ];
 
 /**

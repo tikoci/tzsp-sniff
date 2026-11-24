@@ -141,6 +141,13 @@ describe("createFilter: terms", () => {
 		expect(keeps({ proto: ["dhcp"] }, dhcp)).toBe(true);
 		expect(keeps({ proto: ["dhcp"] }, V6_UDP)).toBe(false);
 		expect(keeps({ not: { proto: ["dhcp"] } }, dhcp)).toBe(false);
+		// MNDP, from the m2ir table (#31).
+		const mndp = capture(
+			eth(0x0800, ipv4({ proto: 17, payload: udp(5678, 5678, "00000000") })),
+		);
+		expect(keeps({ proto: ["mndp"] }, mndp)).toBe(true);
+		expect(keeps({ proto: ["mndp"] }, dhcp)).toBe(false);
+		expect(keeps({ not: { proto: ["mndp"] } }, mndp)).toBe(false);
 		// `data` is not a protocol.
 		expect(codeOf(() => createFilter({ proto: ["data"] }))).toBe(
 			"filter/invalid-value",

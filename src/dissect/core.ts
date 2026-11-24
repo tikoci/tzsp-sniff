@@ -17,6 +17,7 @@ import type { IcmpLayer } from "./icmp.ts";
 import type { Ipv4Layer } from "./ipv4.ts";
 import type { Ipv6Layer } from "./ipv6.ts";
 import type { LldpLayer } from "./lldp.ts";
+import type { MndpLayer } from "./mndp.ts";
 import type { TcpLayer } from "./tcp.ts";
 import type { UdpLayer } from "./udp.ts";
 import type { VlanLayer } from "./vlan.ts";
@@ -55,6 +56,7 @@ export type Layer =
 	| UdpLayer
 	| TcpLayer
 	| DhcpLayer
+	| MndpLayer
 	| DataLayer;
 
 /**
@@ -156,6 +158,15 @@ export type FieldType =
 	| "string[]"
 	| "object[]";
 
+/**
+ * How sure the source of a generated table is of a field (m2ir's
+ * `confidence`): `documented` by a vendor manual or an independent
+ * implementation, or `observed-only`, seen on the wire but not documented.
+ * m2ir's other labels (`inferred`, `guessed`, `superseded`) are never used
+ * for a field: what they label stays raw (DESIGN.md, "Tables from m2ir").
+ */
+export type FieldConfidence = "documented" | "observed-only";
+
 /** One field of a layer, as `dissectors()` lists it. */
 export interface FieldInfo {
 	name: string;
@@ -171,28 +182,40 @@ export interface FieldInfo {
 	description: string;
 	/** An `object[]` field's own fields. */
 	items?: FieldInfo[];
+	/**
+	 * For a field from a generated table: how sure its source is. Absent for
+	 * a field read from a standard (an RFC or IEEE document). The versions
+	 * it was seen on are in `m2irFacts()`.
+	 */
+	confidence?: FieldConfidence;
+}
+
+/** How sure a generated field's source is, as `FieldInfo` carries it. */
+export interface FieldSource {
+	confidence?: FieldConfidence;
 }
 
 // `null` has no JSON type here (records leave a field out instead), so a
 // field that may be null has no declaration.
 type FieldDecl<T> = null extends T
 	? never
-	: { description: string } & ([NonNullable<T>] extends [string]
-			? { type: "string" }
-			: [NonNullable<T>] extends [number]
-				? { type: "number" }
-				: [NonNullable<T>] extends [boolean]
-					? { type: "boolean" }
-					: [NonNullable<T>] extends [string[]]
-						? { type: "string[]" }
-						: [NonNullable<T>] extends [(infer E)[]]
-							? // A list of lists, or of objects some of which are lists.
-								[Extract<E, readonly unknown[]>] extends [never]
-								? [E] extends [object]
-									? { type: "object[]"; items: FieldDecls<E> }
+	: { description: string } & FieldSource &
+			([NonNullable<T>] extends [string]
+				? { type: "string" }
+				: [NonNullable<T>] extends [number]
+					? { type: "number" }
+					: [NonNullable<T>] extends [boolean]
+						? { type: "boolean" }
+						: [NonNullable<T>] extends [string[]]
+							? { type: "string[]" }
+							: [NonNullable<T>] extends [(infer E)[]]
+								? // A list of lists, or of objects some of which are lists.
+									[Extract<E, readonly unknown[]>] extends [never]
+									? [E] extends [object]
+										? { type: "object[]"; items: FieldDecls<E> }
+										: never
 									: never
-								: never
-							: never) &
+								: never) &
 			(undefined extends T ? { optional: true } : { optional?: never });
 
 /**
@@ -206,7 +229,7 @@ type FieldDecl<T> = null extends T
  */
 export type FieldDecls<F> = { [K in keyof F]-?: FieldDecl<F[K]> };
 
-interface LooseDecl {
+interface LooseDecl extends FieldSource {
 	description: string;
 	type: FieldType;
 	optional?: boolean;
@@ -222,6 +245,7 @@ export function fieldInfo<F>(decls: FieldDecls<F>): FieldInfo[] {
 			optional: f.optional === true,
 			description: f.description,
 			...(f.items ? { items: list(f.items) } : {}),
+			...(f.confidence ? { confidence: f.confidence } : {}),
 		}));
 	return list(decls as unknown as Record<string, LooseDecl>);
 }
@@ -246,12 +270,15 @@ export type IpDissect = (
 /**
  * As {@link IpDissect}, for a UDP or TCP payload: from `start` to `end` is
  * the payload, never empty, and `ip` is the packet's (never a fragment).
+ * `complete` is false when the capture ended inside the payload: a UDP
+ * length past the captured bytes, or a TCP segment in a cut IP packet.
  */
 export type PortDissect = (
 	f: Frame,
 	start: number,
 	end: number,
 	ip: IpContext,
+	complete: boolean,
 ) => void;
 
 /** How a dissector is reached, and the function that reads it there. */
@@ -372,6 +399,7 @@ export class Frame {
 		end: number,
 		ports: readonly [number, number],
 		ip: IpContext,
+		complete: boolean,
 	) {
 		if (end <= start) return;
 		const table =
@@ -382,7 +410,7 @@ export class Frame {
 		const next = ip.fragment
 			? undefined
 			: (table.get(low) ?? (high === low ? undefined : table.get(high)));
-		if (next) next(this, start, end, ip);
+		if (next) next(this, start, end, ip, complete);
 		else this.data(start, end);
 	}
 }

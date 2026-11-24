@@ -4,8 +4,9 @@
 	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
 	// Skip what git ignores (node_modules, dist, .scratch).
 	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-	// House skills copied unchanged are linted where they are written.
-	"files": { "includes": ["**", "!.agents/skills/tikoci-*"] },
+	// House skills copied unchanged are linted where they are written; the m2ir
+	// snapshot is vendored byte for byte (scripts/m2ir.ts checks its hashes).
+	"files": { "includes": ["**", "!.agents/skills/tikoci-*", "!vendor"] },
 	// On from the first commit, so every agent writes one shape and diffs carry
 	// only the change. Tabs and double quotes, as centrs. Markdown is left to
 	// markdownlint, which does not rewrap prose.
