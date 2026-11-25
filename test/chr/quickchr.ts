@@ -268,13 +268,25 @@ function qemuFor(name: string): number[] {
 
 /** Names whose `create` failed after quickchr claimed them: a QEMU may still run for one (`qemuFor`). */
 const failedCreates = new Set<string>();
+/** Names whose `QuickCHR.start` has not settled: its QEMU may already run. */
+const starting = new Set<string>();
 
 /**
- * Every machine this run may have left, read without waiting or removing:
- * the owned ones and each failed `create` whose QEMU may still run. For a
- * second signal, which exits at once.
+ * One `NOT REMOVED` line for each machine this run may have left, read
+ * without waiting or removing, for a second signal, which exits at once:
+ * the owned machines, each failed `create` whose QEMU may still run, and
+ * each create still starting. quickchr may have no record of the last two,
+ * so their line says how to find the QEMU without it.
  */
-export const notRemoved = (): string[] => [...owned.keys(), ...failedCreates];
+export function notRemoved(): string[] {
+	const lines = [...owned.keys()].map(leftOver);
+	for (const name of new Set([...failedCreates, ...starting]))
+		if (!owned.has(name))
+			lines.push(
+				`NOT REMOVED: ${name}: its create did not finish, and quickchr may have no record of it; stop any QEMU whose command line contains /machines/${name}/ (\`pgrep -f /machines/${name}/\`), then \`quickchr remove ${name}\` if \`quickchr list ${name}\` shows it`,
+			);
+	return lines;
+}
 
 const strayAdvice = (pids: number[]) =>
 	`QEMU still runs for it (pid ${pids.join(", ")}) with no state quickchr can read: stop it (\`kill ${pids.join(" ")}\`), then \`quickchr remove <name>\` if \`quickchr list <name>\` still shows it`;
@@ -388,6 +400,24 @@ export async function cleanupAll(): Promise<string[]> {
 	return left;
 }
 
+/** The first signal this run took; the lab's main path exits with its code. */
+export let interrupted: "SIGINT" | "SIGTERM" | undefined;
+
+/**
+ * Every lab's SIGINT and SIGTERM handler. The first signal stops work, and
+ * the lab's main path removes this run's machines and exits. A second exits
+ * at once, naming each machine that may be left (`notRemoved`).
+ */
+export function onSignal(signal: "SIGINT" | "SIGTERM"): void {
+	if (interrupted) {
+		for (const line of notRemoved()) console.error(line);
+		process.exit(signal === "SIGINT" ? 130 : 143);
+	}
+	interrupted = signal;
+	console.error(`${signal}: stopping, then removing this run's machines`);
+	stop();
+}
+
 /**
  * A signal stops work; the caller then removes machines and exits, so
  * removal never races a step still using a machine. `stop` kills the
@@ -457,6 +487,7 @@ async function provision(
 	// would have to draw the same 32 random bits.
 	if (!absent(name)) throw new Error(`${name} already exists; not touching it`);
 	console.error(`machine: ${name}`);
+	starting.add(name);
 	try {
 		const chr = await QuickCHR.start({
 			name,
@@ -498,6 +529,9 @@ async function provision(
 					? `; ${strayAdvice(pids).replaceAll("<name>", name)}`
 					: ""),
 		);
+	} finally {
+		// After `owned` or `failedCreates` has it, so no report misses it.
+		starting.delete(name);
 	}
 }
 

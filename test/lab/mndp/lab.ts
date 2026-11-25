@@ -52,12 +52,12 @@ import {
 	accelerator,
 	cleanupAll,
 	create,
+	interrupted,
 	leftOver,
-	notRemoved,
+	onSignal,
 	owned,
 	ROOT,
 	services,
-	stop,
 	teardown,
 	version,
 } from "../../chr/quickchr.ts";
@@ -285,17 +285,6 @@ export class Listener {
 	close(): void {
 		this.sock?.close();
 	}
-}
-
-let interrupted: "SIGINT" | "SIGTERM" | undefined;
-function onSignal(signal: "SIGINT" | "SIGTERM"): void {
-	if (interrupted) {
-		for (const n of notRemoved()) console.error(`NOT REMOVED: ${n}`);
-		process.exit(signal === "SIGINT" ? 130 : 143);
-	}
-	interrupted = signal;
-	console.error(`${signal}: stopping, then removing this run's machines`);
-	stop();
 }
 
 const field = (output: string, name: string) =>
