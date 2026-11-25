@@ -269,6 +269,13 @@ function qemuFor(name: string): number[] {
 /** Names whose `create` failed after quickchr claimed them: a QEMU may still run for one (`qemuFor`). */
 const failedCreates = new Set<string>();
 
+/**
+ * Every machine this run may have left, read without waiting or removing:
+ * the owned ones and each failed `create` whose QEMU may still run. For a
+ * second signal, which exits at once.
+ */
+export const notRemoved = (): string[] => [...owned.keys(), ...failedCreates];
+
 const strayAdvice = (pids: number[]) =>
 	`QEMU still runs for it (pid ${pids.join(", ")}) with no state quickchr can read: stop it (\`kill ${pids.join(" ")}\`), then \`quickchr remove <name>\` if \`quickchr list <name>\` still shows it`;
 

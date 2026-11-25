@@ -44,6 +44,7 @@ import {
 	cleanupAll,
 	create,
 	leftOver,
+	notRemoved,
 	owned,
 	ROOT,
 	services,
@@ -224,7 +225,7 @@ export class Listener {
 let interrupted: "SIGINT" | "SIGTERM" | undefined;
 function onSignal(signal: "SIGINT" | "SIGTERM"): void {
 	if (interrupted) {
-		for (const n of owned.keys()) console.error(`NOT REMOVED: ${n}`);
+		for (const n of notRemoved()) console.error(`NOT REMOVED: ${n}`);
 		process.exit(signal === "SIGINT" ? 130 : 143);
 	}
 	interrupted = signal;
