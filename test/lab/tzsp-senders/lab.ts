@@ -46,14 +46,15 @@ import {
 	childEnv,
 	cleanupAll,
 	create,
+	interrupted,
 	leftOver,
+	onSignal,
 	owned,
 	ROOT,
 	run,
 	services,
-	stop,
-	tempDirs,
 	teardown,
+	tempDirs,
 	version,
 } from "../../chr/quickchr.ts";
 import {
@@ -344,16 +345,6 @@ export function checkPcapng(file: Pcapng): string | undefined {
  * exits, so removal never races a step still using a machine. `experiment`
  * checks between steps. A second signal exits at once and names what is left.
  */
-let interrupted: "SIGINT" | "SIGTERM" | undefined;
-function onSignal(signal: "SIGINT" | "SIGTERM"): void {
-	if (interrupted) {
-		for (const n of owned.keys()) console.error(`NOT REMOVED: ${n}`);
-		process.exit(signal === "SIGINT" ? 130 : 143);
-	}
-	interrupted = signal;
-	console.error(`${signal}: stopping, then removing this run's machines`);
-	stop();
-}
 
 /* ------------------------------------------------------------- listener */
 
